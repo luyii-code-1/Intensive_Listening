@@ -1,0 +1,52 @@
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.iml
+.idea/
+.vscode/
+
+# Dart and Flutter generated files
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+doc/api/
+*.symbols
+*.map.json
+
+# Generated Windows build state
+windows/flutter/ephemeral/
+windows/third_party/ffmpeg/ffmpeg.exe
+
+# Unsupported platforms and repository-local tooling
+android/
+ios/
+linux/
+macos/
+web/
+scripts/
+
+# Internal project material and repository automation
+.agents/
+.github/
+docs/
+HANDOFF*.md
+README.en.md
+CONTRIBUTING*.md
+SECURITY*.md
+THIRD_PARTY_NOTICES*.md
+.metadata
+
+# Logs, packages, and local output
+*.log
+*.tmp
+*.zip
+*.7z
+*.exe
+dist/

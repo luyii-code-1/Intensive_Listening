@@ -1,0 +1,4 @@
+#pragma once
+
+#define ILP_BUNDLE_ID L"@ILP_BUNDLE_ID@"
+#define ILP_APP_VERSION L"@ILP_APP_VERSION@"

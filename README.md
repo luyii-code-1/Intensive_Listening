@@ -135,6 +135,7 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 ```powershell
 git clone https://github.com/luyii-code-1/Intensive_Listening.git
 cd Intensive_Listening
+git switch dev
 flutter pub get
 ```
 
@@ -160,7 +161,9 @@ flutter build windows --release
 
 ### 自动构建
 
-GitHub Actions 在 `main` 分支提交、面向 `main` 的 PR，以及 Release 发布时构建 Windows 安装包。每次成功构建的安装包可在对应工作流的 Artifacts 中下载；Release 构建完成后也会自动附加到该 Release。
+`dev` 用于日常开发，`main` 用于发布并保留为 GitHub 默认分支。日常改动提交到 `dev`，PR 的目标分支选择 `dev`。发布时，由管理员在确认 `dev` 已推送后，手动将远端 `main` 更新为 `dev` 的提交。`main` 上独有的后续提交会被该次发布替换，已有版本标签仍保留。
+
+GitHub Actions 在 `dev` 或 `main` 分支提交、面向 `dev` 的 PR，以及 Release 发布时构建 Windows 安装包。每次成功构建的安装包可在对应工作流的 Artifacts 中下载；Release 构建完成后也会自动附加到该 Release。
 
 ## 技术组成
 

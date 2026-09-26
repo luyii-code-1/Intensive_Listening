@@ -34,9 +34,13 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 - **词级点选与重读同步设空**：按词点选设置挖空，自动同步同一材料下重复朗读区间的对应挖空词
 - **一键打包与分发**：支持导出为 `.ilp` 精听包、导出为独立精听包，或直接添加到本机学生端播放列表
 
-| 材料与小题编排 | 词级点选与重读同步设空 |
-| :---: | :---: |
-| <img src="assets/screenshots/teacher_grouping.png" alt="材料与小题编排" width="100%" /> | <img src="assets/screenshots/teacher_cloze_sync.png" alt="词级点选与重读同步设空" width="100%" /> |
+<p align="center">
+  <img src="assets/screenshots/teacher_grouping.png" alt="教师端：四步向导制课与材料小题编排" width="100%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/teacher_cloze_sync.png" alt="教师端：词级点选挖空与重复朗读自动同步" width="100%" />
+</p>
 
 ### 精听练习（学生端）
 
@@ -45,9 +49,13 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 - **多粒度流控定位**：支持上一句 / 下一句、上一题 / 下一题、重复本句与单句无缝循环播放
 - **沉浸盲听与挖空揭晓**：支持一键勾选「隐藏字幕」进入全屏毛玻璃盲听模式，支持「显示/隐藏全部挖空」或在模糊词槽上点击即刻揭晓拼写
 
-| 原句与考题同屏精听 | 隐藏字幕沉浸盲听 |
-| :---: | :---: |
-| <img src="assets/screenshots/student_practice.png" alt="原句与考题同屏精听" width="100%" /> | <img src="assets/screenshots/student_blind_listening.png" alt="隐藏字幕沉浸盲听" width="100%" /> |
+<p align="center">
+  <img src="assets/screenshots/student_practice.png" alt="学生端：考题原句同屏对照与词槽点击揭晓" width="100%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/student_blind_listening.png" alt="学生端：一键隐藏字幕与毛玻璃盲听训练" width="100%" />
+</p>
 
 ### MCP 智能体协同制课
 

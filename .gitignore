@@ -37,6 +37,7 @@ scripts/*
 !scripts/verify_windows_bundle.ps1
 !scripts/package_windows_installer.ps1
 !scripts/windows_installer.iss
+!scripts/promote_dev_to_main.sh
 
 # Internal project material and repository automation
 .agents/

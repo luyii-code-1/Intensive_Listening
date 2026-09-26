@@ -6,6 +6,8 @@ class LessonQuestion {
     this.repeatedCueIndexes = const [],
     this.materialId = '',
     this.number = 0,
+    this.options = const [],
+    this.answerIndex,
   });
 
   final String id;
@@ -14,6 +16,26 @@ class LessonQuestion {
   final List<int> repeatedCueIndexes;
   final String materialId;
   final int number;
+  final List<String> options;
+  final int? answerIndex;
+
+  LessonQuestion copyWith({
+    String? title,
+    int? number,
+    List<String>? options,
+    Object? answerIndex = _unchangedAnswer,
+  }) => LessonQuestion(
+    id: id,
+    title: title ?? this.title,
+    cueIndexes: cueIndexes,
+    repeatedCueIndexes: repeatedCueIndexes,
+    materialId: materialId,
+    number: number ?? this.number,
+    options: options ?? this.options,
+    answerIndex: identical(answerIndex, _unchangedAnswer)
+        ? this.answerIndex
+        : answerIndex as int?,
+  );
 
   bool containsRepeatedCue(int cueIndex) =>
       repeatedCueIndexes.contains(cueIndex);
@@ -25,6 +47,8 @@ class LessonQuestion {
     'materialId': materialId,
     'cueIndexes': cueIndexes,
     'repeatedCueIndexes': repeatedCueIndexes,
+    'options': options,
+    'answerIndex': answerIndex,
   };
 
   factory LessonQuestion.fromJson(Map<String, dynamic> json) {
@@ -41,6 +65,16 @@ class LessonQuestion {
           ? json['materialId'] as String
           : '',
       number: json['number'] is num ? (json['number'] as num).round() : 0,
+      options: (json['options'] as List? ?? const [])
+          .whereType<String>()
+          .toList(growable: false),
+      answerIndex:
+          json['answerIndex'] is int &&
+              (json['answerIndex'] as int) >= 0 &&
+              (json['answerIndex'] as int) <
+                  (json['options'] as List? ?? const []).length
+          ? json['answerIndex'] as int
+          : null,
     );
   }
 
@@ -52,9 +86,13 @@ class LessonQuestion {
       repeatedCueIndexes: material.repeatedCueIndexes,
       materialId: material.id,
       number: number > 0 ? number : fallbackNumber ?? 0,
+      options: options,
+      answerIndex: answerIndex,
     );
   }
 }
+
+const _unchangedAnswer = Object();
 
 class LessonMaterial {
   const LessonMaterial({
@@ -63,15 +101,18 @@ class LessonMaterial {
     required this.cueIndexes,
     required this.questionIds,
     this.repeatedCueIndexes = const [],
+    this.leadInCueIndexes = const [],
   });
 
   final String id;
   final String prompt;
   final List<int> cueIndexes;
   final List<int> repeatedCueIndexes;
+  final List<int> leadInCueIndexes;
   final List<String> questionIds;
 
-  bool containsCue(int cueIndex) => cueIndexes.contains(cueIndex);
+  bool containsCue(int cueIndex) =>
+      cueIndexes.contains(cueIndex) || leadInCueIndexes.contains(cueIndex);
   bool containsRepeatedCue(int cueIndex) =>
       repeatedCueIndexes.contains(cueIndex);
 
@@ -80,6 +121,7 @@ class LessonMaterial {
     'prompt': prompt,
     'cueIndexes': cueIndexes,
     'repeatedCueIndexes': repeatedCueIndexes,
+    'leadInCueIndexes': leadInCueIndexes,
     'questionIds': questionIds,
   };
 
@@ -92,6 +134,9 @@ class LessonMaterial {
       cueIndexes: cueIndexes,
       repeatedCueIndexes: _indexesFrom(json['repeatedCueIndexes'])
           .where(cueIndexSet.contains)
+          .toList(growable: false),
+      leadInCueIndexes: _indexesFrom(json['leadInCueIndexes'])
+          .where((index) => !cueIndexSet.contains(index))
           .toList(growable: false),
       questionIds: (json['questionIds'] as List? ?? const [])
           .whereType<String>()
@@ -211,6 +256,12 @@ class LessonExercises {
           repeatedCueIndexes: material.repeatedCueIndexes
               .where(cueIndexes.contains)
               .toList(growable: false),
+          leadInCueIndexes: material.leadInCueIndexes
+              .where(
+                (index) =>
+                    !cueIndexes.contains(index) && assignedCues.add(index),
+              )
+              .toList(growable: false),
           questionIds: material.questionIds,
         );
         final acceptedIds = <String>[];
@@ -233,6 +284,7 @@ class LessonExercises {
             prompt: normalizedMaterial.prompt,
             cueIndexes: normalizedMaterial.cueIndexes,
             repeatedCueIndexes: normalizedMaterial.repeatedCueIndexes,
+            leadInCueIndexes: normalizedMaterial.leadInCueIndexes,
             questionIds: acceptedIds,
           ),
         );

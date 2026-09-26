@@ -1,0 +1,95 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.1'
+          cache: true
+
+      - name: Prepare FFmpeg
+        shell: pwsh
+        run: .\scripts\prepare_windows_dependencies.ps1
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Read application version
+        id: version
+        shell: pwsh
+        run: |
+          $pubspec = Get-Content -LiteralPath pubspec.yaml -Raw
+          $version = [regex]::Match($pubspec, '(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+[0-9]+)?\s*$')
+          if (-not $version.Success) { throw 'Invalid application version in pubspec.yaml.' }
+          "number=$($version.Groups[1].Value)" >> $env:GITHUB_OUTPUT
+
+      - name: Build Windows release
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ steps.version.outputs.number }}
+        run: flutter build windows --release "--dart-define=ILP_APP_VERSION=$env:APP_VERSION"
+
+      - name: Package installer
+        shell: pwsh
+        run: |
+          & .\scripts\package_windows_installer.ps1 `
+            -ReleaseDirectory 'build\windows\x64\runner\Release' `
+            -OutputDirectory 'dist\installer'
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          path: dist/installer/*.exe
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download installer artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-installer
+          path: dist/installer
+
+      - name: Attach installer to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          shopt -s nullglob
+          installers=(dist/installer/*.exe)
+          if (( ${#installers[@]} != 1 )); then
+            echo "Expected one installer, found ${#installers[@]}." >&2
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" "${installers[0]}" --clobber

@@ -57,4 +57,31 @@ void main() {
     expect(exercises.questions[1].cueIndexes, [10, 11]);
     expect(exercises.materialIndexForCue(10), 0);
   });
+
+  test('keeps options, answer and lead-in across a project round trip', () {
+    final exercises = LessonExercises.fromJson({
+      'materials': [
+        {
+          'id': 'm1',
+          'prompt': '回答第3题',
+          'cueIndexes': [2, 3],
+          'leadInCueIndexes': [1],
+          'questionIds': ['q3'],
+        },
+      ],
+      'questions': [
+        {
+          'id': 'q3',
+          'number': 3,
+          'title': 'What happened?',
+          'options': ['First', 'Second', 'Third'],
+          'answerIndex': 1,
+        },
+      ],
+    });
+    final restored = LessonExercises.fromJson(exercises.toJson());
+    expect(restored.materialForCue(1)?.id, 'm1');
+    expect(restored.questions.single.options, ['First', 'Second', 'Third']);
+    expect(restored.questions.single.answerIndex, 1);
+  });
 }

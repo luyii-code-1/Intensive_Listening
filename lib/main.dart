@@ -15,6 +15,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:path/path.dart' as p;
 
 import 'app_directories.dart';
+import 'app_log.dart';
 import 'asr/asr_client.dart';
 import 'asr/segmented_asr_runner.dart';
 import 'audio/audio_duration.dart';
@@ -29,13 +30,12 @@ import 'ilp/package_dialogs.dart';
 import 'ilp/srt_parser.dart';
 import 'ilp/srt_question_planner.dart';
 import 'ilp/srt_sections.dart';
-import 'ilp/standalone_lesson_exporter.dart';
 import 'mcp/app_private_api.dart';
+import 'student/dictionary_lookup.dart';
 import 'projects/course_project.dart';
 import 'projects/project_delivery.dart';
 import 'settings/app_settings.dart';
 import 'settings/api_configuration_archive.dart';
-import 'settings/app_update.dart';
 import 'settings/file_association.dart';
 import 'student/lesson_progress_store.dart';
 import 'transcription/duplicate_dialog.dart';
@@ -137,12 +137,14 @@ Duration cueNavigationPosition(SrtCue cue) {
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
+  installAppLogging();
   if (!kIsWeb) {
     // A throw here would happen before runApp, so the first frame never
     // renders and the window never appears while the process stays alive.
     try {
       MediaKit.ensureInitialized();
     } catch (error) {
+      AppLog.error('应用组件加载失败: $error');
       runApp(StartupFailure(error: error));
       return;
     }
@@ -169,7 +171,9 @@ Future<void> main(List<String> arguments) async {
 Future<void> _setupWindowsNotifications() async {
   try {
     await localNotifier.setup(appName: 'Intensive Listening');
-  } catch (_) {}
+  } catch (error, stack) {
+    AppLog.warning('系统通知初始化失败: $error', stack);
+  }
 }
 
 class StartupFailure extends StatelessWidget {
@@ -677,6 +681,8 @@ class _AppShellState extends State<AppShell> {
   Future<void> _loadSettings() async {
     var settings = await _settingsStore.load();
     if (!mounted) return;
+    AppLog.debugEnabled = settings.debugLogging;
+    AppLog.debug('调试日志已启用');
     widget.onThemeChanged?.call(settings.themeMode);
     setState(() => _settings = settings);
     if (!kIsWeb &&
@@ -804,6 +810,8 @@ class _AppShellState extends State<AppShell> {
     setState(() => _settings = settings);
     widget.onThemeChanged?.call(settings.themeMode);
     await _settingsStore.save(settings);
+    AppLog.debugEnabled = settings.debugLogging;
+    AppLog.debug('设置已保存');
     if (previous.fileAssociationEnabled != settings.fileAssociationEnabled) {
       await const IlpFileAssociation().apply(settings.fileAssociationEnabled);
     }
@@ -849,6 +857,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _applyMcpSetting(bool enabled) async {
+    AppLog.debug('MCP 服务状态切换: ${enabled ? '启用' : '停用'}');
     if (kIsWeb || !Platform.isWindows) return;
     final isFlutterTest = Platform.environment.containsKey('FLUTTER_TEST');
     if (isFlutterTest) return;
@@ -883,8 +892,10 @@ class _AppShellState extends State<AppShell> {
       onAgentStateChanged: (active) {
         if (mounted && active != _agentActive) {
           setState(() => _agentActive = active);
+          if (!active) unawaited(_finishAgentSession());
         }
       },
+      onAgentApprovalRequested: _requestAgentApproval,
       onAgentAccessDenied: () {
         final now = DateTime.now();
         if (!mounted ||
@@ -911,6 +922,74 @@ class _AppShellState extends State<AppShell> {
   Future<void> _forceDisconnectAgent() async {
     _privateApiServer?.disconnectAgent();
     if (mounted) _showShellNotice('已返回用户模式', 'MCP 与 HTTP 入口保持可用。');
+  }
+
+  Future<AgentApprovalDecision> _requestAgentApproval(String name) async {
+    if (!mounted) return AgentApprovalDecision.refuse;
+    final remaining = ValueNotifier<int>(60);
+    BuildContext? dialogContext;
+    final countdown = Timer.periodic(const Duration(seconds: 1), (timer) {
+      remaining.value = 60 - timer.tick;
+      if (remaining.value <= 0 && dialogContext?.mounted == true) {
+        Navigator.of(
+          dialogContext!,
+          rootNavigator: true,
+        ).pop(AgentApprovalDecision.approve);
+      }
+    });
+    final decision = await showSpringDialog<AgentApprovalDecision>(
+      context: context,
+      builder: (context) {
+        dialogContext = context;
+        return ContentDialog(
+          title: const Text('是否允许当前智能体接管'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('接管者（自报）：$name'),
+              const SizedBox(height: 12),
+              const Text('未经授权的接管可能导致您的数据损失'),
+            ],
+          ),
+          actions: [
+            ValueListenableBuilder<int>(
+              valueListenable: remaining,
+              builder: (_, seconds, _) => FilledButton(
+                onPressed: () =>
+                    Navigator.pop(context, AgentApprovalDecision.approve),
+                child: Text('是（${seconds.clamp(0, 60)}s）'),
+              ),
+            ),
+            Button(
+              onPressed: () =>
+                  Navigator.pop(context, AgentApprovalDecision.refuse),
+              child: const Text('否'),
+            ),
+            Button(
+              onPressed: () =>
+                  Navigator.pop(context, AgentApprovalDecision.disableMcp),
+              child: const Text('关闭 MCP'),
+            ),
+          ],
+        );
+      },
+    );
+    countdown.cancel();
+    remaining.dispose();
+    if (decision == AgentApprovalDecision.disableMcp) {
+      await _saveSettings(_settings.copyWith(mcpEnabled: false));
+    }
+    return decision ?? AgentApprovalDecision.refuse;
+  }
+
+  Future<void> _finishAgentSession() async {
+    if (!mounted) return;
+    setState(() => _selectedIndex = 1);
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    await _teacherPageKey.currentState?._finishAgentSession();
+    _refreshStudentLibrary();
   }
 
   void _openSettings() {
@@ -1026,6 +1105,7 @@ class _AppShellState extends State<AppShell> {
       ),
       TeacherPage(
         key: _teacherPageKey,
+        agentMode: _agentActive,
         onProjectOpened: () {
           if (_paneExpanded) setState(() => _paneExpanded = false);
         },
@@ -1216,6 +1296,12 @@ class _StudentPageState extends State<StudentPage> {
   var _singleSentenceLoop = false;
   Duration? _sentenceLoopStartAt;
   Duration? _sentenceStopAt;
+  Duration? _repeatOnceStopAt;
+  bool _handlingRepeatOnce = false;
+  int? _pausedOriginalCueIndex;
+  int _jumpGeneration = 0;
+  final _revealedMaterials = <String>{};
+  final _hiddenMaterials = <String>{};
   var _handlingSentenceLoop = false;
   var _loading = true;
   var _busy = false;
@@ -1279,6 +1365,15 @@ class _StudentPageState extends State<StudentPage> {
     final player = Player();
     _player = player;
     _positionSubscription = player.stream.position.listen((value) {
+      if (_repeatOnceStopAt case final stopAt?) {
+        if (value >= stopAt && !_handlingRepeatOnce) {
+          _handlingRepeatOnce = true;
+          _repeatOnceStopAt = null;
+          unawaited(
+            player.pause().whenComplete(() => _handlingRepeatOnce = false),
+          );
+        }
+      }
       final stopAt = _sentenceStopAt;
       final loopStart = _sentenceLoopStartAt;
       if (_singleSentenceLoop &&
@@ -1322,7 +1417,13 @@ class _StudentPageState extends State<StudentPage> {
       if (mounted && value > Duration.zero) setState(() => _duration = value);
     });
     _playingSubscription = player.stream.playing.listen((value) {
-      if (mounted) setState(() => _playing = value);
+      if (mounted) {
+        setState(() {
+          if (value && !_playing) _jumpGeneration++;
+          _playing = value;
+          if (value) _pausedOriginalCueIndex = null;
+        });
+      }
     });
     _completedSubscription = player.stream.completed.listen((completed) {
       if (completed && mounted) setState(() => _playing = false);
@@ -1356,6 +1457,7 @@ class _StudentPageState extends State<StudentPage> {
   }
 
   Future<void> _openLesson(ImportedLesson lesson) async {
+    AppLog.debug('打开课程: ${lesson.manifest.packageUuid}');
     widget.onMediaOpened?.call();
     setState(() => _openingLessonId = lesson.id);
     try {
@@ -1404,6 +1506,10 @@ class _StudentPageState extends State<StudentPage> {
         _showSubtitles = true;
         _preRollCueIndex = skipTo == null ? null : firstCueIndex;
         _selectedQuestionId = null;
+        _pausedOriginalCueIndex = null;
+        _repeatOnceStopAt = null;
+        _revealedMaterials.clear();
+        _hiddenMaterials.clear();
       });
       _positionNotifier.value = resumeAt;
       _restoringLessonPosition = true;
@@ -1470,8 +1576,56 @@ class _StudentPageState extends State<StudentPage> {
       _sentenceLoopStartAt = null;
       _sentenceStopAt = null;
       _selectedQuestionId = null;
+      _pausedOriginalCueIndex = null;
+      _repeatOnceStopAt = null;
+      _revealedMaterials.clear();
+      _hiddenMaterials.clear();
     });
     _positionNotifier.value = Duration.zero;
+  }
+
+  Future<void> _showCurrentFileInfo() async {
+    final lesson = _lesson;
+    final audio = _standaloneAudio;
+    if (lesson == null && audio == null) return;
+    final title =
+        lesson?.manifest.title ?? p.basenameWithoutExtension(audio!.path);
+    final sourcePath = lesson?.audioPath ?? audio?.path;
+    final file = sourcePath == null ? null : File(sourcePath);
+    final size = file != null && await file.exists()
+        ? await file.length()
+        : null;
+    if (!mounted) return;
+    final manifest = lesson?.manifest;
+    final details = <String>[
+      '名称：$title',
+      '类型：${manifest == null ? '普通音频' : 'ILP 精听包'}',
+      '时长：${formatDuration(_duration)}',
+      if (manifest != null) ...[
+        '精听包版本：${manifest.packageVersion}',
+        '格式版本：${manifest.formatVersion}',
+        '包 UUID：${manifest.packageUuid}',
+        '字幕：${_cues.length} 句',
+      ],
+      if (size != null) '音频大小：${(size / (1024 * 1024)).toStringAsFixed(2)} MB',
+      if (sourcePath != null) '文件位置：$sourcePath',
+    ];
+    await showSpringDialog<void>(
+      context: context,
+      builder: (dialogContext) => ContentDialog(
+        title: const Text('文件信息'),
+        content: SizedBox(
+          width: 500,
+          child: SelectableText(details.join('\n')),
+        ),
+        actions: [
+          Button(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _openStandaloneAudio() async {
@@ -1499,6 +1653,10 @@ class _StudentPageState extends State<StudentPage> {
         _showAllCloze = false;
         _showSubtitles = true;
         _selectedQuestionId = null;
+        _pausedOriginalCueIndex = null;
+        _repeatOnceStopAt = null;
+        _revealedMaterials.clear();
+        _hiddenMaterials.clear();
       });
       _positionNotifier.value = Duration.zero;
       await player.open(Media(audio.uri.toString()), play: false);
@@ -1655,6 +1813,7 @@ class _StudentPageState extends State<StudentPage> {
   Future<void> _togglePlayback() async {
     if (_lesson == null && _standaloneAudio == null) return;
     final player = await _ensurePlayer();
+    _repeatOnceStopAt = null;
     if (_playing) {
       await player.pause();
     } else {
@@ -1678,6 +1837,7 @@ class _StudentPageState extends State<StudentPage> {
     bool pinDuringPreroll = false,
   }) async {
     if (_lesson == null && _standaloneAudio == null) return;
+    _repeatOnceStopAt = null;
     final next = clampDuration(position, _duration);
     final nextCueIndex =
         targetCueIndex ?? activeCueIndexForPosition(_cues, next);
@@ -1695,12 +1855,14 @@ class _StudentPageState extends State<StudentPage> {
     await (await _ensurePlayer()).seek(next);
   }
 
-  Future<void> _seekToCue(int cueIndex, {bool pinDuringPreroll = true}) =>
-      _seek(
-        cueNavigationPosition(_cues[cueIndex]),
-        targetCueIndex: cueIndex,
-        pinDuringPreroll: pinDuringPreroll,
-      );
+  Future<void> _seekToCue(int cueIndex, {bool pinDuringPreroll = true}) {
+    AppLog.debug('跳转至字幕索引: $cueIndex');
+    return _seek(
+      cueNavigationPosition(_cues[cueIndex]),
+      targetCueIndex: cueIndex,
+      pinDuringPreroll: pinDuringPreroll,
+    );
+  }
 
   void _configureSentenceLoop(int cueIndex) {
     if (cueIndex < 0 || cueIndex >= _cues.length) {
@@ -1721,6 +1883,53 @@ class _StudentPageState extends State<StudentPage> {
       _sentenceLoopStartAt = null;
       _sentenceStopAt = null;
     }
+  }
+
+  Future<void> _repeatSentenceOnce() async {
+    final index = _activeIndex;
+    if (index < 0 || index >= _cues.length) return;
+    final player = await _ensurePlayer();
+    await player.pause();
+    _setSingleSentenceLoop(false);
+    await _seekToCue(index);
+    _repeatOnceStopAt = _cues[index].end;
+    await player.play();
+  }
+
+  Future<void> _playSelectedCue(int index, {required bool loop}) async {
+    if (index < 0 || index >= _cues.length) return;
+    _pausedOriginalCueIndex = null;
+    _setSingleSentenceLoop(loop);
+    if (_playing) _jumpGeneration++;
+    await _seekToCue(index);
+    await (await _ensurePlayer()).play();
+  }
+
+  Future<void> _adoptPausedCue(int index) async {
+    if (_playing ||
+        index < 0 ||
+        index >= _cues.length ||
+        index == _activeIndex) {
+      return;
+    }
+    _pausedOriginalCueIndex = _activeIndex >= 0 ? _activeIndex : null;
+    _jumpGeneration++;
+    await _seekToCue(index);
+  }
+
+  Future<void> _returnToOriginalCue() async {
+    final index = _pausedOriginalCueIndex;
+    _pausedOriginalCueIndex = null;
+    if (index != null && index >= 0 && index < _cues.length) {
+      _jumpGeneration++;
+      await _seekToCue(index);
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _dismissReturnCue() {
+    if (_pausedOriginalCueIndex == null) return;
+    setState(() => _pausedOriginalCueIndex = null);
   }
 
   Future<void> _stepSentence(int delta) async {
@@ -1747,54 +1956,56 @@ class _StudentPageState extends State<StudentPage> {
     return exercises.questions.indexWhere((item) => item.id == question.id);
   }
 
-  List<String> _currentMaterialQuestions() {
+  List<LessonQuestion> _currentMaterialQuestions() {
     final lesson = _lesson;
-    if (lesson == null) return const ['未设置'];
+    if (lesson == null) return const [];
     final exercises = lesson.manifest.exercises;
     final material = exercises.materialForCue(_activeIndex);
-    if (material == null) return const ['未设置'];
-    final questions = exercises.questionsForMaterial(material);
-    if (questions.isEmpty) return const ['未设置'];
-    return questions
-        .map(
-          (question) =>
-              '第 ${question.number} 题  ${question.title.trim().isEmpty ? '未设置' : question.title.trim()}',
-        )
-        .toList(growable: false);
+    if (material == null) return const [];
+    return exercises.questionsForMaterial(material);
+  }
+
+  Future<void> _jumpToMaterial(LessonMaterial material) async {
+    if (material.cueIndexes.isEmpty) return;
+    if (!_playing && _activeIndex >= 0) {
+      _pausedOriginalCueIndex ??= _activeIndex;
+    }
+    _jumpGeneration++;
+    await _seekToCue(
+      material.leadInCueIndexes.firstOrNull ?? material.cueIndexes.first,
+    );
   }
 
   Future<void> _stepQuestion(int delta) async {
     final lesson = _lesson;
     if (lesson == null) return;
-    final questions = lesson.manifest.exercises.questions;
-    if (questions.isEmpty) return;
-    final current = _currentQuestionIndex();
-    int target;
-    if (current >= 0) {
-      target = (current + delta).clamp(0, questions.length - 1);
-    } else if (delta >= 0) {
-      target = questions.indexWhere(
-        (question) => question.cueIndexes.first > _activeIndex,
-      );
-      if (target < 0) target = questions.length - 1;
-    } else {
-      target = questions.lastIndexWhere(
-        (question) => question.cueIndexes.last < _activeIndex,
-      );
-      if (target < 0) target = 0;
-    }
-    final targetQuestion = questions[target];
-    final targetMaterial = lesson.manifest.exercises.materialForQuestion(
-      targetQuestion.id,
+    final exercises = lesson.manifest.exercises;
+    final materials = exercises.effectiveMaterials
+        .where(
+          (material) =>
+              material.questionIds.isNotEmpty && material.cueIndexes.isNotEmpty,
+        )
+        .toList(growable: false);
+    if (materials.isEmpty) return;
+    final activeMaterial = exercises.materialForCue(_activeIndex);
+    final current = materials.indexWhere(
+      (material) => material.id == activeMaterial?.id,
     );
-    if (targetMaterial == null || targetMaterial.cueIndexes.isEmpty) return;
-    final currentMaterial = lesson.manifest.exercises.materialForCue(
-      _activeIndex,
-    );
-    setState(() => _selectedQuestionId = targetQuestion.id);
-    if (currentMaterial?.id != targetMaterial.id) {
-      await _seekToCue(targetMaterial.cueIndexes.first);
-    }
+    final target = current >= 0
+        ? (current + delta).clamp(0, materials.length - 1)
+        : delta >= 0
+        ? materials.indexWhere(
+            (material) => material.cueIndexes.first > _activeIndex,
+          )
+        : materials.lastIndexWhere(
+            (material) => material.cueIndexes.last < _activeIndex,
+          );
+    final targetMaterial =
+        materials[target < 0
+            ? (delta >= 0 ? materials.length - 1 : 0)
+            : target];
+    setState(() => _selectedQuestionId = targetMaterial.questionIds.first);
+    await _jumpToMaterial(targetMaterial);
   }
 
   void _toggleCloze(int cueIndex, int wordIndex) {
@@ -1818,11 +2029,16 @@ class _StudentPageState extends State<StudentPage> {
     final lesson = _lesson;
     final standaloneAudio = _standaloneAudio;
     final hasMedia = lesson != null || standaloneAudio != null;
+    final mediaTitle =
+        lesson?.manifest.title ??
+        (standaloneAudio == null
+            ? ''
+            : p.basenameWithoutExtension(standaloneAudio.path));
     return ScaffoldPage(
-      header: widget.compactPlayback
+      header: widget.compactPlayback && !hasMedia
           ? null
           : PageHeader(
-              leading: hasMedia
+              leading: hasMedia && !widget.compactPlayback
                   ? Padding(
                       padding: const EdgeInsets.only(left: 12, right: 8),
                       child: Tooltip(
@@ -1834,60 +2050,94 @@ class _StudentPageState extends State<StudentPage> {
                       ),
                     )
                   : null,
-              title: const Text('学生端'),
-              commandBar: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Button(
-                    onPressed: _busy ? null : _openStandaloneAudio,
-                    child: const Row(
-                      children: [
-                        Icon(FluentIcons.music_in_collection),
-                        SizedBox(width: 8),
-                        Text('打开音频'),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Button(
-                    onPressed: _lessons.isEmpty
-                        ? null
-                        : () => unawaited(
-                            showLessonPicker(
-                              context: context,
-                              lessons: _lessons,
-                              selected: _lesson,
-                              onSelected: _openLesson,
+              title: hasMedia
+                  ? LayoutBuilder(
+                      builder: (context, headerBounds) => Row(
+                        children: [
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: (headerBounds.maxWidth - 104).clamp(
+                                0.0,
+                                double.infinity,
+                              ),
+                            ),
+                            child: Tooltip(
+                              message: mediaTitle,
+                              child: Text(
+                                mediaTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: FluentTheme.of(context)
+                                    .typography
+                                    .bodyStrong
+                                    ?.copyWith(fontSize: 18),
+                              ),
                             ),
                           ),
-                    child: const Row(
+                          const SizedBox(width: 12),
+                          Button(
+                            onPressed: () => unawaited(_showCurrentFileInfo()),
+                            child: const Text('文件信息'),
+                          ),
+                        ],
+                      ),
+                    )
+                  : const Text('学生端'),
+              commandBar: hasMedia
+                  ? null
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(FluentIcons.open_file),
-                        SizedBox(width: 8),
-                        Text('打开课程'),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: _busy ? null : _importPackage,
-                    child: Row(
-                      children: [
-                        if (_busy)
-                          const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: ProgressRing(strokeWidth: 2),
-                          )
-                        else
-                          const Icon(FluentIcons.download),
+                        Button(
+                          onPressed: _busy ? null : _openStandaloneAudio,
+                          child: const Row(
+                            children: [
+                              Icon(FluentIcons.music_in_collection),
+                              SizedBox(width: 8),
+                              Text('打开音频'),
+                            ],
+                          ),
+                        ),
                         const SizedBox(width: 8),
-                        const Text('导入精听包'),
+                        Button(
+                          onPressed: _lessons.isEmpty
+                              ? null
+                              : () => unawaited(
+                                  showLessonPicker(
+                                    context: context,
+                                    lessons: _lessons,
+                                    selected: _lesson,
+                                    onSelected: _openLesson,
+                                  ),
+                                ),
+                          child: const Row(
+                            children: [
+                              Icon(FluentIcons.open_file),
+                              SizedBox(width: 8),
+                              Text('打开课程'),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton(
+                          onPressed: _busy ? null : _importPackage,
+                          child: Row(
+                            children: [
+                              if (_busy)
+                                const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: ProgressRing(strokeWidth: 2),
+                                )
+                              else
+                                const Icon(FluentIcons.download),
+                              const SizedBox(width: 8),
+                              const Text('导入精听包'),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-                  ),
-                ],
-              ),
             ),
       content: _loading || (widget.compactPlayback && _busy)
           ? const Center(child: ProgressRing())
@@ -1910,19 +2160,45 @@ class _StudentPageState extends State<StudentPage> {
                 final player = ValueListenableBuilder<Duration>(
                   valueListenable: _positionNotifier,
                   builder: (context, position, _) => PlayerSection(
-                    title:
-                        lesson?.manifest.title ??
-                        p.basenameWithoutExtension(standaloneAudio!.path),
-                    cueCount: _cues.length,
                     hasTranscript: lesson != null,
-                    questionTitles: _currentMaterialQuestions(),
+                    questions: _currentMaterialQuestions(),
+                    activeMaterial: lesson?.manifest.exercises.materialForCue(
+                      _activeIndex,
+                    ),
+                    onJumpMaterial: _jumpToMaterial,
+                    onRepeatSentence: _repeatSentenceOnce,
+                    materialClozeVisible:
+                        lesson != null &&
+                        ((_showAllCloze &&
+                                !_hiddenMaterials.contains(
+                                  lesson.manifest.exercises
+                                      .materialForCue(_activeIndex)
+                                      ?.id,
+                                )) ||
+                            _revealedMaterials.contains(
+                              lesson.manifest.exercises
+                                  .materialForCue(_activeIndex)
+                                  ?.id,
+                            )),
+                    onToggleMaterialCloze: () {
+                      final material = lesson?.manifest.exercises
+                          .materialForCue(_activeIndex);
+                      if (material == null) return;
+                      setState(() {
+                        final visible =
+                            (_showAllCloze &&
+                                !_hiddenMaterials.contains(material.id)) ||
+                            _revealedMaterials.contains(material.id);
+                        if (visible) {
+                          _revealedMaterials.remove(material.id);
+                          _hiddenMaterials.add(material.id);
+                        } else {
+                          _hiddenMaterials.remove(material.id);
+                          _revealedMaterials.add(material.id);
+                        }
+                      });
+                    },
                     manifest: lesson?.manifest,
-                    sourcePath: lesson == null
-                        ? standaloneAudio?.path
-                        : p.join(
-                            lesson.directoryPath,
-                            lesson.manifest.audioPath,
-                          ),
                     showSubtitles: _showSubtitles,
                     duration: _duration,
                     position: position,
@@ -1948,13 +2224,21 @@ class _StudentPageState extends State<StudentPage> {
                   exercises: lesson.manifest.exercises,
                   revealedCloze: _revealedCloze,
                   showAllCloze: _showAllCloze,
+                  revealedMaterials: _revealedMaterials,
+                  hiddenMaterials: _hiddenMaterials,
+                  playing: _playing,
+                  navigationGeneration: _jumpGeneration,
+                  onPlaySelected: _playSelectedCue,
+                  onAdoptPausedCue: _adoptPausedCue,
+                  onReturnOriginal: _returnToOriginalCue,
+                  onDismissReturnOriginal: _dismissReturnCue,
+                  canReturnOriginal: _pausedOriginalCueIndex != null,
                   showSubtitles: _showSubtitles,
                   onToggleCloze: _toggleCloze,
                   onShowAllCloze: _setAllClozeVisible,
                   fontSize: widget.settings.transcriptFontSize.toDouble(),
                   questionIndex: _currentQuestionIndex(),
-                  onSelected: (index) =>
-                      _seekToCue(index, pinDuringPreroll: true),
+                  onSelected: (_) {},
                 );
                 if (bounds.maxWidth < 900) {
                   return Column(
@@ -1987,6 +2271,7 @@ class _StudentPageState extends State<StudentPage> {
 class TeacherPage extends StatefulWidget {
   const TeacherPage({
     super.key,
+    required this.agentMode,
     this.onProjectOpened,
     required this.onPackageCreated,
     required this.onTranscriptionEnqueued,
@@ -1997,6 +2282,8 @@ class TeacherPage extends StatefulWidget {
     required this.externalProjectChanges,
     required this.openProjectRequests,
   });
+
+  final bool agentMode;
 
   final VoidCallback onPackageCreated;
   final VoidCallback? onProjectOpened;
@@ -2046,7 +2333,6 @@ class _TeacherPageState extends State<TeacherPage> {
   String? _busyOperation;
   var _creatingPackage = false;
   var _addingToLibrary = false;
-  var _creatingStandalonePlayer = false;
   var _transcriptionSubmitting = false;
   var _projectLoadGeneration = 0;
   var _projectLoading = false;
@@ -2056,6 +2342,12 @@ class _TeacherPageState extends State<TeacherPage> {
   var _selectedReviewCues = <int>{};
   final _preparingQuestionPlans = <String>{};
   Timer? _queueRefreshTimer;
+
+  @override
+  void didUpdateWidget(covariant TeacherPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.agentMode && widget.agentMode) _saveTimer?.cancel();
+  }
 
   Future<T> _withBusy<T>(String message, Future<T> Function() action) async {
     setState(() => _busyOperation = message);
@@ -2113,12 +2405,94 @@ class _TeacherPageState extends State<TeacherPage> {
         : projects.where((project) => project.id == selectedId).firstOrNull;
     setState(() {
       _projects = projects;
-      if (selectedId != null && selected == null) _project = null;
+      if (selectedId != null && selected == null && !widget.agentMode) {
+        _project = null;
+      }
     });
+    if (widget.agentMode) return;
     if (selected != null && selected.updatedAt != previousUpdatedAt) {
       _openProject(selected);
     }
     _showTeacherNotice('AI 操作已同步', '课程项目已更新。');
+  }
+
+  Future<void> _finishAgentSession() async {
+    _saveTimer?.cancel();
+    final local = _project;
+    final localTitle = _titleController.text.trim().isEmpty
+        ? '未命名项目'
+        : _titleController.text.trim();
+    final localTranscript = _srtController.text;
+    final dirty =
+        local != null &&
+        !_projectLoading &&
+        (localTitle != local.title || localTranscript != local.transcript);
+    final projects = await _store.loadAll();
+    if (!mounted) return;
+    final disk = local == null
+        ? null
+        : projects.where((item) => item.id == local.id).firstOrNull;
+    if (dirty && disk != null && disk.updatedAt != local.updatedAt) {
+      final retain = await showSpringDialog<bool>(
+        context: context,
+        builder: (dialogContext) => ContentDialog(
+          title: const Text('工程有新的修改'),
+          content: Text(
+            '本地最后保存：${local.updatedAt.toLocal()}\n'
+            '智能体最后修改：${disk.updatedAt.toLocal()}\n'
+            '请选择载入智能体工程，或将当前本地编辑保存为新工程。',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('载入智能体版本'),
+            ),
+            Button(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('保留本地草稿副本'),
+            ),
+          ],
+        ),
+      );
+      if (retain == true) {
+        final temporary = await Directory.systemTemp.createTemp(
+          'intensive-listening-draft-',
+        );
+        try {
+          final archive = File(p.join(temporary.path, 'draft.zip'));
+          await archive.writeAsBytes(await _store.exportZip(local));
+          final copy = await _store.importZip(archive);
+          await _store.save(
+            copy.copyWith(
+              title: '$localTitle 本地草稿',
+              transcript: localTranscript,
+              exercises: local.exercises,
+              step: local.step,
+            ),
+          );
+        } finally {
+          await temporary.delete(recursive: true);
+        }
+      }
+    } else if (dirty && disk != null) {
+      await _store.save(
+        local.copyWith(title: localTitle, transcript: localTranscript),
+      );
+    }
+    if (!mounted) return;
+    ++_projectLoadGeneration;
+    _titleController.clear();
+    _srtController.clear();
+    final fresh = await _store.loadAll();
+    if (!mounted) return;
+    setState(() {
+      _projects = fresh;
+      _project = null;
+      _projectLoading = false;
+      _preparedReviewCues = const [];
+      _preparedTranscript = null;
+      _selectedReviewCues = {};
+    });
   }
 
   Future<void> _openProjectFromPrivateApi(String projectId) async {
@@ -2730,6 +3104,7 @@ class _TeacherPageState extends State<TeacherPage> {
           prompt: material.prompt,
           cueIndexes: material.cueIndexes,
           repeatedCueIndexes: material.repeatedCueIndexes,
+          leadInCueIndexes: material.leadInCueIndexes,
           questionIds: questionIds,
         ),
       );
@@ -2784,6 +3159,7 @@ class _TeacherPageState extends State<TeacherPage> {
             prompt: item.prompt,
             cueIndexes: item.cueIndexes,
             repeatedCueIndexes: item.repeatedCueIndexes,
+            leadInCueIndexes: item.leadInCueIndexes,
             questionIds: [...item.questionIds, id],
           )
         else
@@ -2799,6 +3175,53 @@ class _TeacherPageState extends State<TeacherPage> {
     if (mounted) _showTeacherNotice('小题已添加', '已加入第 $number 题。');
   }
 
+  Future<void> _setMaterialLeadIn(String materialId, List<int> indexes) async {
+    final project = _project;
+    if (project == null) return;
+    final material = project.exercises.effectiveMaterials
+        .where((item) => item.id == materialId)
+        .firstOrNull;
+    if (material == null) return;
+    final occupied = {
+      for (final other in project.exercises.effectiveMaterials)
+        if (other.id != materialId) ...[
+          ...other.cueIndexes,
+          ...other.leadInCueIndexes,
+        ],
+    };
+    final leadIn = indexes.toSet().toList()..sort();
+    if (leadIn.any(
+      (index) =>
+          index < 0 ||
+          index >= material.cueIndexes.first ||
+          occupied.contains(index),
+    )) {
+      _showTeacherNotice('提示未绑定', '请选择本段开始前且未归属其他材料的句子。');
+      return;
+    }
+    final materials = [
+      for (final item in project.exercises.effectiveMaterials)
+        item.id == materialId
+            ? LessonMaterial(
+                id: item.id,
+                prompt: item.prompt,
+                cueIndexes: item.cueIndexes,
+                repeatedCueIndexes: item.repeatedCueIndexes,
+                leadInCueIndexes: leadIn,
+                questionIds: item.questionIds,
+              )
+            : item,
+    ];
+    await _saveExercises(
+      LessonExercises(
+        materials: materials,
+        questions: project.exercises.questions,
+        clozeWordIndexes: project.exercises.clozeWordIndexes,
+      ),
+    );
+    if (mounted) setState(() => _selectedReviewCues = {});
+  }
+
   Future<void> _renameQuestion(String id, String title) async {
     final project = _project;
     if (project == null) return;
@@ -2809,16 +3232,55 @@ class _TeacherPageState extends State<TeacherPage> {
         questions: [
           for (final question in project.exercises.questions)
             if (question.id == id)
-              LessonQuestion(
-                id: question.id,
-                title: trimmed.isEmpty ? '未命名题目' : trimmed,
-                cueIndexes: question.cueIndexes,
-                repeatedCueIndexes: question.repeatedCueIndexes,
-                materialId: question.materialId,
-                number: question.number,
-              )
+              question.copyWith(title: trimmed.isEmpty ? '未命名题目' : trimmed)
             else
               question,
+        ],
+        clozeWordIndexes: project.exercises.clozeWordIndexes,
+      ),
+    );
+  }
+
+  Future<void> _setQuestionOptions(
+    String id,
+    List<String> options,
+    int? answerIndex,
+  ) async {
+    final project = _project;
+    if (project == null) return;
+    await _saveExercises(
+      LessonExercises(
+        materials: project.exercises.effectiveMaterials,
+        questions: [
+          for (final question in project.exercises.questions)
+            question.id == id
+                ? question.copyWith(
+                    options: options,
+                    answerIndex:
+                        answerIndex != null &&
+                            answerIndex >= 0 &&
+                            answerIndex < options.length
+                        ? answerIndex
+                        : null,
+                  )
+                : question,
+        ],
+        clozeWordIndexes: project.exercises.clozeWordIndexes,
+      ),
+    );
+  }
+
+  Future<void> _setQuestionAnswer(String id, int? answerIndex) async {
+    final project = _project;
+    if (project == null) return;
+    await _saveExercises(
+      LessonExercises(
+        materials: project.exercises.effectiveMaterials,
+        questions: [
+          for (final question in project.exercises.questions)
+            question.id == id
+                ? question.copyWith(answerIndex: answerIndex)
+                : question,
         ],
         clozeWordIndexes: project.exercises.clozeWordIndexes,
       ),
@@ -2835,12 +3297,7 @@ class _TeacherPageState extends State<TeacherPage> {
     final oldNumber = current.number;
     final questions = [
       for (final question in project.exercises.questions)
-        LessonQuestion(
-          id: question.id,
-          title: question.title,
-          cueIndexes: question.cueIndexes,
-          repeatedCueIndexes: question.repeatedCueIndexes,
-          materialId: question.materialId,
+        question.copyWith(
           number: question.id == id
               ? targetNumber
               : question.number == targetNumber
@@ -2999,81 +3456,6 @@ class _TeacherPageState extends State<TeacherPage> {
       if (mounted) {
         setState(() {
           _creatingPackage = false;
-          _busyOperation = null;
-        });
-      }
-    }
-  }
-
-  Future<void> _exportStandalonePlayer() async {
-    final project = await _deliveryProject();
-    if (project == null || !mounted) return;
-    if (!Platform.isWindows) {
-      setState(
-        () => _notice = TeacherNotice.error('无法导出', '独立播放器需要在 Windows 版本中生成。'),
-      );
-      return;
-    }
-    setState(() => _creatingStandalonePlayer = true);
-    Directory? temporaryDirectory;
-    try {
-      final savedPath = await FilePicker.saveFile(
-        dialogTitle: '导出独立精听包',
-        fileName: '${safeFileName(project.title)}.exe',
-        bytes: Uint8List(0),
-        type: FileType.custom,
-        allowedExtensions: const ['exe'],
-      );
-      if (savedPath == null) return;
-      setState(() => _busyOperation = '正在生成独立精听包…');
-      await WidgetsBinding.instance.endOfFrame;
-      temporaryDirectory = await Directory.systemTemp.createTemp(
-        'intensive-listening-standalone-export-',
-      );
-      final packageVersion = project.packageVersion + 1;
-      final ilp = await const ProjectDelivery().createIlp(
-        project,
-        File(p.join(temporaryDirectory.path, 'lesson.ilp')),
-        packageVersion: packageVersion,
-      );
-      final output = await const StandaloneLessonExporter().create(
-        ilpFile: ilp,
-        outputFile: File(savedPath.toFilePath()),
-        packageUuid: project.packageUuid,
-        packageVersion: packageVersion,
-        title: project.title,
-      );
-      final updated = project.copyWith(
-        lastExportPath: output.path,
-        packageVersion: packageVersion,
-        step: CourseProjectStep.completed,
-      );
-      await _store.save(updated);
-      if (!mounted) return;
-      _replaceProject(updated, select: true);
-      _showTeacherNotice(
-        '独立精听包已导出',
-        '版本 $packageVersion 已写入 ${p.basename(output.path)}。',
-      );
-    } on IlpException catch (error) {
-      if (mounted) {
-        setState(() => _notice = TeacherNotice.error('无法导出', error.message));
-      }
-    } on StandaloneLessonExportException catch (error) {
-      if (mounted) {
-        setState(() => _notice = TeacherNotice.error('无法导出', error.message));
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() => _notice = TeacherNotice.error('无法导出', '$error'));
-      }
-    } finally {
-      if (temporaryDirectory != null && await temporaryDirectory.exists()) {
-        await temporaryDirectory.delete(recursive: true);
-      }
-      if (mounted) {
-        setState(() {
-          _creatingStandalonePlayer = false;
           _busyOperation = null;
         });
       }
@@ -3474,14 +3856,16 @@ class _TeacherPageState extends State<TeacherPage> {
       completed: completed,
       exporting: _creatingPackage,
       addingToLibrary: _addingToLibrary,
-      exportingStandalone: _creatingStandalonePlayer,
       selectedCueIndexes: _selectedReviewCues,
       onReplaceCueSelection: (selection) =>
           setState(() => _selectedReviewCues = selection),
       onCreateQuestion: _createQuestion,
       onAddQuestionToMaterial: _addQuestionToMaterial,
+      onSetMaterialLeadIn: _setMaterialLeadIn,
       onRemoveQuestion: _removeQuestion,
       onRenameQuestion: _renameQuestion,
+      onQuestionOptionsChanged: _setQuestionOptions,
+      onQuestionAnswerChanged: _setQuestionAnswer,
       onMoveQuestion: _moveQuestion,
       onChangePhase: _setReviewPhase,
       onToggleCloze: _toggleReviewCloze,
@@ -3489,7 +3873,6 @@ class _TeacherPageState extends State<TeacherPage> {
       onComplete: _finishReview,
       onExport: _exportPackage,
       onAddToPlayback: _addToPlayback,
-      onExportStandalone: _exportStandalonePlayer,
     );
   }
 }
@@ -3501,13 +3884,15 @@ class _ReviewWorkspace extends StatefulWidget {
     required this.completed,
     required this.exporting,
     required this.addingToLibrary,
-    required this.exportingStandalone,
     required this.selectedCueIndexes,
     required this.onReplaceCueSelection,
     required this.onCreateQuestion,
     required this.onAddQuestionToMaterial,
+    required this.onSetMaterialLeadIn,
     required this.onRemoveQuestion,
     required this.onRenameQuestion,
+    required this.onQuestionOptionsChanged,
+    required this.onQuestionAnswerChanged,
     required this.onMoveQuestion,
     required this.onChangePhase,
     required this.onToggleCloze,
@@ -3515,7 +3900,6 @@ class _ReviewWorkspace extends StatefulWidget {
     required this.onComplete,
     required this.onExport,
     required this.onAddToPlayback,
-    required this.onExportStandalone,
   });
 
   final CourseProject project;
@@ -3523,13 +3907,17 @@ class _ReviewWorkspace extends StatefulWidget {
   final bool completed;
   final bool exporting;
   final bool addingToLibrary;
-  final bool exportingStandalone;
   final Set<int> selectedCueIndexes;
   final ValueChanged<Set<int>> onReplaceCueSelection;
   final Future<void> Function() onCreateQuestion;
   final ValueChanged<String> onAddQuestionToMaterial;
+  final void Function(String materialId, List<int> cueIndexes)
+  onSetMaterialLeadIn;
   final ValueChanged<String> onRemoveQuestion;
   final void Function(String id, String title) onRenameQuestion;
+  final void Function(String id, List<String> options, int? answerIndex)
+  onQuestionOptionsChanged;
+  final void Function(String id, int? answerIndex) onQuestionAnswerChanged;
   final void Function(String id, int targetNumber) onMoveQuestion;
   final ValueChanged<ReviewPhase> onChangePhase;
   final void Function(int cueIndex, int wordIndex) onToggleCloze;
@@ -3537,7 +3925,6 @@ class _ReviewWorkspace extends StatefulWidget {
   final Future<void> Function() onComplete;
   final Future<void> Function() onExport;
   final Future<void> Function() onAddToPlayback;
-  final Future<void> Function() onExportStandalone;
 
   @override
   State<_ReviewWorkspace> createState() => _ReviewWorkspaceState();
@@ -3838,6 +4225,24 @@ class _ReviewWorkspaceState extends State<_ReviewWorkspace> {
                       child: const Text('添加小题'),
                     ),
                     const SizedBox(width: 4),
+                    Button(
+                      onPressed: widget.selectedCueIndexes.isEmpty
+                          ? null
+                          : () => widget.onSetMaterialLeadIn(
+                              material.id,
+                              widget.selectedCueIndexes.toList(),
+                            ),
+                      child: const Text('绑定所选提前提示'),
+                    ),
+                    if (material.leadInCueIndexes.isNotEmpty) ...[
+                      const SizedBox(width: 4),
+                      Button(
+                        onPressed: () =>
+                            widget.onSetMaterialLeadIn(material.id, const []),
+                        child: const Text('清除提示'),
+                      ),
+                    ],
+                    const SizedBox(width: 4),
                     Tooltip(
                       message: '在原文中查看',
                       child: IconButton(
@@ -3880,6 +4285,16 @@ class _ReviewWorkspaceState extends State<_ReviewWorkspace> {
                   onTitleChanged: (title) => widget.onRenameQuestion(
                     questions[questionIndex].id,
                     title,
+                  ),
+                  onOptionsChanged: (options, answer) =>
+                      widget.onQuestionOptionsChanged(
+                        questions[questionIndex].id,
+                        options,
+                        answer,
+                      ),
+                  onAnswerChanged: (answer) => widget.onQuestionAnswerChanged(
+                    questions[questionIndex].id,
+                    answer,
                   ),
                   onRemove: () =>
                       widget.onRemoveQuestion(questions[questionIndex].id),
@@ -4270,10 +4685,7 @@ class _ReviewWorkspaceState extends State<_ReviewWorkspace> {
     final repeatedQuestionCount = project.exercises.effectiveMaterials
         .where((material) => material.repeatedCueIndexes.isNotEmpty)
         .length;
-    final deliveryBusy =
-        widget.exporting ||
-        widget.addingToLibrary ||
-        widget.exportingStandalone;
+    final deliveryBusy = widget.exporting || widget.addingToLibrary;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -4421,29 +4833,6 @@ class _ReviewWorkspaceState extends State<_ReviewWorkspace> {
                           Button(
                             onPressed: deliveryBusy
                                 ? null
-                                : () => widget.onExportStandalone(),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (widget.exportingStandalone) ...[
-                                  const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: ProgressRing(strokeWidth: 2),
-                                  ),
-                                  const SizedBox(width: 8),
-                                ],
-                                Text(
-                                  widget.exportingStandalone
-                                      ? '正在生成 .exe'
-                                      : '导出为独立精听包',
-                                ),
-                              ],
-                            ),
-                          ),
-                          Button(
-                            onPressed: deliveryBusy
-                                ? null
                                 : () => widget.onAddToPlayback(),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -4522,6 +4911,8 @@ class _QuestionQuickEditor extends StatefulWidget {
     required this.sectionLabel,
     required this.onNumberChanged,
     required this.onTitleChanged,
+    required this.onOptionsChanged,
+    required this.onAnswerChanged,
     required this.onRemove,
     required this.onLocate,
     this.embedded = false,
@@ -4534,6 +4925,8 @@ class _QuestionQuickEditor extends StatefulWidget {
   final String sectionLabel;
   final ValueChanged<int> onNumberChanged;
   final ValueChanged<String> onTitleChanged;
+  final void Function(List<String> options, int? answerIndex) onOptionsChanged;
+  final ValueChanged<int?> onAnswerChanged;
   final VoidCallback onRemove;
   final VoidCallback onLocate;
   final bool embedded;
@@ -4546,7 +4939,12 @@ class _QuestionQuickEditorState extends State<_QuestionQuickEditor> {
   late final TextEditingController _controller = TextEditingController(
     text: widget.question.title,
   );
+  late final List<TextEditingController> _optionControllers = [
+    for (final option in widget.question.options)
+      TextEditingController(text: option),
+  ];
   Timer? _commitTimer;
+  Timer? _optionCommitTimer;
 
   @override
   void didUpdateWidget(covariant _QuestionQuickEditor oldWidget) {
@@ -4555,6 +4953,38 @@ class _QuestionQuickEditorState extends State<_QuestionQuickEditor> {
         widget.question.title != _controller.text) {
       _controller.text = widget.question.title;
     }
+    if (widget.question.options.length != _optionControllers.length) {
+      for (final controller in _optionControllers) {
+        controller.dispose();
+      }
+      _optionControllers
+        ..clear()
+        ..addAll([
+          for (final option in widget.question.options)
+            TextEditingController(text: option),
+        ]);
+    } else if (widget.question.options != oldWidget.question.options) {
+      for (var index = 0; index < _optionControllers.length; index++) {
+        if (_optionControllers[index].text != widget.question.options[index]) {
+          _optionControllers[index].text = widget.question.options[index];
+        }
+      }
+    }
+  }
+
+  void _commitOptions({int? answerIndex}) {
+    _optionCommitTimer?.cancel();
+    widget.onOptionsChanged([
+      for (final controller in _optionControllers) controller.text.trim(),
+    ], answerIndex ?? widget.question.answerIndex);
+  }
+
+  void _scheduleOptionsCommit() {
+    _optionCommitTimer?.cancel();
+    _optionCommitTimer = Timer(
+      const Duration(milliseconds: 280),
+      _commitOptions,
+    );
   }
 
   void _scheduleTitleCommit(String value) {
@@ -4568,10 +4998,22 @@ class _QuestionQuickEditorState extends State<_QuestionQuickEditor> {
   @override
   void dispose() {
     _commitTimer?.cancel();
+    _optionCommitTimer?.cancel();
     if (_controller.text != widget.question.title) {
       widget.onTitleChanged(_controller.text);
     }
+    final options = [
+      for (final controller in _optionControllers) controller.text.trim(),
+    ];
+    if (options.length != widget.question.options.length ||
+        Iterable<int>.generate(options.length)
+            .any((index) => options[index] != widget.question.options[index])) {
+      widget.onOptionsChanged(options, widget.question.answerIndex);
+    }
     _controller.dispose();
+    for (final controller in _optionControllers) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -4615,6 +5057,69 @@ class _QuestionQuickEditorState extends State<_QuestionQuickEditor> {
                 maxLines: 6,
                 onChanged: _scheduleTitleCommit,
                 onSubmitted: widget.onTitleChanged,
+              ),
+              const SizedBox(height: 10),
+              Text('选项与答案', style: theme.typography.caption),
+              const SizedBox(height: 5),
+              for (var index = 0; index < _optionControllers.length; index++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 25,
+                        child: Text('${String.fromCharCode(65 + index)}.'),
+                      ),
+                      Expanded(
+                        child: TextBox(
+                          controller: _optionControllers[index],
+                          placeholder: '设置选项',
+                          onChanged: (_) => _scheduleOptionsCommit(),
+                          onSubmitted: (_) => _commitOptions(),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Tooltip(
+                        message: '设为正确答案',
+                        child: Checkbox(
+                          checked: widget.question.answerIndex == index,
+                          onChanged: (checked) => widget.onAnswerChanged(
+                            checked == true ? index : null,
+                          ),
+                          content: const Text('答案'),
+                        ),
+                      ),
+                      Tooltip(
+                        message: '删除选项',
+                        child: IconButton(
+                          icon: const Icon(FluentIcons.delete, size: 14),
+                          onPressed: () {
+                            final oldAnswer = widget.question.answerIndex;
+                            setState(
+                              () =>
+                                  _optionControllers.removeAt(index).dispose(),
+                            );
+                            _commitOptions(
+                              answerIndex: oldAnswer == index
+                                  ? -1
+                                  : oldAnswer != null && oldAnswer > index
+                                  ? oldAnswer - 1
+                                  : oldAnswer,
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              Button(
+                onPressed: () {
+                  setState(
+                    () => _optionControllers.add(TextEditingController()),
+                  );
+                  _commitOptions();
+                },
+                child: const Text('添加选项'),
               ),
               const SizedBox(height: 7),
               Text(
@@ -5444,11 +5949,15 @@ class TeacherNotice {
   factory TeacherNotice.success(String title, String message) =>
       TeacherNotice._(InfoBarSeverity.success, title, message);
 
-  factory TeacherNotice.warning(String title, String message) =>
-      TeacherNotice._(InfoBarSeverity.warning, title, message);
+  factory TeacherNotice.warning(String title, String message) {
+    AppLog.warning('$title: $message');
+    return TeacherNotice._(InfoBarSeverity.warning, title, message);
+  }
 
-  factory TeacherNotice.error(String title, String message) =>
-      TeacherNotice._(InfoBarSeverity.error, title, message);
+  factory TeacherNotice.error(String title, String message) {
+    AppLog.error('$title: $message');
+    return TeacherNotice._(InfoBarSeverity.error, title, message);
+  }
 
   final InfoBarSeverity severity;
   final String title;
@@ -5482,8 +5991,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _cloudTimeoutController;
   late final TextEditingController _cloudConcurrencyController;
   var _saving = false;
-  var _updating = false;
   var _clearingCache = false;
+  var _clearingLogs = false;
   var _exportingApi = false;
   var _importingApi = false;
 
@@ -5717,123 +6226,17 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<String> _agentPrompt() async {
     final discovery = await _mcpDiscovery();
-    final configuration = await _mcpConfiguration();
-    return '''# Intensive Listening 课程制作智能体
-
-你的任务是把用户提供的试卷 Word 与听力音频整理成可直接学习的精听课程。应用负责保存工程、ASR、SRT 解析与词索引；你负责理解试卷、组织听力材料与小题、设置挖空并完成课程。
-
-## 连接
-
-1. 保持 Intensive Listening 运行，并在设置中启用 MCP。
-2. 优先使用下面的标准 MCP 配置。连接初始化会携带 `event=Agent`，应用随后进入“智能体正在工作”状态。
-3. 连接成功后，必须先读取初始化响应中 `instructions` 指向的 `HELP.md`，再调用任何课程制作工具。
-4. 按照 `HELP.md` 的当前版本执行，并首先调用 `intensive_listening_status`。返回 `event=Agent` 后开始制作；若会话回到 `event=User`，停止写入并提示用户重新连接。
-
-```json
-$configuration
-```
-
-## 制作依据
-
-- 试卷 Word 是题号、题目文本、选项内容和题目顺序的主要依据。
-- `get_course_project` / `read_project_srt` 返回的 cue、时间、`isMarker` 和 `words` 是音频定位与索引的唯一依据。轮询只读取工程摘要；字幕使用分页读取，避免反复传输整份数据。
-- 如有听力原文，逐段对照原文和 SRT 的段落、播报、对话与重复朗读结构；校正有依据的断词、粘词、空格和误识别，使每个词有意义，连起来符合正常语义与语流。原文缺失或与音频冲突时依据实际音频，不凭题目补造台词。
-- 需要初稿时显式调用 `auto_plan_questions`；结合试卷和原文检查后再保留、移动、合并或替换。
-- 数据采用“听力材料 → 多道小题”两层结构。一段对话或独白的 cue 只归属一个材料，同一材料可包含一道或多道小题；与任何材料无关的内容保持未归题，在播放器中作为题前提示出现。
-
-## 标准制作流程
-
-### 1. 整理输入
-
-识别用户提供的 DOCX 试卷和音频绝对路径。创建或恢复工程后，调用 `import_exam_document` 将 DOCX 复制到工程并生成 UTF-8 文本，再分页调用 `read_exam_text` 读取试卷内容。依据返回文本形成有序题目清单，至少记录题号和完整题目内容；选项影响理解时，将必要选项一并写入题目文本。以试卷标题或音频文件名生成清晰的课程名称。
-
-### 2. 选择工程
-
-调用 `list_course_projects`。存在与本次试卷、音频对应的工程时，调用 `get_course_project` 继续该工程；仅在没有对应工程时调用 `create_course_project`。如果 `examDocument` 为空，调用 `import_exam_document`；已有试卷时优先调用 `read_exam_text` 复用项目文本。删除工程必须来自用户的明确要求。
-
-### 3. 准备转写
-
-读取工程状态：
-
-- `hasAudio=false`：调用 `import_project_media` 绑定音频。
-- `hasTranscript=true`：直接复用现有字幕。
-- 已进入转写阶段：轮询 `get_course_project(fields: [])`，等待 `hasTranscript=true`。
-- 尚未开始且没有字幕：调用一次 `start_project_asr`，随后轮询工程状态。
-
-转写在应用后台执行，完成后 SRT 自动写入工程。轮询建议使用逐步增加的间隔；同一工程已有转写任务时不重复提交。
-
-### 4. 读取应用分析结果
-
-字幕就绪后分页调用 `read_project_srt(offset, limit, includeSrt: false)`，读取每个 cue 的：
-
-- `index`、`startMs`、`endMs`、`text`
-- `sectionIndex`、`isMarker`
-- `words[]` 中由应用生成的单词 `index` 与 `text`
-
-后续写入只能使用这次读取到的索引。项目发生变化或接口报告索引无效时，重新读取后再规划。
-逐句检查英文词是否完整、词间空格是否正确、相邻句能否自然连读，以及两遍朗读的对应句是否完全一致。单句转写有误时使用 `set_cue_text` 修正并重新读取受影响的词索引；整份 SRT 更新使用 `import_project_srt(mode: auto)`，并检查返回的 `preserved` 与 `cleared` 统计。
-
-### 5. 校正材料与小题
-
-按试卷顺序，将题目与原文的语义、时间顺序和答案信息对齐：
-
-- 小题标题写入试卷中的真实题目内容，保持题号顺序。
-- 以一段完整对话或独白建立材料并选择对应 cue；例如“听下面一段对话，回答第 6 和第 7 小题”应建立一个材料，其下包含第 6、7 两道小题。
-- “听下面两段录音……”一类播报保留在原始 cue 流或材料元数据中，不单独建立页面标题、章节或题目。
-- 自动规划会规范 `1 2 - 1 3`、全角数字和中文数字；最终题号必须以试卷为准。
-- `isMarker=true`、`Text XXX`、考试说明、章节播报、倒计时和纯旁白保持未归题。
-- 同一句不能跨材料重复分配。同一材料内的小题共享整段音频，切换小题不应改变播放位置。
-- 对单题材料尤其检查是否播放两遍：两遍归属同一材料和同一道题，在 `apply_question_plan` 的该材料中用 `repeatedCueIndexes` 标记第二遍 cue。对应的两句字幕文本应完全一致；先修正 SRT 再提交题目计划。音频只播放一遍时保持该字段为空。
-
-需要应用初稿时调用 `auto_plan_questions`；有试卷时优先一次调用 `apply_question_plan`，保证题目顺序和 cue 归属原子更新。仅做局部修订时使用 `add_question_group`、`edit_question_group` 或 `delete_question_group`。
-
-### 6. 设置挖空
-
-使用 `words[]` 返回的索引选择挖空。优先选择能训练听辨且承载信息的内容词、数字、专有名词和关键短语，保持句子仍可理解；标点不参与索引。无法确定索引时先调用 `tokenize_lesson_text`。重复出现的同一句采用一致的挖空词。
-
-完整设置使用 `apply_cloze_plan`，小范围修改使用 `set_sentence_cloze`。提交前核对每个 `wordIndexes` 都属于对应 cue。
-
-### 7. 复核与交付
-
-写入后重新调用 `get_course_project`，逐项确认：
-
-- 题目数量、文本和顺序与试卷一致。
-- 材料 cue 不重复，提示内容未进入材料。
-- 重复朗读的第二遍 cue 已标记，且两遍对应句的字幕完全一致。
-- 挖空索引对应预期单词。
-
-随后调用 `validate_course_project`。`valid=true` 后，默认调用 `add_project_to_playback`，让课程直接出现在学生端。用户要求文件交付并给出输出路径时，选择 `export_ilp`；需要可独立运行的 Windows 课程时选择 `export_standalone_player`。
-
-只有在试卷内容缺失、多个分组方案同样成立且会实质改变课程时才向用户确认。其余情况依据试卷、时间顺序和语义完成制作。
-
-## 完成报告
-
-简要报告课程名称、工程 ID、题目数量、设置挖空的句子数和交付结果。存在无法可靠对齐的题目时，列出题号并说明需要用户复核的位置。
-
-## HTTP Tool Call 备选方式
-
-标准 MCP 不可用时，可调用同一主进程提供的 HTTP Tool Call：
-
-- 请求头：`Authorization: Bearer ${discovery['token']}`
-- 建立会话：`POST http://127.0.0.1:$appMcpPort/v1/agent/connect`
-```json
-{"event":"Agent"}
-```
-- 读取工具：`GET http://127.0.0.1:$appMcpPort/v1/tools`
-- 调用工具：`POST ${discovery['toolCallUrl']}`
-```json
-{"name":"list_course_projects","arguments":{}}
-```
-- 结束会话：`POST http://127.0.0.1:$appMcpPort/v1/agent/disconnect`，请求体为 `{}`。
-
-标准 MCP 工作完成后，请总结已完成的项目变更，并提示用户在应用内点击“强制断开”以返回 User 状态。
-''';
+    final path = discovery['bootstrapPath'];
+    if (path is! String || path.isEmpty) {
+      throw const AppPrivateApiException('mcp_discovery_invalid', 'MCP.md 不可用');
+    }
+    return '读取「$path」文件并按其中流程操作。';
   }
 
   Future<void> _copyMcpCommand() async {
     try {
       await Clipboard.setData(ClipboardData(text: await _mcpConfiguration()));
-      if (mounted) _showSettingsNotice('MCP 配置已复制', '可粘贴到 AI CLI 配置中。');
+      if (mounted) _showSettingsNotice('MCP 配置已复制', '可粘贴到 AI 客户端的 MCP 配置中。');
     } catch (error) {
       if (mounted) {
         _showSettingsNotice(
@@ -5848,33 +6251,11 @@ $configuration
   Future<void> _copyAgentPrompt() async {
     try {
       await Clipboard.setData(ClipboardData(text: await _agentPrompt()));
-      if (mounted) _showSettingsNotice('提示.md 已复制', '可直接发送给 AI CLI。');
+      if (mounted) _showSettingsNotice('一键操作提示已复制', '直接发送给 AI 即可开始制作。');
     } catch (error) {
       if (mounted) {
         _showSettingsNotice('提示不可用', '$error', severity: InfoBarSeverity.error);
       }
-    }
-  }
-
-  Future<void> _exportAgentPrompt() async {
-    String prompt;
-    try {
-      prompt = await _agentPrompt();
-    } catch (error) {
-      if (mounted) {
-        _showSettingsNotice('提示不可用', '$error', severity: InfoBarSeverity.error);
-      }
-      return;
-    }
-    final output = await FilePicker.saveFile(
-      dialogTitle: '生成提示.md',
-      fileName: '提示.md',
-      bytes: Uint8List.fromList(utf8.encode(prompt)),
-      type: FileType.custom,
-      allowedExtensions: const ['md'],
-    );
-    if (output != null && mounted) {
-      _showSettingsNotice('提示.md 已生成', '文件可提供给 AI CLI 使用。');
     }
   }
 
@@ -5903,53 +6284,13 @@ $configuration
     }
   }
 
-  Future<void> _chooseUpdate() async {
-    final selected = await pickFileWith(
-      allowedExtensions: const ['zip'],
-      dialogTitle: '选择新版本更新包',
-    );
-    if (selected == null || !mounted) return;
-    setState(() => _updating = true);
-    try {
-      final service = const AppUpdateService();
-      final update = await service.stage(File(selected));
-      if (!mounted) return;
-      final accepted = await showSpringDialog<bool>(
-        context: context,
-        builder: (dialogContext) => ContentDialog(
-          title: Text('更新到 ${update.version}'),
-          content: const Text('应用将关闭并打开新版本安装程序。请先完成正在进行的转写任务。'),
-          actions: [
-            Button(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('开始更新'),
-            ),
-          ],
-        ),
-      );
-      if (accepted != true) return;
-      await service.install(update);
-      exit(0);
-    } catch (error) {
-      if (mounted) {
-        _showSettingsNotice('更新未完成', '$error', severity: InfoBarSeverity.error);
-      }
-    } finally {
-      if (mounted) setState(() => _updating = false);
-    }
-  }
-
   Future<void> _showAbout() async {
     await showSpringDialog<void>(
       context: context,
       builder: (dialogContext) => ContentDialog(
         title: const Text('关于 Intensive Listening'),
         content: Text(
-          '版本 ${const AppUpdateService().currentVersion}\n'
+          '版本 $appVersion Prelude\n'
           '数据格式 $appDataSchemaVersion\n'
           'By Luyii',
         ),
@@ -5988,6 +6329,50 @@ $configuration
           severity: InfoBarSeverity.error,
         );
       }
+    }
+  }
+
+  Future<void> _openLogDirectory() async {
+    try {
+      final directory = await AppLog.directory();
+      if (Platform.isWindows) {
+        await Process.start('explorer.exe', [directory.path]);
+      } else if (Platform.isMacOS) {
+        await Process.start('open', [directory.path]);
+      } else if (Platform.isLinux) {
+        await Process.start('xdg-open', [directory.path]);
+      }
+    } catch (error) {
+      if (mounted) {
+        _showSettingsNotice(
+          '无法打开日志目录',
+          '$error',
+          severity: InfoBarSeverity.error,
+        );
+      }
+    }
+  }
+
+  Future<void> _clearLogs() async {
+    setState(() => _clearingLogs = true);
+    try {
+      final bytes = await AppLog.clear();
+      if (mounted) {
+        _showSettingsNotice(
+          '日志已清理',
+          '已释放 ${(bytes / 1024).toStringAsFixed(1)} KB。',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        _showSettingsNotice(
+          '清理日志失败',
+          '$error',
+          severity: InfoBarSeverity.error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _clearingLogs = false);
     }
   }
 
@@ -6154,14 +6539,47 @@ $configuration
                     ),
                     const SizedBox(height: 8),
                     _SettingsCard(
+                      child: _SettingsToggleRow(
+                        icon: FluentIcons.info,
+                        title: '调试模式',
+                        description: '开启后在日志目录中记录详细诊断信息。',
+                        checked: _settings.debugLogging,
+                        onChanged: (value) => setState(
+                          () => _settings = _settings.copyWith(
+                            debugLogging: value,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(
+                      child: ListTile(
+                        leading: const Icon(FluentIcons.folder_open),
+                        title: const Text('日志'),
+                        subtitle: const Text('警告和错误保存在数据目录的 logs 文件夹中。'),
+                        trailing: Wrap(
+                          spacing: 8,
+                          children: [
+                            Button(
+                              onPressed: _openLogDirectory,
+                              child: const Text('打开日志目录'),
+                            ),
+                            Button(
+                              onPressed: _clearingLogs ? null : _clearLogs,
+                              child: Text(_clearingLogs ? '清理中…' : '清理日志'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(
                       child: ListTile(
                         leading: const Icon(FluentIcons.delete),
                         title: const Text('缓存'),
-                        subtitle: const Text('释放更新包及临时文件占用的空间；课程和制作数据保留。'),
+                        subtitle: const Text('释放可重新生成的临时文件；课程和制作数据保留。'),
                         trailing: Button(
-                          onPressed: _clearingCache || _updating
-                              ? null
-                              : _clearCache,
+                          onPressed: _clearingCache ? null : _clearCache,
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -6174,33 +6592,6 @@ $configuration
                                 const SizedBox(width: 8),
                               ],
                               Text(_clearingCache ? '清理中…' : '清理'),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _SettingsCard(
-                      child: ListTile(
-                        leading: const Icon(FluentIcons.download),
-                        title: const Text('应用更新'),
-                        subtitle: const Text('选择官方更新 ZIP，校验后启动安装程序。'),
-                        trailing: Button(
-                          onPressed: _updating || _clearingCache
-                              ? null
-                              : _chooseUpdate,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_updating) ...[
-                                const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: ProgressRing(strokeWidth: 2),
-                                ),
-                                const SizedBox(width: 8),
-                              ],
-                              Text(_updating ? '准备中…' : '选择更新包'),
                             ],
                           ),
                         ),
@@ -6353,17 +6744,20 @@ $configuration
                   spacing: 8,
                   runSpacing: 8,
                   children: [
+                    FilledButton(
+                      onPressed: _copyAgentPrompt,
+                      child: const Text('复制一键操作提示'),
+                    ),
                     Button(
                       onPressed: _copyMcpCommand,
-                      child: const Text('复制 MCP 配置'),
+                      child: const Text('复制MCP配置'),
                     ),
-                    Button(
-                      onPressed: _copyAgentPrompt,
-                      child: const Text('复制 提示.md'),
-                    ),
-                    Button(
-                      onPressed: _exportAgentPrompt,
-                      child: const Text('生成 提示.md'),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 7),
+                      child: Text(
+                        '直接复制发送给 AI 即可快速开始制作',
+                        style: theme.typography.caption,
+                      ),
                     ),
                   ],
                 ),
@@ -6393,18 +6787,18 @@ $configuration
                       ListTile(
                         leading: Icon(FluentIcons.copy),
                         title: Text('2. 连接 AI 客户端'),
-                        subtitle: Text('复制 MCP 配置，粘贴到 WorkBuddy 或 AI CLI。'),
+                        subtitle: Text('复制 MCP 配置，粘贴到 WorkBuddy 或 AI CLI 配置。'),
                       ),
                       ListTile(
                         leading: Icon(FluentIcons.robot),
                         title: Text('3. 开始制作'),
-                        subtitle: Text('把试卷 Word 和音频交给智能体；完成后课程可直接加入学生端播放。'),
+                        subtitle: Text('复制一键操作提示发送给 AI，再提供音频、试卷及答案或原文。'),
                       ),
                       Padding(
                         padding: EdgeInsets.fromLTRB(12, 4, 12, 8),
                         child: Align(
                           alignment: Alignment.centerLeft,
-                          child: Text('连接期间应用进入智能体工作状态；强制断开后恢复手动操作。'),
+                          child: Text('应用会先显示接管审批；制作完成后智能体返回用户模式。'),
                         ),
                       ),
                     ],
@@ -6600,63 +6994,90 @@ class _StudentHome extends StatelessWidget {
                         : 0.0;
                     return Card(
                       padding: EdgeInsets.zero,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: ListTile(
-                              leading: openingLessonId == lesson.id
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: ProgressRing(strokeWidth: 2),
-                                    )
-                                  : const Icon(FluentIcons.music_note),
-                              title: Text(lesson.manifest.title),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${formatDuration(record?.position ?? Duration.zero)} / '
-                                    '${formatDuration(lesson.manifest.duration)} · '
-                                    '版本 ${lesson.manifest.packageVersion}',
-                                  ),
-                                  const SizedBox(height: 7),
-                                  SpringProgressBar(
-                                    value: (fraction * 100).clamp(0, 100),
-                                  ),
-                                ],
-                              ),
-                              onPressed:
-                                  openingLessonId != null ||
-                                      deletingLessonId != null
-                                  ? null
-                                  : () => onOpen(lesson),
-                            ),
-                          ),
-                          const Divider(direction: Axis.vertical, size: 40),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            child: Tooltip(
-                              message: '移除课程',
-                              child: IconButton(
-                                key: studentLessonRemoveButtonKey(lesson.id),
-                                icon: deletingLessonId == lesson.id
+                      child: SizedBox(
+                        height: 96,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: ListTile(
+                                leading: openingLessonId == lesson.id
                                     ? const SizedBox(
-                                        width: 14,
-                                        height: 14,
+                                        width: 18,
+                                        height: 18,
                                         child: ProgressRing(strokeWidth: 2),
                                       )
-                                    : const Icon(FluentIcons.delete),
+                                    : const Icon(FluentIcons.music_note),
+                                title: Text(
+                                  lesson.manifest.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    const SizedBox(height: 4),
+                                    LayoutBuilder(
+                                      builder: (context, lineBounds) => Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              '${formatDuration(record?.position ?? Duration.zero)} / '
+                                              '${formatDuration(lesson.manifest.duration)} · '
+                                              '版本 ${lesson.manifest.packageVersion}',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          SizedBox(
+                                            width: (lineBounds.maxWidth * 0.35)
+                                                .clamp(0.0, 160.0),
+                                            child: _LessonProgressTrack(
+                                              fraction: fraction.clamp(
+                                                0.0,
+                                                1.0,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
                                 onPressed:
-                                    deletingLessonId != null ||
-                                        openingLessonId != null
+                                    openingLessonId != null ||
+                                        deletingLessonId != null
                                     ? null
-                                    : () => onRemove(lesson),
+                                    : () => onOpen(lesson),
                               ),
                             ),
-                          ),
-                        ],
+                            const Divider(direction: Axis.vertical, size: 40),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              child: Tooltip(
+                                message: '移除课程',
+                                child: IconButton(
+                                  key: studentLessonRemoveButtonKey(lesson.id),
+                                  icon: deletingLessonId == lesson.id
+                                      ? const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: ProgressRing(strokeWidth: 2),
+                                        )
+                                      : const Icon(FluentIcons.delete),
+                                  onPressed:
+                                      deletingLessonId != null ||
+                                          openingLessonId != null
+                                      ? null
+                                      : () => onRemove(lesson),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   },
@@ -6670,15 +7091,52 @@ class _StudentHome extends StatelessWidget {
   }
 }
 
+class _LessonProgressTrack extends StatelessWidget {
+  const _LessonProgressTrack({required this.fraction});
+
+  final double fraction;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 6,
+    child: LayoutBuilder(
+      builder: (context, bounds) => Stack(
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.grey.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOut,
+            width: bounds.maxWidth * fraction,
+            height: 6,
+            decoration: BoxDecoration(
+              color: Colors.red,
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class PlayerSection extends StatelessWidget {
   const PlayerSection({
     super.key,
-    required this.title,
-    required this.cueCount,
     required this.hasTranscript,
-    this.questionTitles = const [],
+    this.questions = const [],
+    this.activeMaterial,
+    this.onJumpMaterial,
+    this.onRepeatSentence,
+    this.materialClozeVisible = false,
+    this.onToggleMaterialCloze,
     this.manifest,
-    this.sourcePath,
     required this.showSubtitles,
     required this.duration,
     required this.position,
@@ -6694,12 +7152,14 @@ class PlayerSection extends StatelessWidget {
     this.onShowAllCloze,
   });
 
-  final String title;
-  final int cueCount;
   final bool hasTranscript;
-  final List<String> questionTitles;
+  final List<LessonQuestion> questions;
+  final LessonMaterial? activeMaterial;
+  final ValueChanged<LessonMaterial>? onJumpMaterial;
+  final Future<void> Function()? onRepeatSentence;
+  final bool materialClozeVisible;
+  final VoidCallback? onToggleMaterialCloze;
   final IlpManifest? manifest;
-  final String? sourcePath;
   final bool showSubtitles;
   final Duration duration;
   final Duration position;
@@ -6714,152 +7174,285 @@ class PlayerSection extends StatelessWidget {
   final bool showAllCloze;
   final ValueChanged<bool>? onShowAllCloze;
 
-  Future<void> _showFileInfo(BuildContext context) async {
-    final file = sourcePath == null ? null : File(sourcePath!);
-    final size = file != null && await file.exists()
-        ? await file.length()
-        : null;
-    if (!context.mounted) return;
-    final details = <String>[
-      '名称：$title',
-      '类型：${manifest == null ? '普通音频' : 'ILP 精听包'}',
-      '时长：${formatDuration(duration)}',
-      if (manifest != null) ...[
-        '精听包版本：${manifest!.packageVersion}',
-        '格式版本：${manifest!.formatVersion}',
-        '包 UUID：${manifest!.packageUuid}',
-        '字幕：$cueCount 句',
-      ],
-      if (size != null) '音频大小：${(size / (1024 * 1024)).toStringAsFixed(2)} MB',
-      if (sourcePath != null) '文件位置：$sourcePath',
-    ];
-    await showSpringDialog<void>(
-      context: context,
-      builder: (dialogContext) => ContentDialog(
-        title: const Text('文件信息'),
-        content: SizedBox(
-          width: 500,
-          child: SelectableText(details.join('\n')),
-        ),
-        actions: [
-          Button(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
+    final materials =
+        manifest?.exercises.effectiveMaterials
+            .where((material) => material.questionIds.isNotEmpty)
+            .toList(growable: false) ??
+        const <LessonMaterial>[];
     return LayoutBuilder(
-      builder: (context, bounds) => SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: bounds.maxHeight - 36),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Card(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      builder: (context, bounds) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: Center(
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        minHeight: 120,
-                        maxHeight: 300,
+                      constraints: BoxConstraints(
+                        maxHeight: (bounds.maxHeight * 0.48).clamp(0.0, 480.0),
                       ),
-                      child: SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Text(
-                              questionTitles.length == 1 &&
-                                      questionTitles.first == '未设置'
-                                  ? '当前题目'
-                                  : '当前材料 · ${questionTitles.length} 题',
-                              style: theme.typography.caption,
-                            ),
-                            const SizedBox(height: 12),
-                            for (
-                              var index = 0;
-                              index < questionTitles.length;
-                              index++
-                            ) ...[
-                              if (index > 0) const SizedBox(height: 12),
-                              Text(
-                                questionTitles[index],
-                                style: theme.typography.subtitle?.copyWith(
-                                  fontSize: 20,
-                                  height: 1.4,
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Card(
+                          padding: const EdgeInsets.all(16),
+                          child: questions.isEmpty
+                              ? Align(
+                                  heightFactor: 1,
+                                  child: Text(
+                                    '当前题目未设置',
+                                    style: theme.typography.subtitle,
+                                  ),
+                                )
+                              : SingleChildScrollView(
+                                  key: ValueKey(
+                                    activeMaterial?.id ?? 'no-material',
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      for (
+                                        var index = 0;
+                                        index < questions.length;
+                                        index++
+                                      ) ...[
+                                        if (index > 0)
+                                          const SizedBox(height: 14),
+                                        _StudentQuestion(
+                                          key: ValueKey(questions[index].id),
+                                          question: questions[index],
+                                        ),
+                                      ],
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            ],
-                          ],
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  Text(
-                    title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: theme.typography.title,
+                ),
+                const SizedBox(height: 24),
+                PlaybackControls(
+                  duration: duration,
+                  position: position,
+                  playing: playing,
+                  singleSentenceLoop: singleSentenceLoop,
+                  onTogglePlayback: onTogglePlayback,
+                  onSeek: onSeek,
+                  onStepSentence: hasTranscript ? onStepSentence : null,
+                  onStepQuestion: onStepQuestion,
+                  onSingleSentenceLoopChanged: hasTranscript
+                      ? onSingleSentenceLoopChanged
+                      : null,
+                  showSubtitles: showSubtitles,
+                  onShowSubtitlesChanged: hasTranscript
+                      ? onShowSubtitlesChanged
+                      : null,
+                ),
+                if (hasTranscript || onShowAllCloze != null) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (hasTranscript)
+                        Button(
+                          onPressed: onRepeatSentence == null
+                              ? null
+                              : () => unawaited(onRepeatSentence!()),
+                          child: const Text('重复本句'),
+                        ),
+                      if (activeMaterial != null)
+                        Button(
+                          onPressed: onToggleMaterialCloze,
+                          child: Text(
+                            materialClozeVisible ? '隐藏本段挖空' : '显示本段挖空',
+                          ),
+                        ),
+                      if (onShowAllCloze != null)
+                        Button(
+                          onPressed: () => onShowAllCloze!(!showAllCloze),
+                          child: Text(showAllCloze ? '隐藏全部挖空' : '显示全部挖空'),
+                        ),
+                    ],
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    hasTranscript
-                        ? '${formatDuration(duration)} · $cueCount 句'
-                        : '${formatDuration(duration)} · 普通音频',
-                    textAlign: TextAlign.center,
-                    style: theme.typography.caption,
-                  ),
-                  const SizedBox(height: 8),
-                  Center(
-                    child: Button(
-                      onPressed: () => unawaited(_showFileInfo(context)),
-                      child: const Text('文件信息'),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  PlaybackControls(
-                    duration: duration,
-                    position: position,
-                    playing: playing,
-                    singleSentenceLoop: singleSentenceLoop,
-                    onTogglePlayback: onTogglePlayback,
-                    onSeek: onSeek,
-                    onStepSentence: hasTranscript ? onStepSentence : null,
-                    onStepQuestion: onStepQuestion,
-                    onSingleSentenceLoopChanged: hasTranscript
-                        ? onSingleSentenceLoopChanged
-                        : null,
-                    showSubtitles: showSubtitles,
-                    onShowSubtitlesChanged: hasTranscript
-                        ? onShowSubtitlesChanged
-                        : null,
-                  ),
-                  if (onShowAllCloze != null) ...[
-                    const SizedBox(height: 12),
-                    Center(
-                      child: Button(
-                        onPressed: () => onShowAllCloze!(!showAllCloze),
-                        child: Text(showAllCloze ? '隐藏全部挖空' : '显示全部挖空'),
-                      ),
-                    ),
-                  ],
                 ],
-              ),
+                if (materials.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 44,
+                    child: Row(
+                      children: [
+                        Text('题目索引', style: theme.typography.caption),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _QuestionIndexStrip(
+                            exercises: manifest!.exercises,
+                            materials: materials,
+                            activeMaterialId: activeMaterial?.id,
+                            onJumpMaterial: onJumpMaterial,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _QuestionIndexStrip extends StatefulWidget {
+  const _QuestionIndexStrip({
+    required this.exercises,
+    required this.materials,
+    required this.activeMaterialId,
+    required this.onJumpMaterial,
+  });
+
+  final LessonExercises exercises;
+  final List<LessonMaterial> materials;
+  final String? activeMaterialId;
+  final ValueChanged<LessonMaterial>? onJumpMaterial;
+
+  @override
+  State<_QuestionIndexStrip> createState() => _QuestionIndexStripState();
+}
+
+class _QuestionIndexStripState extends State<_QuestionIndexStrip> {
+  final _scrollController = ItemScrollController();
+
+  int get _activeIndex => widget.materials.indexWhere(
+    (material) => material.id == widget.activeMaterialId,
+  );
+
+  @override
+  void didUpdateWidget(covariant _QuestionIndexStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.activeMaterialId == widget.activeMaterialId) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.isAttached || _activeIndex < 0) return;
+      unawaited(
+        _scrollController.scrollTo(
+          index: _activeIndex,
+          alignment: 0.4,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScrollablePositionedList.builder(
+      scrollDirection: Axis.horizontal,
+      itemScrollController: _scrollController,
+      initialScrollIndex: _activeIndex < 0 ? 0 : _activeIndex,
+      itemCount: widget.materials.length,
+      itemBuilder: (context, index) {
+        final material = widget.materials[index];
+        final label = _materialIndexLabel(widget.exercises, material);
+        return Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: widget.activeMaterialId == material.id
+              ? FilledButton(
+                  onPressed: widget.onJumpMaterial == null
+                      ? null
+                      : () => widget.onJumpMaterial!(material),
+                  child: Text(label),
+                )
+              : Button(
+                  onPressed: widget.onJumpMaterial == null
+                      ? null
+                      : () => widget.onJumpMaterial!(material),
+                  child: Text(label),
+                ),
+        );
+      },
+    );
+  }
+}
+
+String _materialIndexLabel(LessonExercises exercises, LessonMaterial material) {
+  final numbers =
+      exercises
+          .questionsForMaterial(material)
+          .map((question) => question.number)
+          .where((number) => number > 0)
+          .toList()
+        ..sort();
+  if (numbers.isEmpty) return '未编号';
+  final consecutive =
+      numbers.length > 1 && numbers.last - numbers.first + 1 == numbers.length;
+  return '${consecutive ? '${numbers.first}–${numbers.last}' : numbers.join('、')} 题';
+}
+
+class _StudentQuestion extends StatefulWidget {
+  const _StudentQuestion({super.key, required this.question});
+
+  final LessonQuestion question;
+
+  @override
+  State<_StudentQuestion> createState() => _StudentQuestionState();
+}
+
+class _StudentQuestionState extends State<_StudentQuestion> {
+  int? _selectedOption;
+  bool _showAnswer = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FluentTheme.of(context);
+    final question = widget.question;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '第 ${question.number} 题  ${question.title}',
+          style: theme.typography.subtitle?.copyWith(fontSize: 20, height: 1.4),
+        ),
+        for (var index = 0; index < question.options.length; index++)
+          Padding(
+            padding: const EdgeInsets.only(top: 7),
+            child: ListTile.selectable(
+              selected: _selectedOption == index,
+              title: Text(
+                '${String.fromCharCode(65 + index)}. ${question.options[index]}',
+              ),
+              onPressed: () => setState(() => _selectedOption = index),
+            ),
+          ),
+        if (question.answerIndex case final answer?) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Button(
+              onPressed: () => setState(() => _showAnswer = !_showAnswer),
+              child: Text(_showAnswer ? '隐藏答案' : '显示答案'),
+            ),
+          ),
+          if (_showAnswer)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                '答案：${String.fromCharCode(65 + answer)}',
+                style: theme.typography.bodyStrong,
+              ),
+            ),
+        ],
+      ],
     );
   }
 }
@@ -6899,6 +7492,19 @@ class PlaybackControls extends StatelessWidget {
         : const Duration(seconds: 1);
     final safePosition = clampDuration(position, duration);
     final progress = safePosition.inMilliseconds / safeDuration.inMilliseconds;
+    Widget stepButton(
+      String label,
+      Future<void> Function(int delta)? action,
+      int delta,
+    ) => Button(
+      style: ButtonStyle(
+        padding: WidgetStateProperty.all(
+          const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        ),
+      ),
+      onPressed: action == null ? null : () => unawaited(action(delta)),
+      child: Text(label),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -6926,61 +7532,46 @@ class PlaybackControls extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 20),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Button(
-              onPressed: onStepSentence == null
-                  ? null
-                  : () => unawaited(onStepSentence!(-1)),
-              child: const Text('上一句'),
-            ),
-            const SizedBox(width: 24),
-            Tooltip(
-              message: playing ? '暂停' : '播放',
-              child: FilledButton(
-                style: ButtonStyle(
-                  padding: WidgetStateProperty.all(
-                    const EdgeInsets.symmetric(horizontal: 22, vertical: 15),
+        const SizedBox(height: 12),
+        Center(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                stepButton('上一题', onStepQuestion, -1),
+                const SizedBox(width: 8),
+                stepButton('上一句', onStepSentence, -1),
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: playing ? '暂停' : '播放',
+                  child: FilledButton(
+                    style: ButtonStyle(
+                      padding: WidgetStateProperty.all(
+                        const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 12,
+                        ),
+                      ),
+                    ),
+                    onPressed: () => unawaited(onTogglePlayback()),
+                    child: Icon(
+                      playing ? FluentIcons.pause : FluentIcons.play_solid,
+                      size: 22,
+                    ),
                   ),
                 ),
-                onPressed: () => unawaited(onTogglePlayback()),
-                child: Icon(
-                  playing ? FluentIcons.pause : FluentIcons.play_solid,
-                  size: 22,
-                ),
-              ),
+                const SizedBox(width: 8),
+                stepButton('下一句', onStepSentence, 1),
+                const SizedBox(width: 8),
+                stepButton('下一题', onStepQuestion, 1),
+              ],
             ),
-            const SizedBox(width: 24),
-            Button(
-              onPressed: onStepSentence == null
-                  ? null
-                  : () => unawaited(onStepSentence!(1)),
-              child: const Text('下一句'),
-            ),
-          ],
-        ),
-        if (onStepQuestion != null) ...[
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Button(
-                onPressed: () => unawaited(onStepQuestion!(-1)),
-                child: const Text('上一题'),
-              ),
-              const SizedBox(width: 8),
-              Button(
-                onPressed: () => unawaited(onStepQuestion!(1)),
-                child: const Text('下一题'),
-              ),
-            ],
           ),
-        ],
+        ),
         if (onSingleSentenceLoopChanged != null ||
             onShowSubtitlesChanged != null) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -7016,11 +7607,21 @@ class TranscriptPane extends StatefulWidget {
     required this.onSelected,
     required this.exercises,
     required this.revealedCloze,
+    this.revealedMaterials = const {},
+    this.hiddenMaterials = const {},
     required this.showAllCloze,
     required this.showSubtitles,
     required this.onToggleCloze,
     required this.onShowAllCloze,
     required this.questionIndex,
+    this.playing = false,
+    this.navigationGeneration = 0,
+    this.onPlaySelected,
+    this.onAdoptPausedCue,
+    this.onReturnOriginal,
+    this.onDismissReturnOriginal,
+    this.canReturnOriginal = false,
+    this.onLookupWord,
     this.fontSize = 18,
   });
 
@@ -7029,11 +7630,21 @@ class TranscriptPane extends StatefulWidget {
   final ValueChanged<int> onSelected;
   final LessonExercises exercises;
   final Set<String> revealedCloze;
+  final Set<String> revealedMaterials;
+  final Set<String> hiddenMaterials;
   final bool showAllCloze;
   final bool showSubtitles;
   final void Function(int cueIndex, int wordIndex) onToggleCloze;
   final ValueChanged<bool> onShowAllCloze;
   final int questionIndex;
+  final bool playing;
+  final int navigationGeneration;
+  final Future<void> Function(int index, {required bool loop})? onPlaySelected;
+  final Future<void> Function(int index)? onAdoptPausedCue;
+  final Future<void> Function()? onReturnOriginal;
+  final VoidCallback? onDismissReturnOriginal;
+  final bool canReturnOriginal;
+  final ValueChanged<DictionaryQuery>? onLookupWord;
   final double fontSize;
 
   @override
@@ -7049,12 +7660,17 @@ class _TranscriptDisplayGroup {
 
 class _TranscriptPaneState extends State<TranscriptPane> {
   final _itemScrollController = ItemScrollController();
+  final _popupAreaKey = GlobalKey();
   final _cueKeys = <int, GlobalKey>{};
   final _unassignedKeys = <int, GlobalKey<ExpanderState>>{};
   final _repeatedKeys = <String, GlobalKey<ExpanderState>>{};
   Timer? _centerTimer;
   Timer? _followTimer;
   Timer? _resumeFollowTimer;
+  Timer? _pausedBrowseTimer;
+  int? _cuePopupIndex;
+  Offset? _cuePopupPosition;
+  Offset? _lastPointerGlobalPosition;
   int _scrollGeneration = 0;
   bool _followingPaused = false;
 
@@ -7072,6 +7688,13 @@ class _TranscriptPaneState extends State<TranscriptPane> {
   @override
   void didUpdateWidget(covariant TranscriptPane oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final playbackStarted = !oldWidget.playing && widget.playing;
+    final navigationChanged =
+        oldWidget.navigationGeneration != widget.navigationGeneration;
+    if (playbackStarted) {
+      _pausedBrowseTimer?.cancel();
+      _pauseFollowingForUserScroll(notify: false);
+    }
     if (oldWidget.activeIndex != widget.activeIndex) {
       final generation = ++_scrollGeneration;
       _centerTimer?.cancel();
@@ -7079,8 +7702,29 @@ class _TranscriptPaneState extends State<TranscriptPane> {
         if (!mounted || generation != _scrollGeneration) return;
         _syncPlaybackExpanders();
         _centerTimer = Timer(const Duration(milliseconds: 420), () {
-          if (generation == _scrollGeneration) _centerActiveCue();
+          if (generation == _scrollGeneration) {
+            _centerActiveCue();
+          }
         });
+      });
+    }
+    if (navigationChanged) {
+      _followingPaused = true;
+      _resumeFollowTimer?.cancel();
+      if (widget.playing) {
+        _resumeFollowTimer = Timer(const Duration(seconds: 5), () {
+          _followingPaused = false;
+          _centerActiveCue();
+        });
+      } else {
+        _pausedBrowseTimer?.cancel();
+      }
+    }
+    if (playbackStarted || navigationChanged) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _syncPlaybackExpanders();
+        _centerActiveCue(force: true);
       });
     }
   }
@@ -7104,8 +7748,8 @@ class _TranscriptPaneState extends State<TranscriptPane> {
     }
   }
 
-  void _centerActiveCue({int remainingAttempts = 2}) {
-    if (!mounted || _followingPaused) return;
+  void _centerActiveCue({int remainingAttempts = 2, bool force = false}) {
+    if (!mounted || (_followingPaused && !force)) return;
     if (widget.activeIndex < 0 || widget.activeIndex >= widget.cues.length) {
       return;
     }
@@ -7120,7 +7764,10 @@ class _TranscriptPaneState extends State<TranscriptPane> {
       _syncPlaybackExpanders();
       _centerTimer?.cancel();
       _centerTimer = Timer(const Duration(milliseconds: 420), () {
-        _centerActiveCue(remainingAttempts: remainingAttempts - 1);
+        _centerActiveCue(
+          remainingAttempts: remainingAttempts - 1,
+          force: force,
+        );
       });
       return;
     }
@@ -7145,14 +7792,86 @@ class _TranscriptPaneState extends State<TranscriptPane> {
     );
   }
 
-  void _pauseFollowingForUserScroll() {
+  void _pauseFollowingForUserScroll({bool notify = true}) {
+    final hadPopup = _cuePopupIndex != null;
+    _cuePopupIndex = null;
+    _cuePopupPosition = null;
+    if (hadPopup && notify) setState(() {});
     _scrollGeneration += 1;
     _centerTimer?.cancel();
     _followingPaused = true;
     _resumeFollowTimer?.cancel();
-    _resumeFollowTimer = Timer(const Duration(seconds: 5), () {
-      _followingPaused = false;
-      _centerActiveCue();
+    if (widget.playing) {
+      _resumeFollowTimer = Timer(const Duration(seconds: 5), () {
+        _followingPaused = false;
+        _centerActiveCue();
+      });
+    } else {
+      _schedulePausedBrowse();
+    }
+  }
+
+  void _schedulePausedBrowse() {
+    _pausedBrowseTimer?.cancel();
+    _pausedBrowseTimer = Timer(const Duration(seconds: 30), () {
+      if (!mounted || widget.playing) return;
+      final paneBox = context.findRenderObject() as RenderBox?;
+      if (paneBox == null) return;
+      final center = paneBox
+          .localToGlobal(Offset(0, paneBox.size.height / 2))
+          .dy;
+      final top = paneBox.localToGlobal(Offset.zero).dy;
+      final bottom = top + paneBox.size.height;
+      int? best;
+      var distance = double.infinity;
+      for (final entry in _cueKeys.entries) {
+        final box =
+            entry.value.currentContext?.findRenderObject() as RenderBox?;
+        if (box == null || !box.attached) continue;
+        final dy = box.localToGlobal(Offset(0, box.size.height / 2)).dy;
+        if (dy < top || dy > bottom) continue;
+        final next = (dy - center).abs();
+        if (next < distance) {
+          distance = next;
+          best = entry.key;
+        }
+      }
+      final material = best == null
+          ? null
+          : widget.exercises.materialForCue(best);
+      final firstCue = material?.questionIds.isNotEmpty == true
+          ? material!.cueIndexes.firstOrNull
+          : null;
+      if (firstCue == null || firstCue == widget.activeIndex) return;
+      unawaited(
+        widget.onAdoptPausedCue?.call(firstCue) ?? Future<void>.value(),
+      );
+    });
+  }
+
+  void _selectCue(int index) {
+    final area = _popupAreaKey.currentContext?.findRenderObject() as RenderBox?;
+    final cue =
+        _cueKeys[index]?.currentContext?.findRenderObject() as RenderBox?;
+    final globalPosition =
+        _lastPointerGlobalPosition ??
+        cue?.localToGlobal(Offset(cue.size.width / 2, cue.size.height / 2));
+    _lastPointerGlobalPosition = null;
+    _pauseFollowingForUserScroll(notify: false);
+    setState(() {
+      _cuePopupIndex = index;
+      _cuePopupPosition = area != null && globalPosition != null
+          ? area.globalToLocal(globalPosition)
+          : const Offset(24, 24);
+    });
+    widget.onSelected(index);
+  }
+
+  void _dismissCuePopup() {
+    if (_cuePopupIndex == null) return;
+    setState(() {
+      _cuePopupIndex = null;
+      _cuePopupPosition = null;
     });
   }
 
@@ -7191,27 +7910,42 @@ class _TranscriptPaneState extends State<TranscriptPane> {
             builder: (context) {
               final index = cueIndexes[rowIndex];
               final cue = widget.cues[index];
-              return Container(
-                key: _cueKeys.putIfAbsent(index, GlobalKey.new),
-                constraints: const BoxConstraints(minHeight: 76),
-                child: ListTile.selectable(
-                  selected: index == widget.activeIndex,
-                  leading: Text(formatDuration(cue.start), style: timeStyle),
-                  title: DefaultTextStyle.merge(
-                    style: theme.typography.bodyLarge?.copyWith(
-                      fontSize: widget.fontSize,
+              final material = widget.exercises.materialForCue(index);
+              return Listener(
+                onPointerDown: (event) =>
+                    _lastPointerGlobalPosition = event.position,
+                child: Container(
+                  key: _cueKeys.putIfAbsent(index, GlobalKey.new),
+                  constraints: const BoxConstraints(minHeight: 76),
+                  child: ListTile.selectable(
+                    selected: index == widget.activeIndex,
+                    leading: Text(formatDuration(cue.start), style: timeStyle),
+                    title: DefaultTextStyle.merge(
+                      style: theme.typography.bodyLarge?.copyWith(
+                        fontSize: widget.fontSize,
+                      ),
+                      child: _ClozeSentence(
+                        text: cue.text,
+                        cueIndex: index,
+                        clozeWordIndexes:
+                            widget.exercises.clozeWordIndexes[index] ??
+                            const {},
+                        revealed: widget.revealedCloze,
+                        showAll: material == null
+                            ? widget.showAllCloze
+                            : ((widget.showAllCloze &&
+                                      !widget.hiddenMaterials.contains(
+                                        material.id,
+                                      )) ||
+                                  widget.revealedMaterials.contains(
+                                    material.id,
+                                  )),
+                        onToggle: widget.onToggleCloze,
+                        onLookup: widget.onLookupWord,
+                      ),
                     ),
-                    child: _ClozeSentence(
-                      text: cue.text,
-                      cueIndex: index,
-                      clozeWordIndexes:
-                          widget.exercises.clozeWordIndexes[index] ?? const {},
-                      revealed: widget.revealedCloze,
-                      showAll: widget.showAllCloze,
-                      onToggle: widget.onToggleCloze,
-                    ),
+                    onPressed: () => _selectCue(index),
                   ),
-                  onPressed: () => widget.onSelected(index),
                 ),
               );
             },
@@ -7240,8 +7974,6 @@ class _TranscriptPaneState extends State<TranscriptPane> {
               .where((index) => !material!.containsRepeatedCue(index))
               .toList(growable: false);
     final active = group.cueIndexes.contains(widget.activeIndex);
-    final firstCue = widget.cues[group.cueIndexes.first];
-    final lastCue = widget.cues[group.cueIndexes.last];
     final questionNumbers = questions
         .map((question) => question.number)
         .where((number) => number > 0)
@@ -7293,33 +8025,7 @@ class _TranscriptPaneState extends State<TranscriptPane> {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title, style: theme.typography.bodyStrong),
-                      if (questions.isNotEmpty) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          questions
-                              .map(
-                                (question) =>
-                                    '第 ${question.number} 题：${question.title}',
-                              )
-                              .join('\n'),
-                          maxLines: questions.length * 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.typography.caption,
-                        ),
-                      ],
-                      const SizedBox(height: 2),
-                      Text(
-                        '${formatDuration(firstCue.start)} – '
-                        '${formatDuration(lastCue.end)} · '
-                        '${group.cueIndexes.length} 句',
-                        style: theme.typography.caption,
-                      ),
-                    ],
-                  ),
+                  child: Text(title, style: theme.typography.bodyStrong),
                 ),
               ],
             ),
@@ -7360,6 +8066,7 @@ class _TranscriptPaneState extends State<TranscriptPane> {
     _centerTimer?.cancel();
     _followTimer?.cancel();
     _resumeFollowTimer?.cancel();
+    _pausedBrowseTimer?.cancel();
     super.dispose();
   }
 
@@ -7371,37 +8078,120 @@ class _TranscriptPaneState extends State<TranscriptPane> {
     );
     return ScaffoldPage(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-      content: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: _GaussianSubtitleMask(
-              hidden: !widget.showSubtitles,
-              child: Listener(
-                onPointerSignal: (signal) {
-                  if (signal is PointerScrollEvent) {
-                    _pauseFollowingForUserScroll();
-                  }
-                },
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: _handleScroll,
-                  child: ScrollablePositionedList.builder(
-                    itemScrollController: _itemScrollController,
-                    itemCount: groups.length,
-                    initialScrollIndex: activeGroupIndex < 0
-                        ? 0
-                        : activeGroupIndex,
-                    padding: const EdgeInsets.only(bottom: 16),
-                    itemBuilder: (context, index) => Padding(
-                      padding: EdgeInsets.only(top: index == 0 ? 0 : 10),
-                      child: _groupCard(context, groups[index]),
+      content: LayoutBuilder(
+        builder: (context, bounds) => Stack(
+          key: _popupAreaKey,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _GaussianSubtitleMask(
+                    hidden: !widget.showSubtitles,
+                    child: Listener(
+                      onPointerSignal: (signal) {
+                        if (signal is PointerScrollEvent) {
+                          _pauseFollowingForUserScroll();
+                        }
+                      },
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _handleScroll,
+                        child: ScrollablePositionedList.builder(
+                          itemScrollController: _itemScrollController,
+                          itemCount: groups.length,
+                          initialScrollIndex: activeGroupIndex < 0
+                              ? 0
+                              : activeGroupIndex,
+                          padding: const EdgeInsets.only(bottom: 16),
+                          itemBuilder: (context, index) => Padding(
+                            padding: EdgeInsets.only(top: index == 0 ? 0 : 10),
+                            child: _groupCard(context, groups[index]),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (widget.canReturnOriginal)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: TapRegion(
+                  onTapOutside: (_) => widget.onDismissReturnOriginal?.call(),
+                  child: Card(
+                    padding: const EdgeInsets.all(6),
+                    child: Button(
+                      onPressed: () => unawaited(
+                        widget.onReturnOriginal?.call() ?? Future<void>.value(),
+                      ),
+                      child: const Text('返回'),
                     ),
                   ),
                 ),
               ),
-            ),
-          ),
-        ],
+            if (_cuePopupIndex case final cueIndex?)
+              Positioned(
+                left: ((_cuePopupPosition?.dx ?? 24) - 95).clamp(
+                  8.0,
+                  (bounds.maxWidth - 202).clamp(8.0, double.infinity),
+                ),
+                top:
+                    ((_cuePopupPosition?.dy ?? 24) > bounds.maxHeight - 70
+                            ? (_cuePopupPosition?.dy ?? 24) - 58
+                            : (_cuePopupPosition?.dy ?? 24) + 10)
+                        .clamp(
+                          8.0,
+                          (bounds.maxHeight - 52).clamp(8.0, double.infinity),
+                        ),
+                child: TapRegion(
+                  onTapOutside: (_) => _dismissCuePopup(),
+                  child: Card(
+                    padding: const EdgeInsets.all(6),
+                    child: SizedBox(
+                      width: 190,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Button(
+                              onPressed: () {
+                                _dismissCuePopup();
+                                unawaited(
+                                  widget.onPlaySelected?.call(
+                                        cueIndex,
+                                        loop: false,
+                                      ) ??
+                                      Future<void>.value(),
+                                );
+                              },
+                              child: const Text('播放'),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Button(
+                              onPressed: () {
+                                _dismissCuePopup();
+                                unawaited(
+                                  widget.onPlaySelected?.call(
+                                        cueIndex,
+                                        loop: true,
+                                      ) ??
+                                      Future<void>.value(),
+                                );
+                              },
+                              child: const Text('循环播放'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -7437,6 +8227,7 @@ class _ClozeSentence extends StatelessWidget {
     required this.revealed,
     required this.showAll,
     required this.onToggle,
+    this.onLookup,
   });
 
   final String text;
@@ -7445,6 +8236,7 @@ class _ClozeSentence extends StatelessWidget {
   final Set<String> revealed;
   final bool showAll;
   final void Function(int cueIndex, int wordIndex) onToggle;
+  final ValueChanged<DictionaryQuery>? onLookup;
 
   @override
   Widget build(BuildContext context) {
@@ -7466,6 +8258,15 @@ class _ClozeSentence extends StatelessWidget {
               onPressed: clozeWordIndexes.contains(part.wordIndex)
                   ? () => onToggle(cueIndex, part.wordIndex!)
                   : null,
+              onLongPress: onLookup == null
+                  ? null
+                  : () => onLookup!(
+                      DictionaryQuery(
+                        word: part.text,
+                        sentence: text,
+                        cueIndex: cueIndex,
+                      ),
+                    ),
             ),
       ],
     );
@@ -7473,16 +8274,22 @@ class _ClozeSentence extends StatelessWidget {
 }
 
 class _ClozeWord extends StatelessWidget {
-  const _ClozeWord({required this.text, required this.hidden, this.onPressed});
+  const _ClozeWord({
+    required this.text,
+    required this.hidden,
+    this.onPressed,
+    this.onLongPress,
+  });
 
   final String text;
   final bool hidden;
   final VoidCallback? onPressed;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
-    final isInteractive = onPressed != null;
+    final isInteractive = onPressed != null || onLongPress != null;
 
     final textWidget = Text(text);
     final wordContent = hidden
@@ -7535,6 +8342,7 @@ class _ClozeWord extends StatelessWidget {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: onPressed,
+          onLongPress: onLongPress,
           child: result,
         ),
       ),

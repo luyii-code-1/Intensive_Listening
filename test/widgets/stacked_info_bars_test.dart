@@ -47,10 +47,11 @@ void main() {
       expect(find.text('完成'), findsNothing);
       expect(find.text('转写失败'), findsOneWidget);
 
-      await tester.tap(find.text('复制错误详情'));
+      expect(tester.widget<Tooltip>(find.byType(Tooltip)).message, '复制错误详情');
+      await tester.tap(find.byIcon(FluentIcons.copy));
       await tester.pump(const Duration(milliseconds: 200));
       expect(copied, {'text': '转写失败\nAPI 返回错误详情'});
-      expect(find.text('已复制'), findsOneWidget);
+      expect(tester.widget<Tooltip>(find.byType(Tooltip)).message, '已复制');
     },
   );
 }

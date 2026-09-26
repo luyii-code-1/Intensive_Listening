@@ -1,6 +1,7 @@
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intensive_listening/ilp/ilp_models.dart';
+import 'package:intensive_listening/ilp/lesson_exercises.dart';
 import 'package:intensive_listening/main.dart';
 
 void main() {
@@ -153,10 +154,15 @@ void main() {
     await tester.pumpWidget(
       FluentApp(
         home: PlayerSection(
-          title: 'Listening lesson',
-          cueCount: 2,
           hasTranscript: true,
-          questionTitles: const ['What did the speaker decide?'],
+          questions: const [
+            LessonQuestion(
+              id: 'question-1',
+              number: 1,
+              title: 'What did the speaker decide?',
+              cueIndexes: [0],
+            ),
+          ],
           showSubtitles: true,
           duration: const Duration(seconds: 20),
           position: const Duration(seconds: 5),
@@ -170,8 +176,7 @@ void main() {
       ),
     );
 
-    expect(find.text('当前材料 · 1 题'), findsOneWidget);
-    expect(find.text('What did the speaker decide?'), findsOneWidget);
+    expect(find.text('第 1 题  What did the speaker decide?'), findsOneWidget);
     expect(find.byIcon(FluentIcons.music_note), findsNothing);
   });
 }

@@ -83,6 +83,7 @@ class SrtQuestionPlanner {
           prompt: run.prompt,
           cueIndexes: List.unmodifiable(run.cueIndexes),
           repeatedCueIndexes: List.unmodifiable(repeatedCueIndexes),
+          leadInCueIndexes: run.promptCueIndexes,
           questionIds: List.unmodifiable(questionIds),
         ),
       );
@@ -100,6 +101,7 @@ class SrtQuestionPlanner {
     var indexes = <int>[];
     var followsQuestionPrompt = false;
     var prompt = '';
+    var promptCueIndexes = <int>[];
     var questionNumbers = <int>[];
 
     void flush() {
@@ -109,12 +111,14 @@ class SrtQuestionPlanner {
           cueIndexes: List.unmodifiable(indexes),
           followsQuestionPrompt: followsQuestionPrompt,
           prompt: prompt,
+          promptCueIndexes: List.unmodifiable(promptCueIndexes),
           questionNumbers: List.unmodifiable(questionNumbers),
         ),
       );
       indexes = <int>[];
       followsQuestionPrompt = false;
       prompt = '';
+      promptCueIndexes = <int>[];
       questionNumbers = <int>[];
     }
 
@@ -131,6 +135,7 @@ class SrtQuestionPlanner {
             _questionPrompt.hasMatch(text) ||
             (_numberOnly.hasMatch(text) && text.length <= 16);
         followsQuestionPrompt = followsQuestionPrompt || isQuestionPrompt;
+        if (followsQuestionPrompt) promptCueIndexes.add(index);
         if (isQuestionPrompt) {
           prompt = text;
           questionNumbers = _questionNumbers(text);
@@ -333,11 +338,13 @@ class _ContentRun {
     required this.cueIndexes,
     required this.followsQuestionPrompt,
     required this.prompt,
+    required this.promptCueIndexes,
     required this.questionNumbers,
   });
 
   final List<int> cueIndexes;
   final bool followsQuestionPrompt;
   final String prompt;
+  final List<int> promptCueIndexes;
   final List<int> questionNumbers;
 }

@@ -39,6 +39,8 @@ void main() {
     expect(result.questions.map((question) => question.number), [6, 7]);
     expect(result.effectiveMaterials.single.questionIds, hasLength(2));
     expect(result.effectiveMaterials.single.cueIndexes, [1, 2]);
+    expect(result.effectiveMaterials.single.leadInCueIndexes, [0]);
+    expect(result.materialForCue(0)?.id, result.effectiveMaterials.single.id);
     expect(result.questions[0].materialId, result.questions[1].materialId);
   });
 

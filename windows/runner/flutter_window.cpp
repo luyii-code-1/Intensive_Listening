@@ -3,7 +3,6 @@
 #include <shellapi.h>
 
 #include <optional>
-#include <string>
 #include <variant>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -37,41 +36,6 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
-  installer_channel_ =
-      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-          flutter_controller_->engine()->messenger(),
-          "intensive_listening/installer",
-          &flutter::StandardMethodCodec::GetInstance());
-  installer_channel_->SetMethodCallHandler(
-      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
-             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-        if (call.method_name() != "launchInstaller") {
-          result->NotImplemented();
-          return;
-        }
-        const auto* path = std::get_if<std::string>(call.arguments());
-        if (path == nullptr || path->empty()) {
-          result->Error("invalid_path", "Installer path is missing.");
-          return;
-        }
-        const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-                                               path->c_str(), -1, nullptr, 0);
-        if (length == 0) {
-          result->Error("invalid_path", "Installer path is not UTF-8.");
-          return;
-        }
-        std::wstring wide_path(length, L'\0');
-        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path->c_str(), -1,
-                            wide_path.data(), length);
-        const HINSTANCE launched = ShellExecuteW(
-            GetHandle(), L"runas", wide_path.c_str(), nullptr, nullptr,
-            SW_SHOWNORMAL);
-        if (reinterpret_cast<INT_PTR>(launched) <= 32) {
-          result->Error("launch_failed", "Windows did not start the installer.");
-          return;
-        }
-        result->Success();
-      });
   taskbar_created_message_ = RegisterWindowMessageW(L"TaskbarCreated");
   window_channel_ =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
@@ -114,7 +78,6 @@ bool FlutterWindow::OnCreate() {
 void FlutterWindow::OnDestroy() {
   UpdateTrayIcon(false);
   window_channel_ = nullptr;
-  installer_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

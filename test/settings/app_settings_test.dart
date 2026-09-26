@@ -91,12 +91,14 @@ void main() {
     final settings = AppSettings.defaults().copyWith(
       skipOpeningPrompts: true,
       transcriptFontSize: 24,
+      debugLogging: true,
       eulaAcceptedVersion: '2026-09-22',
     );
     await const AppSettingsStore().save(settings);
     final restored = await const AppSettingsStore().load();
     expect(restored.skipOpeningPrompts, isTrue);
     expect(restored.transcriptFontSize, 24);
+    expect(restored.debugLogging, isTrue);
     expect(restored.eulaAcceptedVersion, '2026-09-22');
   });
 

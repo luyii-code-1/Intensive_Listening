@@ -4,6 +4,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 
 import 'spring_motion.dart';
+import '../app_log.dart';
 
 const _exitDuration = Duration(milliseconds: 420);
 
@@ -20,6 +21,12 @@ class StackedInfoBarController extends ChangeNotifier {
     InfoBarSeverity severity = InfoBarSeverity.success,
     Duration duration = const Duration(seconds: 5),
   }) {
+    AppLog.notice(
+      title,
+      message,
+      isWarning: severity == InfoBarSeverity.warning,
+      isError: severity == InfoBarSeverity.error,
+    );
     final id = ++_sequence;
     _items.add(
       _StackedInfoBarItem(
@@ -276,8 +283,8 @@ class _NoticeTransition extends StatelessWidget {
         ),
         child: SpringMotionTransition(
           animation: animation,
-          beginOffset: const Offset(0.06, 0.03),
-          beginScale: 0.98,
+          beginOffset: const Offset(0, 0.04),
+          beginScale: 1,
           child: child,
         ),
       ),
@@ -317,17 +324,18 @@ class _AppNoticeBarState extends State<_AppNoticeBar> {
   @override
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
-    return InfoBar(
-      title: Text(widget.title),
-      content: Text(
-        widget.message,
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
-      ),
-      severity: widget.severity,
-      isLong: true,
-      style: InfoBarThemeData(
-        decoration: (_) => BoxDecoration(
+    final (icon, color) = switch (widget.severity) {
+      InfoBarSeverity.success => (FluentIcons.completed, Colors.green),
+      InfoBarSeverity.warning => (FluentIcons.warning, Colors.orange),
+      InfoBarSeverity.error => (FluentIcons.error_badge, Colors.red),
+      InfoBarSeverity.info => (FluentIcons.info, theme.accentColor),
+    };
+    return SizedBox(
+      width: 380,
+      height: 96,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+        decoration: BoxDecoration(
           color: theme.resources.solidBackgroundFillColorQuarternary,
           borderRadius: BorderRadius.circular(6),
           border: Border.all(color: theme.resources.cardStrokeColorDefault),
@@ -339,19 +347,55 @@ class _AppNoticeBarState extends State<_AppNoticeBar> {
             ),
           ],
         ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(icon, color: color, size: 19),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    widget.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.typography.bodyStrong,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.message,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.typography.body,
+                  ),
+                ],
+              ),
+            ),
+            if (widget.severity == InfoBarSeverity.error)
+              Tooltip(
+                message: _copied ? '已复制' : '复制错误详情',
+                child: IconButton(
+                  icon: const Icon(FluentIcons.copy, size: 14),
+                  onPressed: () async {
+                    await Clipboard.setData(
+                      ClipboardData(text: '${widget.title}\n${widget.message}'),
+                    );
+                    if (mounted) setState(() => _copied = true);
+                  },
+                ),
+              ),
+            IconButton(
+              icon: const Icon(FluentIcons.chrome_close, size: 14),
+              onPressed: widget.onClose,
+            ),
+          ],
+        ),
       ),
-      action: widget.severity == InfoBarSeverity.error
-          ? Button(
-              onPressed: () async {
-                await Clipboard.setData(
-                  ClipboardData(text: '${widget.title}\n${widget.message}'),
-                );
-                if (mounted) setState(() => _copied = true);
-              },
-              child: Text(_copied ? '已复制' : '复制错误详情'),
-            )
-          : null,
-      onClose: widget.onClose,
     );
   }
 }

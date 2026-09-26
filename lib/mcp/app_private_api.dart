@@ -24,6 +24,10 @@ typedef AppPrivateAsrStarter = Future<CourseProject> Function(
 );
 typedef AppPrivateTranscriptReplacer = void Function(CourseProject project);
 
+enum AgentApprovalDecision { approve, refuse, disableMcp }
+
+enum _AgentApprovalState { user, pending, agent, refused }
+
 const appPrivateApiVersion = 1;
 const appMcpPort = 17683;
 
@@ -50,21 +54,70 @@ class AppPrivateApiServer {
     required this.dispatch,
     this.onAgentStateChanged,
     this.onAgentAccessDenied,
+    this.onAgentApprovalRequested,
   });
 
   final AppPrivateApiDispatcher dispatch;
   final ValueChanged<bool>? onAgentStateChanged;
   final VoidCallback? onAgentAccessDenied;
+  final Future<AgentApprovalDecision> Function(String agentName)?
+  onAgentApprovalRequested;
   HttpServer? _server;
   File? _discoveryFile;
   File? _helpFile;
+  File? _bootstrapFile;
   String? _token;
   bool _agentActive = false;
+  _AgentApprovalState _approvalState = _AgentApprovalState.user;
+  int _approvalGeneration = 0;
 
   bool get isRunning => _server != null;
   bool get agentActive => _agentActive;
 
-  void disconnectAgent() => _setAgentActive(false);
+  void disconnectAgent() {
+    _approvalGeneration++;
+    _approvalState = _AgentApprovalState.user;
+    _setAgentActive(false);
+  }
+
+  void _beginApproval(String? rawAgentName) {
+    if (_approvalState == _AgentApprovalState.agent ||
+        _approvalState == _AgentApprovalState.pending) {
+      return;
+    }
+    final name = (rawAgentName?.trim().isNotEmpty ?? false)
+        ? rawAgentName!.trim().substring(
+            0,
+            rawAgentName.trim().length.clamp(0, 80),
+          )
+        : '未命名智能体';
+    final request = onAgentApprovalRequested;
+    if (request == null) {
+      _approvalState = _AgentApprovalState.agent;
+      _setAgentActive(true);
+      return;
+    }
+    _approvalState = _AgentApprovalState.pending;
+    final generation = ++_approvalGeneration;
+    unawaited(
+      request(name)
+          .then((decision) {
+            if (generation != _approvalGeneration || _server == null) return;
+            if (decision == AgentApprovalDecision.approve) {
+              _approvalState = _AgentApprovalState.agent;
+              _setAgentActive(true);
+            } else {
+              _approvalState = _AgentApprovalState.refused;
+              _setAgentActive(false);
+            }
+          })
+          .catchError((Object _) {
+            if (generation == _approvalGeneration) {
+              _approvalState = _AgentApprovalState.refused;
+            }
+          }),
+    );
+  }
 
   void _setAgentActive(bool active) {
     if (_agentActive == active) return;
@@ -83,6 +136,15 @@ class AppPrivateApiServer {
       InternetAddress.loopbackIPv4,
       debugPrivateApiDiscoveryFile == null ? appMcpPort : 0,
     );
+    final mcpUrl =
+        'http://127.0.0.1:${server.port}/mcp?event=Agent&token=$token';
+    final bootstrapFile = File(
+      p.join(discoveryFile.parent.path, agentBootstrapFileName),
+    );
+    await bootstrapFile.writeAsString(
+      agentBootstrapMarkdown(mcpUrl),
+      flush: true,
+    );
     final temporaryFile = File('${discoveryFile.path}.tmp');
     await temporaryFile.writeAsString(
       jsonEncode({
@@ -92,8 +154,8 @@ class AppPrivateApiServer {
         'port': server.port,
         'token': token,
         'helpPath': helpFile.path,
-        'mcpUrl':
-            'http://127.0.0.1:${server.port}/mcp?event=Agent&token=$token',
+        'bootstrapPath': bootstrapFile.path,
+        'mcpUrl': mcpUrl,
         'toolCallUrl': 'http://127.0.0.1:${server.port}/v1/tools/call',
       }),
       flush: true,
@@ -104,6 +166,7 @@ class AppPrivateApiServer {
     _token = token;
     _discoveryFile = discoveryFile;
     _helpFile = helpFile;
+    _bootstrapFile = bootstrapFile;
     unawaited(_serve(server));
   }
 
@@ -113,10 +176,15 @@ class AppPrivateApiServer {
     _server = null;
     if (server != null) await server.close(force: true);
     final discoveryFile = _discoveryFile;
+    final bootstrapFile = _bootstrapFile;
     final token = _token;
     _discoveryFile = null;
     _helpFile = null;
+    _bootstrapFile = null;
     _token = null;
+    if (bootstrapFile != null && await bootstrapFile.exists()) {
+      await bootstrapFile.delete();
+    }
     if (discoveryFile == null || !await discoveryFile.exists()) return;
     try {
       final decoded = jsonDecode(await discoveryFile.readAsString());
@@ -254,6 +322,15 @@ class AppPrivateApiServer {
 
   void _requireAgent() {
     if (_agentActive) return;
+    if (_approvalState == _AgentApprovalState.pending) {
+      throw const AppPrivateApiException(
+        'pending_approval',
+        'Pending Approval',
+      );
+    }
+    if (_approvalState == _AgentApprovalState.refused) {
+      throw const AppPrivateApiException('user_refused', 'User Refused');
+    }
     onAgentAccessDenied?.call();
     throw const AppPrivateApiException(
       'agent_required',
@@ -263,7 +340,11 @@ class AppPrivateApiServer {
 
   Future<Object?> _call(String method, Map<String, dynamic> parameters) async {
     if (method == 'agent.connect') {
-      _setAgentActive(true);
+      _beginApproval(
+        parameters['agentName'] is String
+            ? parameters['agentName'] as String
+            : null,
+      );
       return _agentConnectionResult();
     }
     if (method == 'agent.disconnect') {
@@ -273,7 +354,7 @@ class AppPrivateApiServer {
     if (method != 'app.status') _requireAgent();
     final result = await dispatch(method, parameters);
     if (method == 'app.status' && result is Map) {
-      return {...result, 'event': _agentActive ? 'Agent' : 'User'};
+      return {...result, ..._agentConnectionResult()};
     }
     return result;
   }
@@ -281,10 +362,17 @@ class AppPrivateApiServer {
   Map<String, Object> _agentConnectionResult() {
     final helpPath = _helpFile?.path ?? agentHelpFileName;
     return {
-      'event': 'Agent',
-      'connected': true,
+      'event': switch (_approvalState) {
+        _AgentApprovalState.agent => 'Agent',
+        _AgentApprovalState.pending => 'PendingApproval',
+        _AgentApprovalState.refused => 'UserRefused',
+        _ => 'User',
+      },
+      'connected': _agentActive,
       'helpPath': helpPath,
-      'instructions': agentConnectionInstructions(helpPath),
+      'instructions': _agentActive
+          ? agentConnectionInstructions(helpPath)
+          : '等待应用内接管审批；批准后重新调用 intensive_listening_status。',
     };
   }
 
@@ -298,7 +386,9 @@ class AppPrivateApiServer {
             '启动智能体须设置 event=Agent',
           );
         }
-        _setAgentActive(true);
+        _beginApproval(
+          body['agentName'] is String ? body['agentName'] as String : null,
+        );
       } else {
         disconnectAgent();
       }
@@ -342,7 +432,12 @@ class AppPrivateApiServer {
       );
       request.response.write(jsonEncode({'ok': true, 'result': result}));
     } on AppPrivateApiException catch (error) {
-      request.response.statusCode = error.code == 'agent_required'
+      request.response.statusCode =
+          const {
+            'agent_required',
+            'pending_approval',
+            'user_refused',
+          }.contains(error.code)
           ? HttpStatus.forbidden
           : HttpStatus.badRequest;
       request.response.write(
@@ -401,7 +496,12 @@ class AppPrivateApiServer {
               'MCP 启动须设置 event=Agent',
             );
           }
-          _setAgentActive(true);
+          final clientInfo = arguments['clientInfo'];
+          final identity =
+              arguments['agentName'] ??
+              (clientInfo is Map ? clientInfo['name'] : null) ??
+              request.uri.queryParameters['agentName'];
+          _beginApproval(identity is String ? identity : null);
           result = {
             'protocolVersion': '2025-11-25',
             'capabilities': {
@@ -411,9 +511,7 @@ class AppPrivateApiServer {
               'name': 'Intensive Listening',
               'version': appVersion,
             },
-            'instructions': agentConnectionInstructions(
-              _helpFile?.path ?? agentHelpFileName,
-            ),
+            'instructions': _agentConnectionResult()['instructions'],
           };
           break;
         case 'ping':
@@ -513,10 +611,11 @@ class AppPrivateApiServer {
           '启动智能体须设置 event=Agent',
         );
       }
-      final result = await _call(
-        method,
-        parameters as Map<String, dynamic>? ?? const {},
-      );
+      final callParameters = <String, dynamic>{
+        ...?parameters as Map<String, dynamic>?,
+        if (method == 'agent.connect') 'agentName': decoded['agentName'],
+      };
+      final result = await _call(method, callParameters);
       request.response.write(
         jsonEncode({
           'version': appPrivateApiVersion,
@@ -613,6 +712,8 @@ class AppPrivateApiService {
       'projects.importMedia' => _importMedia(parameters),
       'projects.importExamDocument' => _importExamDocument(parameters),
       'projects.readExamText' => _readExamText(parameters),
+      'projects.importText' => _importProjectText(parameters),
+      'projects.readText' => _readProjectText(parameters),
       'projects.startAsr' => _startAsr(parameters),
       'projects.importSrt' => _importSrt(parameters),
       'projects.readSrt' => _readSrt(parameters),
@@ -663,6 +764,7 @@ class AppPrivateApiService {
     }
     const supportedFields = {
       'examDocument',
+      'sourceDocuments',
       'cues',
       'sections',
       'materials',
@@ -691,6 +793,9 @@ class AppPrivateApiService {
               'paragraphCount': exam.paragraphCount,
               'tableCount': exam.tableCount,
             };
+    }
+    if (includes('sourceDocuments')) {
+      response['sourceDocuments'] = await _sourceDocuments(project.id);
     }
     if (!project.hasTranscript) {
       for (final field in const [
@@ -827,6 +932,117 @@ class AppPrivateApiService {
     response['text'] = document.text.substring(page.offset, page.end);
     response['textPage'] = page.toJson();
     return response;
+  }
+
+  String _documentRole(Map<String, dynamic> parameters) {
+    final role = _requiredString(parameters, 'role');
+    if (role != 'exam' && role != 'reference') {
+      throw const AppPrivateApiException(
+        'invalid_role',
+        'role 必须是 exam 或 reference',
+      );
+    }
+    return role;
+  }
+
+  Future<Directory> _sourceDirectory(String projectId) async => Directory(
+    p.join((await _store.rootDirectory()).path, projectId, 'sources'),
+  );
+
+  Future<Map<String, dynamic>> _sourceDocuments(String projectId) async {
+    final directory = await _sourceDirectory(projectId);
+    final result = <String, dynamic>{};
+    for (final role in const ['exam', 'reference']) {
+      final metadata = File(p.join(directory.path, '$role.json'));
+      if (await metadata.exists()) {
+        try {
+          result[role] = jsonDecode(await metadata.readAsString());
+        } catch (_) {}
+      }
+    }
+    return result;
+  }
+
+  Future<Map<String, dynamic>> _importProjectText(
+    Map<String, dynamic> parameters,
+  ) async {
+    final project = await _requireProject(
+      _requiredString(parameters, 'projectId'),
+    );
+    final role = _documentRole(parameters);
+    final textFile = File(_requiredString(parameters, 'textPath'));
+    if (!await textFile.exists()) {
+      throw const AppPrivateApiException('file_not_found', '找不到转换后的 TXT');
+    }
+    late final String content;
+    try {
+      content = await textFile.readAsString(encoding: utf8);
+    } on FormatException {
+      throw const AppPrivateApiException('invalid_text', 'TXT 必须使用 UTF-8');
+    }
+    if (content.trim().isEmpty) {
+      throw const AppPrivateApiException('invalid_text', '转换后的文本为空');
+    }
+    final sourcePath = _optionalString(parameters, 'sourcePath');
+    File? source;
+    String? extension;
+    String? sourceName;
+    if (sourcePath != null) {
+      source = File(sourcePath);
+      if (!await source.exists()) {
+        throw const AppPrivateApiException('file_not_found', '找不到原始文档');
+      }
+      extension = p.extension(source.path).toLowerCase();
+      if (extension != '.docx' && extension != '.pdf') {
+        throw const AppPrivateApiException(
+          'invalid_document',
+          '原始文档必须是 DOCX 或 PDF',
+        );
+      }
+      sourceName = p.basename(source.path);
+    }
+    final directory = await _sourceDirectory(project.id);
+    await directory.create(recursive: true);
+    final output = File(p.join(directory.path, '$role.txt'));
+    if (source != null) {
+      await source.copy(p.join(directory.path, '$role$extension'));
+    }
+    await output.writeAsString(content, encoding: utf8, flush: true);
+    final metadata = {
+      'role': role,
+      'sourceName': sourceName,
+      'textPath': output.path,
+      'importedAt': DateTime.now().toIso8601String(),
+      'textLength': content.length,
+    };
+    await File(p.join(directory.path, '$role.json'))
+        .writeAsString(jsonEncode(metadata), flush: true);
+    await _store.save(project.copyWith());
+    onProjectChanged();
+    return {'projectId': project.id, ...metadata};
+  }
+
+  Future<Map<String, dynamic>> _readProjectText(
+    Map<String, dynamic> parameters,
+  ) async {
+    final project = await _requireProject(
+      _requiredString(parameters, 'projectId'),
+    );
+    final role = _documentRole(parameters);
+    final file = File(
+      p.join((await _sourceDirectory(project.id)).path, '$role.txt'),
+    );
+    if (!await file.exists()) {
+      throw const AppPrivateApiException('document_required', '项目尚无该文档文本');
+    }
+    final value = await file.readAsString(encoding: utf8);
+    final page = _textPage(parameters, value.length);
+    return {
+      'projectId': project.id,
+      'role': role,
+      'text': value.substring(page.offset, page.end),
+      'textPage': page.toJson(),
+    };
   }
 
   Future<Map<String, dynamic>> _startAsr(
@@ -1124,6 +1340,28 @@ class AppPrivateApiService {
           '一个字幕句只能属于一段听力材料',
         );
       }
+      final rawLeadIn = raw['leadInCueIndexes'];
+      if (rawLeadIn != null && rawLeadIn is! List) {
+        throw const AppPrivateApiException('invalid_questions', '提前提示索引必须是数组');
+      }
+      final leadInCueIndexes = rawLeadIn is List
+          ? (rawLeadIn.whereType<num>().map((value) => value.round()).toList()
+              ..sort())
+          : <int>[];
+      if (rawLeadIn is List &&
+          (leadInCueIndexes.length != rawLeadIn.length ||
+              leadInCueIndexes.toSet().length != leadInCueIndexes.length ||
+              leadInCueIndexes.any(
+                (index) =>
+                    index < 0 ||
+                    index >= cueIndexes.first ||
+                    !usedCueIndexes.add(index),
+              ))) {
+        throw const AppPrivateApiException(
+          'invalid_questions',
+          '提前提示索引无效或已归属其他材料',
+        );
+      }
       final rawRepeatedCueIndexes = raw['repeatedCueIndexes'];
       if (rawRepeatedCueIndexes != null && rawRepeatedCueIndexes is! List) {
         throw const AppPrivateApiException(
@@ -1176,6 +1414,11 @@ class AppPrivateApiService {
         final questionId =
             _optionalString(rawQuestion, 'id') ??
             'question-$stamp-$materialIndex-$questionIndex';
+        final options = _questionOptions(rawQuestion['options']);
+        final answerIndex = _questionAnswer(
+          rawQuestion['answerIndex'],
+          options,
+        );
         questionIds.add(questionId);
         questions.add(
           LessonQuestion(
@@ -1185,6 +1428,8 @@ class AppPrivateApiService {
             materialId: materialId,
             cueIndexes: cueIndexes,
             repeatedCueIndexes: repeatedCueIndexes,
+            options: options,
+            answerIndex: answerIndex,
           ),
         );
       }
@@ -1194,6 +1439,7 @@ class AppPrivateApiService {
           prompt: _optionalString(raw, 'prompt') ?? '',
           cueIndexes: cueIndexes,
           repeatedCueIndexes: repeatedCueIndexes,
+          leadInCueIndexes: leadInCueIndexes,
           questionIds: questionIds,
         ),
       );
@@ -1255,6 +1501,12 @@ class AppPrivateApiService {
         id: requestedMaterialId ?? 'material-$stamp',
         prompt: _optionalString(parameters, 'prompt') ?? '',
         cueIndexes: indexes,
+        leadInCueIndexes: _validatedLeadInCueIndexes(
+          project,
+          cues,
+          parameters['leadInCueIndexes'],
+          indexes,
+        ),
         questionIds: const [],
       );
       materials.add(material);
@@ -1265,6 +1517,12 @@ class AppPrivateApiService {
       number: number,
       materialId: material.id,
       cueIndexes: material.cueIndexes,
+      repeatedCueIndexes: material.repeatedCueIndexes,
+      options: _questionOptions(parameters['options']),
+      answerIndex: _questionAnswer(
+        parameters['answerIndex'],
+        _questionOptions(parameters['options']),
+      ),
     );
     questions.add(question);
     final materialIndex = materials.indexWhere(
@@ -1275,6 +1533,7 @@ class AppPrivateApiService {
       prompt: material.prompt,
       cueIndexes: material.cueIndexes,
       repeatedCueIndexes: material.repeatedCueIndexes,
+      leadInCueIndexes: material.leadInCueIndexes,
       questionIds: [...material.questionIds, question.id],
     );
     questions.sort((left, right) => left.number.compareTo(right.number));
@@ -1323,11 +1582,47 @@ class AppPrivateApiService {
         repeatedCueIndexes: material.repeatedCueIndexes
             .where(cueIndexes.contains)
             .toList(growable: false),
+        leadInCueIndexes: parameters.containsKey('leadInCueIndexes')
+            ? _validatedLeadInCueIndexes(
+                project,
+                cues,
+                parameters['leadInCueIndexes'],
+                cueIndexes,
+                ignoreMaterialId: material.id,
+              )
+            : material.leadInCueIndexes,
+        questionIds: material.questionIds,
+      );
+      materials[materialIndex] = material;
+    }
+    if (!parameters.containsKey('cueIndexes') &&
+        parameters.containsKey('leadInCueIndexes')) {
+      final leadIn = _validatedLeadInCueIndexes(
+        project,
+        _parseCues(project),
+        parameters['leadInCueIndexes'],
+        material.cueIndexes,
+        ignoreMaterialId: material.id,
+      );
+      material = LessonMaterial(
+        id: material.id,
+        prompt: material.prompt,
+        cueIndexes: material.cueIndexes,
+        repeatedCueIndexes: material.repeatedCueIndexes,
+        leadInCueIndexes: leadIn,
         questionIds: material.questionIds,
       );
       materials[materialIndex] = material;
     }
     final requestedNumber = parameters['number'];
+    final options = parameters.containsKey('options')
+        ? _questionOptions(parameters['options'])
+        : current.options;
+    final answer = parameters.containsKey('answerIndex')
+        ? _questionAnswer(parameters['answerIndex'], options)
+        : current.answerIndex != null && current.answerIndex! < options.length
+        ? current.answerIndex
+        : null;
     questions[index] = LessonQuestion(
       id: current.id,
       title: _optionalString(parameters, 'title') ?? current.title,
@@ -1335,6 +1630,8 @@ class AppPrivateApiService {
       materialId: material.id,
       cueIndexes: material.cueIndexes,
       repeatedCueIndexes: material.repeatedCueIndexes,
+      options: options,
+      answerIndex: answer,
     );
     questions.sort((left, right) => left.number.compareTo(right.number));
     final updated = await _saveQuestions(project, materials, questions);
@@ -1371,6 +1668,7 @@ class AppPrivateApiService {
           prompt: material.prompt,
           cueIndexes: material.cueIndexes,
           repeatedCueIndexes: material.repeatedCueIndexes,
+          leadInCueIndexes: material.leadInCueIndexes,
           questionIds: questionIds,
         ),
       );
@@ -1505,12 +1803,56 @@ class AppPrivateApiService {
     }
     final assigned = {
       for (final material in project.exercises.effectiveMaterials)
-        if (material.id != ignoreMaterialId) ...material.cueIndexes,
+        if (material.id != ignoreMaterialId) ...[
+          ...material.cueIndexes,
+          ...material.leadInCueIndexes,
+        ],
     };
     if (indexes.any(assigned.contains)) {
       throw const AppPrivateApiException(
         'cue_already_assigned',
         '一个字幕句只能属于一段听力材料',
+      );
+    }
+    return indexes;
+  }
+
+  List<int> _validatedLeadInCueIndexes(
+    CourseProject project,
+    List<SrtCue> cues,
+    Object? rawIndexes,
+    List<int> materialCueIndexes, {
+    String? ignoreMaterialId,
+  }) {
+    if (rawIndexes == null) return const [];
+    if (rawIndexes is! List) {
+      throw const AppPrivateApiException('invalid_questions', '提前提示索引必须是数组');
+    }
+    final indexes =
+        rawIndexes
+            .whereType<num>()
+            .map((value) => value.round())
+            .toSet()
+            .toList()
+          ..sort();
+    final assigned = {
+      for (final material in project.exercises.effectiveMaterials)
+        if (material.id != ignoreMaterialId) ...[
+          ...material.cueIndexes,
+          ...material.leadInCueIndexes,
+        ],
+    };
+    if (indexes.length != rawIndexes.length ||
+        indexes.any(
+          (index) =>
+              index < 0 ||
+              index >= cues.length ||
+              index >= materialCueIndexes.first ||
+              assigned.contains(index),
+        )) {
+      throw const AppPrivateApiException(
+        'invalid_questions',
+        '提前提示索引无效或已归属其他材料',
       );
     }
     return indexes;
@@ -1561,8 +1903,35 @@ class AppPrivateApiService {
           'message': '题号 ${question.number} 重复',
         });
       }
+      if (question.answerIndex != null &&
+          (question.answerIndex! < 0 ||
+              question.answerIndex! >= question.options.length)) {
+        issues.add({
+          'code': 'invalid_answer',
+          'message': '题号 ${question.number} 答案索引无效',
+        });
+      }
     }
     return {'projectId': project.id, 'valid': issues.isEmpty, 'issues': issues};
+  }
+
+  List<String> _questionOptions(Object? raw) {
+    if (raw == null) return const [];
+    if (raw is! List || raw.any((item) => item is! String)) {
+      throw const AppPrivateApiException('invalid_options', '选项必须是字符串数组');
+    }
+    return raw
+        .cast<String>()
+        .map((item) => item.trim())
+        .toList(growable: false);
+  }
+
+  int? _questionAnswer(Object? raw, List<String> options) {
+    if (raw == null) return null;
+    if (raw is! int || raw < 0 || raw >= options.length) {
+      throw const AppPrivateApiException('invalid_answer', '答案索引必须对应已有选项');
+    }
+    return raw;
   }
 
   void _assertUniqueQuestionNumbers(List<LessonQuestion> questions) {
@@ -1828,6 +2197,8 @@ class AppPrivateApiService {
               'id': question.id,
               'number': question.number,
               'title': question.title,
+              'options': question.options,
+              'answerIndex': question.answerIndex,
             },
         ],
       },

@@ -1,58 +1,48 @@
-const agentHelpFileName = 'HELP.md';
+const agentHelpFileName = 'SKILL.md';
+const agentBootstrapFileName = 'MCP.md';
 
-const agentHelpMarkdown = '''# Intensive Listening Agent Help
+String agentBootstrapMarkdown(String mcpUrl) =>
+    '''# Intensive Listening MCP
 
-HELP version: 1.3
+1. 保持 Intensive Listening 运行，并在设置中启用 MCP。
+2. 使用以下地址连接标准 HTTP MCP：`$mcpUrl`。
+3. 调用 `intensive_listening_status` 测试连接。`PendingApproval` 表示等待应用内审批；收到 `pending_approval` 时稍后重试。`UserRefused` / `user_refused` 表示用户拒绝本次接管。
+4. 获得 `event=Agent` 后，读取状态返回的 `helpPath` 所指向的 `SKILL.md`，再开始制作。
+5. 制作结束调用 `end_agent_session`（HTTP Tool Call 也可使用 `/v1/agent/disconnect`），确认 `event=User`。
 
-本文件是 Intensive Listening 制作接口的会话指南。连接 MCP 或 HTTP Tool Call 后，先读取本文件，再开始操作工程。
+所有路径是应用所在电脑的本机绝对路径。MCP 操作只使用当前会话返回的项目 ID 与字幕索引。
+''';
 
-## 会话规则
+const agentHelpMarkdown = '''---
+name: intensive-listening-course-authoring
+description: Create an Intensive Listening course from local audio and exam documents through the app MCP.
+---
 
-1. 先调用 `intensive_listening_status`，确认 `event=Agent`。参数不确定时读取 `GET /v1/tools` 的完整 JSON Schema；用户点击“强制断开”后事件会变为 `User`，后续写操作将返回 `agent_required`，此时停止操作并等待用户重新连接。
-2. 只使用工具返回的工程 ID、cue 索引和 word 索引；工程变化后重新读取。
-3. 优先恢复已有工程，避免重复创建、重复导入和重复提交 ASR。
-4. 数据采用“听力材料 → 多道小题”两层结构。同一段对话或独白的 cue 只归属一个材料，材料可包含一道或多道小题；考试说明、章节播报、倒计时、`Text XXX` 和纯旁白保持未归题。
-5. 写入题目或挖空后调用 `validate_course_project`；校验通过后默认调用 `add_project_to_playback`。
-6. 大工程使用字段选择和分页。轮询状态时调用 `get_course_project(fields: [])`；读取字幕时用 `read_project_srt(offset, limit, includeSrt: false)` 分页，避免反复传输完整 SRT。
+# 精听课程制作
 
-## 推荐流程
+## 会话与输入
 
-1. `list_course_projects`：查找可恢复工程。
-2. `create_course_project` / `get_course_project`：创建或读取工程。新建与增量新建工具会返回创建出的 ID，后续直接使用返回值。
-3. `import_exam_document(projectId, documentPath)`，然后分页调用 `read_exam_text(offset, limit)`：导入并读取 DOCX 试卷；`documentPath` 必须是本机 DOCX 绝对路径。
-4. `import_project_media(projectId, mediaPath)`：绑定听力音频。必须先绑定音频，才能调用 `import_project_srt(projectId, srtPath)`。
-5. `start_project_asr`：只在没有字幕和现有任务时提交一次；随后轮询 `get_course_project`。完成后 SRT 自动写入工程，`questionPlanPending=true` 表示可继续整理题目。
-6. 分页调用 `read_project_srt(offset, limit, includeSrt: false)`：读取权威 cue、时间、分段和单词索引。若有听力原文，逐段对照原文与 SRT 的结构和文字；检查词间空格、断词、漏词、句间衔接及重复朗读。用 `set_cue_text` 修正有依据的识别错误，再重新读取受影响的 cue 与词索引。只有确实需要原始 SRT 文本时才设置 `includeSrt: true`。
-7. 根据试卷与校正后的 SRT 整理题目：可先调用 `auto_plan_questions(projectId)` 生成可编辑初稿；有试卷时优先调用 `apply_question_plan`，按试卷顺序一次写入材料、小题与 cue 归属。提交 `materials[]` 时，每项包含 `cueIndexes` 与 `questions[]`；存在第二遍朗读时，用 `repeatedCueIndexes` 标明第二遍的 cue。
-8. `apply_cloze_plan`：按 word 索引设置挖空。
-   写入后可用 `get_course_project(projectId, fields:["cloze"])` 回读挖空索引。
-9. `validate_course_project`：复核题目、cue 唯一归属和挖空索引。
-10. `add_project_to_playback`：制作完成后直接加入学生端；仅在用户要求文件时导出。
-    精听包只包含音频、字幕与练习数据，试卷 DOCX/TXT 保留在制作工程中。
+1. 调用 `intensive_listening_status`；只有 `event=Agent` 时写入。若仍为 `PendingApproval`，等待用户审批；若为 `UserRefused`，停止本次制作。
+2. 用户通常提供一个音频及两份 DOCX 或可提取文本的 PDF（试卷、答案或听力原文）。若用户尚未提供任何文件，立即暂停制作并向用户索要文件；在收到文件前不要创建工程、启动 ASR 或推测素材。首次发现部分文件缺失时，集中向用户询问，并说明题目、答案或字幕校对可能不完整。音频缺失时等待音频；文档缺失时可在说明后继续有依据的部分，不编造题目或答案。扫描版 PDF 无可用文本时请用户换用可提取文字的文件。
+3. 这些文件与应用位于同一台电脑。读取文件名生成清晰课程名；先调用 `list_course_projects`，复用同一音频和试卷对应的工程，再考虑 `create_course_project`。
 
-## 题目与挖空
+## 转写与资料
 
-- 小题文本和题号以试卷为准，SRT 负责材料音频定位。
-- Agent 发起转写后，由 `auto_plan_questions` 显式生成可编辑初稿；结合试卷语义和时间顺序校正。
-- “听下面一段对话，回答第 6 和第 7 小题”应建立一段材料，在该材料下建立第 6、7 两道小题；切换这两道题时不改变播放位置。
-- “听下面两段录音……”一类提示保留在原始 cue 流或材料元数据中，不要把它单独建立为页面标题、章节或题目。题前提示只放未归属任何材料的考试说明或旁白，不要把同一材料按答案句拆成多个互斥题组。
-- 自动规划会把 `1 2 - 1 3`、全角数字和中文题号规范为真实题号；最终题号仍以试卷为准。
-- 原文存在时逐句核对 SRT：每个英文词应当完整、有意义，词间空格正确，连续读起来自然通顺；结合上下文修正 ASR 的粘词、拆词和误识别。原文缺失或与音频冲突时以实际听到的内容为准，不凭题目补造台词。
-- 对单题材料尤其检查是否整段播放两遍：两遍属于同一材料和同一道题，第二遍 cue 放入 `repeatedCueIndexes`，避免生成重复题目。第一遍与第二遍对应句子的字幕文本必须完全一致；先用 `set_cue_text` 校正，再提交题目计划。音频未重复时无需设置该字段。
-- 标点不参与分词；重复朗读的同一句保持一致的挖空设置。
+4. 用 `import_project_media` 绑定音频。项目已有字幕或正在转写时复用状态；否则调用一次 `start_project_asr`。通过 `get_course_project(fields: [])` 轮询，避免重复提交。
+5. ASR 运行时，用本机 Python 把 DOCX / 可复制文字的 PDF 转为 UTF-8 TXT，并调用 `import_project_text(role: exam|reference, textPath, sourcePath)` 保存试卷与答案/原文。用 `read_project_text` 分页读取。转换产生的临时文件在项目成功保存后清理；原件和工程文件保留。
+6. ASR 完成后分页调用 `read_project_srt`。以音频为准，对照原文检查句子、词间空格、漏词和时间点。单句文字修正用 `set_cue_text`；需要增删、拆分或合并时间段时，用 Python 编辑 UTF-8 SRT，在设置题目之前调用 `import_project_srt(mode: replace)`，再读取新 cue 索引。不得猜测旧索引仍有效。
 
-## 增量修正与索引
+## 题目、提示与挖空
 
-- 单句字幕修正使用 `set_cue_text(projectId, cueIndex, text)`。它保留时间轴、题目归属，并自动移除超出新分词长度的挖空索引。
-- 整份字幕导入使用 `import_project_srt`。默认 `mode=auto`：时间轴完全一致时合并文本并保留题目/有效挖空；时间轴变化时替换并返回 `preserved`、`cleared` 统计。需要强制清空制作数据时才用 `mode=replace`。
-- `add_question_group` 返回 `createdGroupId` 与 `createdMaterialId`；后续编辑直接使用返回的 ID，不要通过再次读取后猜测。
-- 应用的词索引只包含英文单词与带撇号/连字符的英文词，标点不占索引。无法确定时调用 `tokenize_lesson_text(text)`，并严格使用其返回的 `index`。
+7. 一段对话或独白是一段材料，可含多道小题。试卷决定真实题号、完整题干和选项；答案文档决定 `answerIndex`（从 0 开始）。使用 `apply_question_plan(materials[])` 原子提交：每段材料包含 `cueIndexes`、`questions[]`，可包含 `leadInCueIndexes` 与 `repeatedCueIndexes`。题前播报 cue 绑定到紧随其后的材料，播放该提示时仍显示该材料的题目；纯全卷说明保持未归属。
+8. 需要初稿时可先调用 `auto_plan_questions`，随后依据试卷和原文修正。音频播放第二遍时，两遍仍属于同一材料；用 `repeatedCueIndexes` 标记第二遍，并把两遍对应句子的字幕校正为完全相同的文本。挖空词在两遍保持一致。只使用工具回读的 cue 和 word 索引。
+9. 分题完成后询问用户是否自动设置挖空。用户同意时，依据 `read_project_srt` 的词索引调用 `apply_cloze_plan`；用户拒绝时保留空挖空。词元索引不包含标点。
 
-## 完成报告
+## 完成
 
-向用户简要报告课程名称、工程 ID、题目数量、挖空句子数和交付结果。只有无法可靠对齐且不同选择会实质改变课程时才请求用户确认。
+10. 回读工程并调用 `validate_course_project`。向用户报告课程名、工程 ID、题目数、答案与挖空状态，以及需复核的缺件或歧义。默认仅保存制作工程；只有用户要求时才加入学生端或导出文件。
+11. 将 event 设回 User：调用 `end_agent_session` 或 HTTP `/v1/agent/disconnect`。确认返回 `event=User`；应用会刷新工程列表并显示制作首页。清理转换临时目录，保留用户原件与工程。
 ''';
 
 String agentConnectionInstructions(String helpPath) =>
-    '连接成功。调用任何课程制作工具前，必须先读取 HELP.md：$helpPath。'
-    'HELP.md 是当前版本的权威制作流程；读取后先调用 intensive_listening_status。';
+    '连接已获批准。先读取 SKILL.md：$helpPath；随后调用 intensive_listening_status。';

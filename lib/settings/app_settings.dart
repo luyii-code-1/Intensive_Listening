@@ -40,6 +40,7 @@ class AppSettings {
     this.themeMode = 'system',
     this.skipOpeningPrompts = true,
     this.transcriptFontSize = 18,
+    this.debugLogging = false,
     this.eulaAcceptedVersion = '',
   });
 
@@ -97,6 +98,7 @@ class AppSettings {
         json['transcriptFontSize'],
         18,
       ).clamp(14, 28),
+      debugLogging: json['debugLogging'] == true,
       eulaAcceptedVersion: _stringValue(json['eulaAcceptedVersion'], ''),
     );
   }
@@ -119,6 +121,7 @@ class AppSettings {
   final String themeMode;
   final bool skipOpeningPrompts;
   final int transcriptFontSize;
+  final bool debugLogging;
   final String eulaAcceptedVersion;
 
   AsrConfig get cloudAsrConfig => AsrConfig(
@@ -167,6 +170,7 @@ class AppSettings {
     String? themeMode,
     bool? skipOpeningPrompts,
     int? transcriptFontSize,
+    bool? debugLogging,
     String? eulaAcceptedVersion,
   }) {
     return AppSettings(
@@ -191,6 +195,7 @@ class AppSettings {
       themeMode: themeMode ?? this.themeMode,
       skipOpeningPrompts: skipOpeningPrompts ?? this.skipOpeningPrompts,
       transcriptFontSize: transcriptFontSize ?? this.transcriptFontSize,
+      debugLogging: debugLogging ?? this.debugLogging,
       eulaAcceptedVersion: eulaAcceptedVersion ?? this.eulaAcceptedVersion,
     );
   }
@@ -215,6 +220,7 @@ class AppSettings {
       'themeMode': themeMode,
       'skipOpeningPrompts': skipOpeningPrompts,
       'transcriptFontSize': transcriptFontSize,
+      'debugLogging': debugLogging,
       'eulaAcceptedVersion': eulaAcceptedVersion,
     };
   }

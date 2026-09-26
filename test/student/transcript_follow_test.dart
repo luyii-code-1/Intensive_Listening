@@ -52,6 +52,7 @@ void main() {
       onToggleCloze: (_, _) {},
       onShowAllCloze: (_) {},
       questionIndex: activeIndex ~/ 10,
+      playing: true,
     ),
   );
 

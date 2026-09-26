@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -478,7 +479,12 @@ void main() {
       ) as Map<String, dynamic>;
       final helpFile = File(discovery['helpPath'] as String);
       expect(await helpFile.exists(), isTrue);
-      expect(await helpFile.readAsString(), contains('推荐流程'));
+      expect(await helpFile.readAsString(), contains('精听课程制作'));
+      final bootstrap = File(discovery['bootstrapPath'] as String);
+      expect(
+        await bootstrap.readAsString(),
+        contains('intensive_listening_status'),
+      );
       final client = HttpClient()..findProxy = (_) => 'DIRECT';
       addTearDown(() => client.close(force: true));
       Future<Map<String, dynamic>> rpc(String method, {String? event}) async {
@@ -515,7 +521,7 @@ void main() {
       expect(connected['ok'], isTrue);
       final connectionResult = connected['result'] as Map<String, dynamic>;
       expect(connectionResult['helpPath'], helpFile.path);
-      expect(connectionResult['instructions'], contains('HELP.md'));
+      expect(connectionResult['instructions'], contains('SKILL.md'));
       expect((await rpc('echo'))['ok'], isTrue);
       expect((await rpc('agent.disconnect'))['ok'], isTrue);
       expect(server.isRunning, isTrue);
@@ -523,6 +529,87 @@ void main() {
       expect(agentStates, [true, false]);
     },
   );
+
+  test('holds writes for approval and reports a refusal', () async {
+    final approval = Completer<AgentApprovalDecision>();
+    final server = AppPrivateApiServer(
+      dispatch: (method, _) async => {'method': method},
+      onAgentApprovalRequested: (name) {
+        expect(name, 'Test Agent');
+        return approval.future;
+      },
+    );
+    addTearDown(server.stop);
+    await server.start();
+    final discovery = jsonDecode(
+      await debugPrivateApiDiscoveryFile!.readAsString(),
+    ) as Map<String, dynamic>;
+    final client = HttpClient()..findProxy = (_) => 'DIRECT';
+    addTearDown(() => client.close(force: true));
+    Future<Map<String, dynamic>> post(
+      String path,
+      Map<String, Object?> body,
+    ) async {
+      final request = await client.post(
+        discovery['host'] as String,
+        discovery['port'] as int,
+        path,
+      );
+      request.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer ${discovery['token']}',
+      );
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode(body));
+      return jsonDecode(await utf8.decoder.bind(await request.close()).join())
+          as Map<String, dynamic>;
+    }
+
+    final pending = await post('/v1/agent/connect', {
+      'event': 'Agent',
+      'agentName': 'Test Agent',
+    });
+    expect(pending['event'], 'PendingApproval');
+    final waiting = await post('/v1/tools/call', {
+      'name': 'list_course_projects',
+      'arguments': <String, Object?>{},
+    });
+    expect((waiting['error'] as Map)['code'], 'pending_approval');
+    approval.complete(AgentApprovalDecision.refuse);
+    await Future<void>.delayed(Duration.zero);
+    final refused = await post('/v1/tools/call', {
+      'name': 'list_course_projects',
+      'arguments': <String, Object?>{},
+    });
+    expect((refused['error'] as Map)['code'], 'user_refused');
+  });
+
+  test('stores converted document text by role', () async {
+    final store = const CourseProjectStore();
+    final project = await store.create();
+    final source = File('${temporaryDirectory.path}/exam.pdf');
+    final converted = File('${temporaryDirectory.path}/exam.txt');
+    await source.writeAsBytes([1, 2, 3]);
+    await converted.writeAsString('Question 10\nA. One\nB. Two');
+    final service = AppPrivateApiService(
+      onProjectChanged: () {},
+      onOpenProject: (_) {},
+    );
+    final imported = await service.dispatch('projects.importText', {
+      'projectId': project.id,
+      'role': 'exam',
+      'textPath': converted.path,
+      'sourcePath': source.path,
+    }) as Map<String, dynamic>;
+    expect(imported['sourceName'], 'exam.pdf');
+    final read = await service.dispatch('projects.readText', {
+      'projectId': project.id,
+      'role': 'exam',
+      'offset': 9,
+      'limit': 2,
+    }) as Map<String, dynamic>;
+    expect(read['text'], '10');
+  });
 
   test('serves MCP tools and convenient HTTP Tool Call', () async {
     final server = AppPrivateApiServer(
@@ -573,7 +660,7 @@ void main() {
     );
     expect(
       (initialized['result'] as Map<String, dynamic>)['instructions'],
-      allOf(contains('HELP.md'), contains(discovery['helpPath'] as String)),
+      allOf(contains('SKILL.md'), contains(discovery['helpPath'] as String)),
     );
     final tools = await post('/mcp', {
       'jsonrpc': '2.0',

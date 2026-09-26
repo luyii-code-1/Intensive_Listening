@@ -31,16 +31,28 @@ linux/
 macos/
 web/
 scripts/
+!scripts/
+scripts/*
+!scripts/prepare_windows_dependencies.ps1
+!scripts/verify_windows_bundle.ps1
+!scripts/package_windows_installer.ps1
+!scripts/windows_installer.iss
 
 # Internal project material and repository automation
 .agents/
 .github/
+!.github/
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/windows-build.yml
 docs/
 HANDOFF*.md
 README.en.md
 CONTRIBUTING*.md
 SECURITY*.md
 THIRD_PARTY_NOTICES*.md
+!THIRD_PARTY_NOTICES.md
 .metadata
 
 # Logs, packages, and local output

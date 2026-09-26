@@ -41,6 +41,12 @@ const _wordIndexes = {
 
 const mcpTools = <McpTool>[
   McpTool(
+    'end_agent_session',
+    'agent.disconnect',
+    '制作完成后结束本次接管并返回 User 模式。',
+    {},
+  ),
+  McpTool(
     'intensive_listening_status',
     'app.status',
     '制作开始前读取应用与 Agent 会话状态；仅 event=Agent 时可写入。',
@@ -127,6 +133,36 @@ const mcpTools = <McpTool>[
     ['projectId'],
   ),
   McpTool(
+    'import_project_text',
+    'projects.importText',
+    '导入 Agent 在本机从 DOCX 或可复制 PDF 提取的 UTF-8 文本；role 为 exam 或 reference。',
+    {
+      'projectId': _projectId,
+      'role': {
+        'type': 'string',
+        'enum': ['exam', 'reference'],
+      },
+      'textPath': {'type': 'string'},
+      'sourcePath': {'type': 'string'},
+    },
+    ['projectId', 'role', 'textPath'],
+  ),
+  McpTool(
+    'read_project_text',
+    'projects.readText',
+    '分页读取工程内的试卷或答案/听力原文文本。',
+    {
+      'projectId': _projectId,
+      'role': {
+        'type': 'string',
+        'enum': ['exam', 'reference'],
+      },
+      'offset': {'type': 'integer', 'minimum': 0},
+      'limit': {'type': 'integer', 'minimum': 1, 'maximum': 50000},
+    },
+    ['projectId', 'role'],
+  ),
+  McpTool(
     'start_project_asr',
     'projects.startAsr',
     '字幕缺失且尚无转写任务时，将项目加入后台转写队列。',
@@ -207,6 +243,7 @@ const mcpTools = <McpTool>[
               'items': {'type': 'integer'},
               'description': '第二遍朗读的 cue 索引；必须属于本材料的 cueIndexes。',
             },
+            'leadInCueIndexes': _cueIndexes,
             'questions': {
               'type': 'array',
               'items': {
@@ -215,6 +252,11 @@ const mcpTools = <McpTool>[
                   'id': {'type': 'string'},
                   'number': {'type': 'integer'},
                   'title': {'type': 'string'},
+                  'options': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                  },
+                  'answerIndex': {'type': 'integer', 'minimum': 0},
                 },
                 'required': ['number', 'title'],
                 'additionalProperties': false,
@@ -252,6 +294,12 @@ const mcpTools = <McpTool>[
       'number': {'type': 'integer'},
       'materialId': {'type': 'string'},
       'prompt': {'type': 'string'},
+      'leadInCueIndexes': _cueIndexes,
+      'options': {
+        'type': 'array',
+        'items': {'type': 'string'},
+      },
+      'answerIndex': {'type': 'integer', 'minimum': 0},
     },
     ['projectId', 'title'],
   ),
@@ -265,6 +313,12 @@ const mcpTools = <McpTool>[
       'title': {'type': 'string'},
       'cueIndexes': _cueIndexes,
       'number': {'type': 'integer'},
+      'options': {
+        'type': 'array',
+        'items': {'type': 'string'},
+      },
+      'answerIndex': {'type': 'integer', 'minimum': 0},
+      'leadInCueIndexes': _cueIndexes,
     },
     ['projectId', 'groupId'],
   ),

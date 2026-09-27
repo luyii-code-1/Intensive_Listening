@@ -8,6 +8,7 @@
     <img src="https://img.shields.io/badge/Framework-Flutter-02569B?logo=flutter" alt="Flutter" />
     <img src="https://img.shields.io/badge/Status-Early%20Development-E7A33E" alt="Early Development" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-blue" alt="GPL-3.0-only" /></a>
+    <a href="https://m8ven.ai/mcp/luyii-code-1/intensive-listening"><img src="https://m8ven.ai/badge/mcp/luyii-code-1/intensive-listening" alt="M8ven Score" /></a>
   </p>
 </div>
 

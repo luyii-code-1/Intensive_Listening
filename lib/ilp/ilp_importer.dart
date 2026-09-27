@@ -106,13 +106,32 @@ class IlpImporter {
 
       final id = ilpPackageId(manifest);
       final destination = Directory(p.join(libraryDirectory.path, id));
+      Directory? backup;
       if (await destination.exists()) {
         if (!replaceExisting) {
           throw const IlpException(IlpError.duplicatePackage, '该精听包已经导入');
         }
-        await destination.delete(recursive: true);
+        backup = Directory(
+          p.join(libraryDirectory.path, '.$id-${p.basename(staging.path)}.bak'),
+        );
+        await destination.rename(backup.path);
       }
-      final installed = await staging.rename(destination.path);
+      late final Directory installed;
+      try {
+        installed = await staging.rename(destination.path);
+      } catch (_) {
+        if (backup != null && await backup.exists()) {
+          await backup.rename(destination.path);
+        }
+        rethrow;
+      }
+      if (backup != null && await backup.exists()) {
+        try {
+          await backup.delete(recursive: true);
+        } on FileSystemException {
+          // The replacement is already installed; retain the backup for recovery.
+        }
+      }
       return ImportedLesson(
         id: id,
         directoryPath: installed.path,

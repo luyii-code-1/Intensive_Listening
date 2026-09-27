@@ -41,6 +41,8 @@ class AppSettings {
     this.skipOpeningPrompts = true,
     this.transcriptFontSize = 18,
     this.debugLogging = false,
+    this.telemetryEnabled = false,
+    this.telemetryPrompted = false,
     this.eulaAcceptedVersion = '',
   });
 
@@ -99,6 +101,8 @@ class AppSettings {
         18,
       ).clamp(14, 28),
       debugLogging: json['debugLogging'] == true,
+      telemetryEnabled: json['telemetryEnabled'] == true,
+      telemetryPrompted: json['telemetryPrompted'] == true,
       eulaAcceptedVersion: _stringValue(json['eulaAcceptedVersion'], ''),
     );
   }
@@ -122,6 +126,8 @@ class AppSettings {
   final bool skipOpeningPrompts;
   final int transcriptFontSize;
   final bool debugLogging;
+  final bool telemetryEnabled;
+  final bool telemetryPrompted;
   final String eulaAcceptedVersion;
 
   AsrConfig get cloudAsrConfig => AsrConfig(
@@ -171,6 +177,8 @@ class AppSettings {
     bool? skipOpeningPrompts,
     int? transcriptFontSize,
     bool? debugLogging,
+    bool? telemetryEnabled,
+    bool? telemetryPrompted,
     String? eulaAcceptedVersion,
   }) {
     return AppSettings(
@@ -196,6 +204,8 @@ class AppSettings {
       skipOpeningPrompts: skipOpeningPrompts ?? this.skipOpeningPrompts,
       transcriptFontSize: transcriptFontSize ?? this.transcriptFontSize,
       debugLogging: debugLogging ?? this.debugLogging,
+      telemetryEnabled: telemetryEnabled ?? this.telemetryEnabled,
+      telemetryPrompted: telemetryPrompted ?? this.telemetryPrompted,
       eulaAcceptedVersion: eulaAcceptedVersion ?? this.eulaAcceptedVersion,
     );
   }
@@ -221,6 +231,8 @@ class AppSettings {
       'skipOpeningPrompts': skipOpeningPrompts,
       'transcriptFontSize': transcriptFontSize,
       'debugLogging': debugLogging,
+      'telemetryEnabled': telemetryEnabled,
+      'telemetryPrompted': telemetryPrompted,
       'eulaAcceptedVersion': eulaAcceptedVersion,
     };
   }

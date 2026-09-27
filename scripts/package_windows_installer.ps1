@@ -18,7 +18,7 @@ if (-not $OutputDirectory) {
   $OutputDirectory = Join-Path (Split-Path -Parent $projectRoot) 'dist\installer'
 }
 
-& (Join-Path $PSScriptRoot 'verify_windows_bundle.ps1') -ReleaseDirectory $release
+& (Join-Path $PSScriptRoot 'verify_windows_bundle.ps1') -ReleaseDirectory $release -RequireArms
 
 $compilerCandidates = @(
   $env:ILP_ISCC,

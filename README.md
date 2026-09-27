@@ -3,7 +3,7 @@
   <h1>Intensive Listening</h1>
   <p>面向英语听力教学的材料制作与逐句训练工具</p>
   <p>
-    <img src="https://img.shields.io/badge/Release-v1.0.0%20Prelude-B71C1C" alt="v1.0.0 Prelude" />
+    <img src="https://img.shields.io/badge/Release-v1.0.1%20Prelude-B71C1C" alt="v1.0.1 Prelude" />
     <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4?logo=windows" alt="Windows 10/11" />
     <img src="https://img.shields.io/badge/Framework-Flutter-02569B?logo=flutter" alt="Flutter" />
     <img src="https://img.shields.io/badge/Status-Early%20Development-E7A33E" alt="Early Development" />

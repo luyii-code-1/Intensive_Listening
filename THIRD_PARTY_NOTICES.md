@@ -16,3 +16,17 @@ License 1.1 授权，许可证文本在 `assets/fonts/LICENSE.txt`。
 ## Flutter 和 Dart 包
 
 Flutter、Dart 以及 `pubspec.lock` 中列出的各个三方包保留其原有版权声明和许可条款。
+
+## 阿里云 ARMS RUM PC SDK
+
+**Alibaba Cloud ARMS RUM PC SDK**
+
+Provider: Alibaba Cloud
+
+License: Proprietary / Alibaba Cloud Terms
+
+Usage: Real User Monitoring / Crash & telemetry reporting
+
+Windows 版内置官方 RUM PC SDK 0.4.4 的 x64 DLL。下载来源及 SHA-256 记录在
+`windows/third_party/arms/README.md`。应用仅在用户明确授权后加载 SDK，
+并关闭了 SDK 的自动网络与原生崩溃采集。

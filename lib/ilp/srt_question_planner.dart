@@ -83,7 +83,9 @@ class SrtQuestionPlanner {
           prompt: run.prompt,
           cueIndexes: List.unmodifiable(run.cueIndexes),
           repeatedCueIndexes: List.unmodifiable(repeatedCueIndexes),
-          leadInCueIndexes: run.promptCueIndexes,
+          leadInCueIndexes: run.promptCueIndexes.isEmpty
+              ? const []
+              : [run.promptCueIndexes.last],
           questionIds: List.unmodifiable(questionIds),
         ),
       );

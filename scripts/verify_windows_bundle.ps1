@@ -1,6 +1,8 @@
 param(
   [Parameter(Mandatory = $true)]
-  [string]$ReleaseDirectory
+  [string]$ReleaseDirectory,
+
+  [switch]$RequireArms
 )
 
 $requiredFiles = @(
@@ -23,6 +25,7 @@ $requiredFiles = @(
   'licenses\source-han-sans\LICENSE.txt',
   'licenses\THIRD_PARTY_NOTICES.md'
 )
+if ($RequireArms) { $requiredFiles += 'alibabacloud_rum.dll' }
 
 $missingFiles = @(
   foreach ($relativePath in $requiredFiles) {
@@ -35,6 +38,14 @@ $missingFiles = @(
 if ($missingFiles.Count -gt 0) {
   Write-Error "Windows release is incomplete. Missing: $($missingFiles -join ', ')"
   exit 1
+}
+
+if ($RequireArms) {
+  $arms = Join-Path $ReleaseDirectory 'alibabacloud_rum.dll'
+  $expectedHash = '33CEC949309F8025BE35FF19D7AE7F7BFC0F59A9FF0BEF3E05C40460F0BF6E8D'
+  if ((Get-FileHash -LiteralPath $arms -Algorithm SHA256).Hash -ne $expectedHash) {
+    throw 'Windows ARMS SDK DLL checksum mismatch.'
+  }
 }
 
 Write-Output "Windows runtime bundle verified ($($requiredFiles.Count) required files)."

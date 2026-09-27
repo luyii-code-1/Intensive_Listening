@@ -23,6 +23,7 @@ doc/api/
 # Generated Windows build state
 windows/flutter/ephemeral/
 windows/third_party/ffmpeg/ffmpeg.exe
+windows/third_party/arms/alibabacloud_rum.dll
 
 # Unsupported platforms and repository-local tooling
 android/

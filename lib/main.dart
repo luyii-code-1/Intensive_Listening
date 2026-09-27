@@ -38,6 +38,7 @@ import 'settings/app_settings.dart';
 import 'settings/api_configuration_archive.dart';
 import 'settings/file_association.dart';
 import 'student/lesson_progress_store.dart';
+import 'telemetry/app_telemetry.dart';
 import 'transcription/duplicate_dialog.dart';
 import 'transcription/duplicate_match.dart';
 import 'transcription/queue_store.dart';
@@ -160,6 +161,29 @@ Future<void> main(List<String> arguments) async {
     );
     if (File(candidate).existsSync()) {
       initialPackagePath = candidate;
+    }
+  }
+  if (!kIsWeb && Platform.isWindows && initialPackagePath == null) {
+    try {
+      await const MethodChannel('intensive_listening/window')
+          .invokeMethod<void>('registerMainInstance');
+    } catch (error, stack) {
+      AppLog.warning('主窗口注册失败: $error', stack);
+    }
+  }
+  if (!kIsWeb && Platform.isWindows && initialPackagePath != null) {
+    const windowChannel = MethodChannel('intensive_listening/window');
+    try {
+      await windowChannel.invokeMethod<void>('preparePackageInstance');
+      final manifest = await IlpImporter(Directory.systemTemp)
+          .readManifest(File(initialPackagePath));
+      final routed = await windowChannel.invokeMethod<bool>(
+        'routePackageLaunch',
+        {'uuid': manifest.packageUuid, 'path': p.absolute(initialPackagePath)},
+      );
+      if (routed == true) exit(0);
+    } catch (error, stack) {
+      AppLog.warning('精听包实例路由失败: $error', stack);
     }
   }
   runApp(IntensiveListeningApp(initialPackagePath: initialPackagePath));
@@ -451,19 +475,39 @@ class _AppShellState extends State<AppShell> {
   AppPrivateApiServer? _privateApiServer;
 
   // Page identity keys — keep State alive across rebuilds.
-  final _studentPageKey = GlobalKey();
+  final _studentPageKey = GlobalKey<_StudentPageState>();
   final _teacherPageKey = GlobalKey<_TeacherPageState>();
   final _settingsPageKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb &&
+        Platform.isWindows &&
+        !Platform.environment.containsKey('FLUTTER_TEST')) {
+      _windowChannel.setMethodCallHandler(_handleWindowCall);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(
+            _windowChannel
+                .invokeMethod<void>('readyForPackageOpens')
+                .catchError(
+                  (Object error, StackTrace stack) =>
+                      AppLog.warning('窗口打开请求通道初始化失败: $error', stack),
+                ),
+          );
+        }
+      });
+    }
     _transcriptionQueue = TranscriptionQueue(
       runner: _runTranscription,
       resolveDuplicate: _resolveDuplicate,
       store: _queueStore(),
       cache: SrtRecognitionCache(),
       resolveCacheProfile: () => _settings.asrCacheProfile,
+      onCompleted: (job, {required cacheHit}) => unawaited(
+        AppTelemetry.instance.asrCompleted(job, cacheHit: cacheHit),
+      ),
     )..addListener(_onQueueChanged);
     unawaited(_loadSettings());
     if (widget.initialPackagePath == null) {
@@ -473,6 +517,11 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    if (!kIsWeb &&
+        Platform.isWindows &&
+        !Platform.environment.containsKey('FLUTTER_TEST')) {
+      _windowChannel.setMethodCallHandler(null);
+    }
     _transcriptionQueue.removeListener(_onQueueChanged);
     unawaited(_transcriptionQueue.disposeQueue());
     _libraryChanged.close();
@@ -486,6 +535,27 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _refreshStudentLibrary() => _libraryChanged.add(null);
+
+  Future<void> _handleWindowCall(MethodCall call) async {
+    if (call.method != 'externalOpenPackage') return;
+    final path = call.arguments;
+    if (path is! String || !path.toLowerCase().endsWith('.ilp')) return;
+    AppLog.debug('收到外部精听包打开请求: ${p.basename(path)}');
+    if (!mounted) return;
+    if (widget.initialPackagePath == null) {
+      setState(() => _selectedIndex = 0);
+    }
+    for (var frame = 0; frame < 3; frame++) {
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      final student = _studentPageKey.currentState;
+      if (student != null) {
+        await student._openExternalPackage(path);
+        return;
+      }
+    }
+    AppLog.warning('播放页面未就绪，无法打开精听包: ${p.basename(path)}');
+  }
 
   QueueStore _queueStore() {
     final override = debugQueueFile;
@@ -502,23 +572,39 @@ class _AppShellState extends State<AppShell> {
     AsrProgressCallback? onProgress,
     Future<void>? abortTrigger,
     Duration? estimatedProcessingTime,
-  }) {
+  }) async {
     final config = _settings.cloudAsrConfig;
     if (!config.isComplete) {
       throw const AsrException('请在设置中填写服务地址、模型和密钥。');
     }
     final timeoutSeconds = _settings.cloudTimeoutSeconds.clamp(30, 1800);
-    return SegmentedAsrRunner(
-      config: config,
-      concurrency: _settings.cloudConcurrency,
-      timeout: Duration(seconds: timeoutSeconds),
-    ).call(
-      audioFile: audioFile,
-      onProgress: onProgress,
-      abortTrigger: abortTrigger,
-      estimatedProcessingTime: estimatedProcessingTime,
-      confirmForcedCuts: _confirmForcedCuts,
+    AppLog.debug(
+      '转写开始: ${p.basename(audioFile.path)}，并发 ${_settings.cloudConcurrency}，超时 ${timeoutSeconds}s',
     );
+    try {
+      final transcript =
+          await SegmentedAsrRunner(
+            config: config,
+            concurrency: _settings.cloudConcurrency,
+            timeout: Duration(seconds: timeoutSeconds),
+          ).call(
+            audioFile: audioFile,
+            onProgress: (progress) {
+              AppLog.debug(
+                '转写进度: ${progress.stage.name} ${progress.segmentIndex}/${progress.segmentTotal}',
+              );
+              onProgress?.call(progress);
+            },
+            abortTrigger: abortTrigger,
+            estimatedProcessingTime: estimatedProcessingTime,
+            confirmForcedCuts: _confirmForcedCuts,
+          );
+      AppLog.debug('转写完成: ${p.basename(audioFile.path)}');
+      return transcript;
+    } catch (error, stack) {
+      AppLog.error('转写失败: $error', stack);
+      rethrow;
+    }
   }
 
   Future<bool> _confirmForcedCuts() async {
@@ -713,6 +799,29 @@ class _AppShellState extends State<AppShell> {
     if (widget.initialPackagePath != null) return;
     if (!kIsWeb &&
         Platform.isWindows &&
+        !Platform.environment.containsKey('FLUTTER_TEST')) {
+      if (!settings.telemetryPrompted) {
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted) return;
+        final enabled = await _showTelemetryConsentPrompt();
+        if (!mounted) return;
+        if (enabled != null) {
+          settings = settings.copyWith(
+            telemetryPrompted: true,
+            telemetryEnabled: enabled,
+          );
+          await _settingsStore.save(settings);
+          if (!mounted) return;
+          setState(() => _settings = settings);
+        }
+      }
+      await AppTelemetry.instance.applyConsent(
+        settings.telemetryEnabled,
+        mainInstance: true,
+      );
+    }
+    if (!kIsWeb &&
+        Platform.isWindows &&
         !Platform.environment.containsKey('FLUTTER_TEST') &&
         !settings.fileAssociationPrompted &&
         !settings.fileAssociationEnabled) {
@@ -761,6 +870,47 @@ class _AppShellState extends State<AppShell> {
         ],
       ),
     );
+  }
+
+  Future<bool?> _showTelemetryConsentPrompt() async {
+    var selected = true;
+    final enabled = await showSpringDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => ContentDialog(
+          title: const Text('匿名数据分析'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '开启后，应用会向阿里云 ARMS 发送匿名设备 ID、应用版本、ASR 完成耗时与模型、'
+                'Windows 系统和硬件信息，以及应用内红色错误提示的原文。错误原文可能含文件名或服务响应。'
+                'SDK 还会产生时间戳、网络 IP 等运行元数据。可随时在设置中关闭；关闭后会清理待发送缓存。',
+              ),
+              const SizedBox(height: 16),
+              Checkbox(
+                checked: selected,
+                onChanged: (value) =>
+                    setDialogState(() => selected = value == true),
+                content: const Text('开启匿名数据分析'),
+              ),
+            ],
+          ),
+          actions: [
+            Button(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('暂不启用'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(selected),
+              child: const Text('继续'),
+            ),
+          ],
+        ),
+      ),
+    );
+    return enabled;
   }
 
   Future<void> _showFileAssociationPrompt() async {
@@ -812,6 +962,12 @@ class _AppShellState extends State<AppShell> {
     await _settingsStore.save(settings);
     AppLog.debugEnabled = settings.debugLogging;
     AppLog.debug('设置已保存');
+    if (previous.telemetryEnabled != settings.telemetryEnabled) {
+      await AppTelemetry.instance.applyConsent(
+        settings.telemetryEnabled,
+        mainInstance: widget.initialPackagePath == null,
+      );
+    }
     if (previous.fileAssociationEnabled != settings.fileAssociationEnabled) {
       await const IlpFileAssociation().apply(settings.fileAssociationEnabled);
     }
@@ -1071,6 +1227,7 @@ class _AppShellState extends State<AppShell> {
         child: Stack(
           children: [
             StudentPage(
+              key: _studentPageKey,
               initialPackagePath: widget.initialPackagePath,
               compactPlayback: true,
               settings: _settings,
@@ -1146,12 +1303,12 @@ class _AppShellState extends State<AppShell> {
         items: [
           PaneItem(
             icon: const Icon(FluentIcons.play),
-            title: const Text('学生端'),
+            title: const Text('播放'),
             body: pages[0],
           ),
           PaneItem(
             icon: const Icon(FluentIcons.education),
-            title: const Text('教师端'),
+            title: const Text('制作'),
             body: pages[1],
           ),
           PaneItem(
@@ -1308,6 +1465,7 @@ class _StudentPageState extends State<StudentPage> {
   String? _openingLessonId;
   String? _deletingLessonId;
   var _handledInitialPackage = false;
+  late final Future<void> _initialLibraryLoad;
   var _revealedCloze = <String>{};
   var _showAllCloze = false;
   var _showSubtitles = true;
@@ -1337,7 +1495,8 @@ class _StudentPageState extends State<StudentPage> {
     _openLessonSubscription = widget.openLessonRequests.listen((lesson) {
       if (mounted) unawaited(_openLesson(lesson));
     });
-    unawaited(_loadLibrary());
+    _initialLibraryLoad = _loadLibrary();
+    unawaited(_initialLibraryLoad);
   }
 
   @override
@@ -1454,6 +1613,13 @@ class _StudentPageState extends State<StudentPage> {
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _openExternalPackage(String path) async {
+    await _initialLibraryLoad;
+    if (!mounted) return;
+    await _saveLessonProgress();
+    await _importPackagePath(path);
   }
 
   Future<void> _openLesson(ImportedLesson lesson) async {
@@ -1681,6 +1847,7 @@ class _StudentPageState extends State<StudentPage> {
 
   Future<void> _importPackagePath(String selectedPath) async {
     final packageFile = File(selectedPath);
+    AppLog.debug('开始导入精听包: ${p.basename(selectedPath)}');
     setState(() => _busy = true);
     try {
       final directory = await _libraryDirectory();
@@ -1690,9 +1857,23 @@ class _StudentPageState extends State<StudentPage> {
       final sameUuid = await library.findByUuid(manifest.packageUuid);
       if (sameUuid != null) {
         if (sameUuid.manifest.packageVersion == manifest.packageVersion) {
-          final existing = await library.loadById(sameUuid.id);
-          if (existing != null) await _openLesson(existing);
-          if (mounted) _showStudentNotice('已打开课程', '本地已是相同版本。');
+          AppLog.debug('命中同 UUID 同版本精听包: ${manifest.packageUuid}');
+          final contentChanged =
+              sameUuid.manifest.audioSha256 != manifest.audioSha256 ||
+              sameUuid.manifest.transcriptSha256 != manifest.transcriptSha256 ||
+              sameUuid.manifest.title != manifest.title;
+          if (contentChanged) {
+            await _prepareForPackageReplacement(manifest.packageUuid);
+            final reloaded = await importer.importFile(
+              packageFile,
+              replaceExisting: true,
+            );
+            await _reloadAndOpen(reloaded);
+          } else {
+            final existing = await library.loadById(sameUuid.id);
+            if (existing != null) await _openLesson(existing);
+          }
+          if (mounted) _showStudentNotice('课程已重载', manifest.title);
           return;
         }
         if (!mounted) return;
@@ -1702,11 +1883,15 @@ class _StudentPageState extends State<StudentPage> {
           incomingVersion: manifest.packageVersion,
         );
         if (!update) return;
+        await _prepareForPackageReplacement(manifest.packageUuid);
         final lesson = await importer.importFile(
           packageFile,
           replaceExisting: true,
         );
         await _reloadAndOpen(lesson);
+        AppLog.debug(
+          '精听包已更新: ${manifest.packageUuid} v${manifest.packageVersion}',
+        );
         if (mounted) _showStudentNotice('课程已更新', '播放记录与挖空记录已保留。');
         return;
       }
@@ -1746,12 +1931,22 @@ class _StudentPageState extends State<StudentPage> {
         await _progressStore.save(_lessonProgress);
       }
       await _reloadAndOpen(lesson);
+      AppLog.debug(
+        '精听包已导入: ${manifest.packageUuid} v${manifest.packageVersion}',
+      );
       if (mounted) _showStudentNotice('导入完成', '课程已保存到主页。');
     } on IlpException catch (error) {
+      AppLog.error('精听包导入失败: ${error.message}');
       if (mounted) await showResult(context, '无法导入', error.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _prepareForPackageReplacement(String packageUuid) async {
+    if (_lesson?.manifest.packageUuid != packageUuid) return;
+    await _saveLessonProgress();
+    await _player?.stop();
   }
 
   Future<void> _reloadAndOpen(ImportedLesson lesson) async {
@@ -1814,6 +2009,7 @@ class _StudentPageState extends State<StudentPage> {
     if (_lesson == null && _standaloneAudio == null) return;
     final player = await _ensurePlayer();
     _repeatOnceStopAt = null;
+    AppLog.debug('播放状态切换: ${_playing ? '暂停' : '播放'}，字幕索引 $_activeIndex');
     if (_playing) {
       await player.pause();
     } else {
@@ -1876,6 +2072,7 @@ class _StudentPageState extends State<StudentPage> {
   }
 
   void _setSingleSentenceLoop(bool enabled) {
+    AppLog.debug('单句循环: ${enabled ? '开启' : '关闭'}');
     setState(() => _singleSentenceLoop = enabled);
     if (enabled && _activeIndex >= 0) {
       _configureSentenceLoop(_activeIndex);
@@ -1888,6 +2085,7 @@ class _StudentPageState extends State<StudentPage> {
   Future<void> _repeatSentenceOnce() async {
     final index = _activeIndex;
     if (index < 0 || index >= _cues.length) return;
+    AppLog.debug('重复本句: 字幕索引 $index');
     final player = await _ensurePlayer();
     await player.pause();
     _setSingleSentenceLoop(false);
@@ -1967,6 +2165,7 @@ class _StudentPageState extends State<StudentPage> {
 
   Future<void> _jumpToMaterial(LessonMaterial material) async {
     if (material.cueIndexes.isEmpty) return;
+    AppLog.debug('跳转题目段: ${material.id}');
     if (!_playing && _activeIndex >= 0) {
       _pausedOriginalCueIndex ??= _activeIndex;
     }
@@ -5995,6 +6194,8 @@ class _SettingsPageState extends State<SettingsPage> {
   var _clearingLogs = false;
   var _exportingApi = false;
   var _importingApi = false;
+  var _pendingPreferenceSaves = 0;
+  Future<void> _preferenceSaveQueue = Future<void>.value();
 
   @override
   void initState() {
@@ -6013,8 +6214,47 @@ class _SettingsPageState extends State<SettingsPage> {
   void didUpdateWidget(covariant SettingsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.settings != widget.settings) {
-      _settings = widget.settings;
-      _syncControllers(widget.settings);
+      final apiChanged =
+          _settings.cloudBaseUrl != widget.settings.cloudBaseUrl ||
+          _settings.cloudEndpoint != widget.settings.cloudEndpoint ||
+          _settings.cloudModel != widget.settings.cloudModel ||
+          _settings.cloudApiKey != widget.settings.cloudApiKey ||
+          _settings.cloudTimeoutSeconds !=
+              widget.settings.cloudTimeoutSeconds ||
+          _settings.cloudConcurrency != widget.settings.cloudConcurrency;
+      if (_pendingPreferenceSaves == 0 || apiChanged) {
+        _settings = widget.settings;
+      }
+      if (apiChanged) _syncControllers(widget.settings);
+    }
+  }
+
+  void _updatePreference(AppSettings updated, String label) {
+    setState(() {
+      _settings = updated;
+      _pendingPreferenceSaves++;
+    });
+    _preferenceSaveQueue = _preferenceSaveQueue.then(
+      (_) => _persistPreference(updated, label),
+    );
+    unawaited(_preferenceSaveQueue);
+  }
+
+  Future<void> _persistPreference(AppSettings updated, String label) async {
+    try {
+      await widget.onSettingsChanged(updated);
+      AppLog.debug('设置已更新: $label');
+    } catch (error) {
+      if (mounted) {
+        _showSettingsNotice('设置未应用', '$error', severity: InfoBarSeverity.error);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _pendingPreferenceSaves--;
+          if (_pendingPreferenceSaves == 0) _settings = widget.settings;
+        });
+      }
     }
   }
 
@@ -6200,7 +6440,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final directory = await intensiveListeningDataDirectory();
     final file = File(p.join(directory.path, 'mcp', 'app-private-api.json'));
     if (!await file.exists()) {
-      throw const AppPrivateApiException('mcp_not_running', '请先启用 MCP 并保存设置。');
+      throw const AppPrivateApiException('mcp_not_running', '请先在设置中启用 MCP。');
     }
     final value = jsonDecode(await file.readAsString());
     if (value is! Map<String, dynamic> ||
@@ -6259,7 +6499,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Future<void> _saveSettings() async {
+  Future<void> _saveApiSettings() async {
     final settings = _settingsFromControllers();
     setState(() => _saving = true);
     try {
@@ -6270,7 +6510,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _cloudTimeoutController.text = settings.cloudTimeoutSeconds.toString();
         _cloudConcurrencyController.text = settings.cloudConcurrency.toString();
       });
-      _showSettingsNotice('设置已保存', '应用功能和教师端转写配置已经更新。');
+      _showSettingsNotice('API 配置已保存', '云端转写配置已经更新。');
     } catch (error) {
       if (mounted) {
         _showSettingsNotice(
@@ -6354,6 +6594,24 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _clearLogs() async {
+    final confirmed = await showSpringDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ContentDialog(
+        title: const Text('清理日志？'),
+        content: const Text('将删除日志目录中的现有日志文件。'),
+        actions: [
+          Button(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('清理日志'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     setState(() => _clearingLogs = true);
     try {
       final bytes = await AppLog.clear();
@@ -6373,6 +6631,28 @@ class _SettingsPageState extends State<SettingsPage> {
       }
     } finally {
       if (mounted) setState(() => _clearingLogs = false);
+    }
+  }
+
+  Future<void> _openApiGuide() async {
+    const url = 'https://il.luyii.cn/guide.html#api-setup';
+    try {
+      if (Platform.isWindows) {
+        await Process.start('explorer.exe', [url]);
+      } else if (Platform.isMacOS) {
+        await Process.start('open', [url]);
+      } else if (Platform.isLinux) {
+        await Process.start('xdg-open', [url]);
+      }
+      AppLog.debug('已打开 API 配置指南');
+    } catch (error) {
+      if (mounted) {
+        _showSettingsNotice(
+          '无法打开指南',
+          '$error',
+          severity: InfoBarSeverity.error,
+        );
+      }
     }
   }
 
@@ -6443,11 +6723,10 @@ class _SettingsPageState extends State<SettingsPage> {
                           ],
                           onChanged: (value) {
                             if (value != null) {
-                              final updated = _settings.copyWith(
-                                themeMode: value,
+                              _updatePreference(
+                                _settings.copyWith(themeMode: value),
+                                '外观主题',
                               );
-                              setState(() => _settings = updated);
-                              unawaited(widget.onSettingsChanged(updated));
                             }
                           },
                         ),
@@ -6460,10 +6739,9 @@ class _SettingsPageState extends State<SettingsPage> {
                         title: '关联文件格式',
                         description: '双击 .ilp 精听包直接进入播放界面。',
                         checked: _settings.fileAssociationEnabled,
-                        onChanged: (value) => setState(
-                          () => _settings = _settings.copyWith(
-                            fileAssociationEnabled: value,
-                          ),
+                        onChanged: (value) => _updatePreference(
+                          _settings.copyWith(fileAssociationEnabled: value),
+                          '关联文件格式',
                         ),
                       ),
                     ),
@@ -6474,9 +6752,9 @@ class _SettingsPageState extends State<SettingsPage> {
                         title: 'MCP',
                         description: '允许本机智能体连接课程制作工具；连接后需要在应用内断开。',
                         checked: _settings.mcpEnabled,
-                        onChanged: (value) => setState(
-                          () =>
-                              _settings = _settings.copyWith(mcpEnabled: value),
+                        onChanged: (value) => _updatePreference(
+                          _settings.copyWith(mcpEnabled: value),
+                          'MCP',
                         ),
                       ),
                     ),
@@ -6487,10 +6765,9 @@ class _SettingsPageState extends State<SettingsPage> {
                         title: '跳过题前提示',
                         description: '首次打开课程时定位到第一题前并暂停，保留已有播放进度。',
                         checked: _settings.skipOpeningPrompts,
-                        onChanged: (value) => setState(
-                          () => _settings = _settings.copyWith(
-                            skipOpeningPrompts: value,
-                          ),
+                        onChanged: (value) => _updatePreference(
+                          _settings.copyWith(skipOpeningPrompts: value),
+                          '跳过题前提示',
                         ),
                       ),
                     ),
@@ -6515,6 +6792,12 @@ class _SettingsPageState extends State<SettingsPage> {
                                     () => _settings = _settings.copyWith(
                                       transcriptFontSize: value.round(),
                                     ),
+                                  ),
+                                  onChangeEnd: (value) => _updatePreference(
+                                    _settings.copyWith(
+                                      transcriptFontSize: value.round(),
+                                    ),
+                                    '字幕字体大小',
                                   ),
                                 ),
                               ),
@@ -6544,10 +6827,25 @@ class _SettingsPageState extends State<SettingsPage> {
                         title: '调试模式',
                         description: '开启后在日志目录中记录详细诊断信息。',
                         checked: _settings.debugLogging,
-                        onChanged: (value) => setState(
-                          () => _settings = _settings.copyWith(
-                            debugLogging: value,
+                        onChanged: (value) => _updatePreference(
+                          _settings.copyWith(debugLogging: value),
+                          '调试模式',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(
+                      child: _SettingsToggleRow(
+                        icon: FluentIcons.chart,
+                        title: '匿名使用情况分析',
+                        description: '向阿里云发送匿名设备 ID、ASR 指标、系统与硬件信息、红色错误提示原文及运行元数据。可随时关闭。',
+                        checked: _settings.telemetryEnabled,
+                        onChanged: (value) => _updatePreference(
+                          _settings.copyWith(
+                            telemetryEnabled: value,
+                            telemetryPrompted: true,
                           ),
+                          '匿名使用情况分析',
                         ),
                       ),
                     ),
@@ -6612,32 +6910,13 @@ class _SettingsPageState extends State<SettingsPage> {
                   ],
                 ),
                 const SizedBox(height: 20),
-                Expander(
-                  initiallyExpanded: false,
-                  header: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Row(
-                      children: [
-                        const Icon(FluentIcons.cloud, size: 21),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'API 设置',
-                                style: theme.typography.bodyStrong,
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '配置云端转写服务、请求并发和超时；密钥保存在本机。',
-                                style: theme.typography.caption,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                _SettingsExpansionPanel(
+                  icon: FluentIcons.cloud,
+                  title: 'API 设置',
+                  description: '配置云端转写服务、请求并发和超时；密钥保存在本机。',
+                  trailing: Button(
+                    onPressed: _openApiGuide,
+                    child: const Text('如何配置？'),
                   ),
                   content: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -6729,6 +7008,29 @@ class _SettingsPageState extends State<SettingsPage> {
                         severity: InfoBarSeverity.info,
                         isLong: true,
                       ),
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: FilledButton(
+                          key: saveSettingsButtonKey,
+                          onPressed: _saving ? null : _saveApiSettings,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (_saving)
+                                const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: ProgressRing(strokeWidth: 2),
+                                )
+                              else
+                                const Icon(FluentIcons.save),
+                              const SizedBox(width: 8),
+                              const Text('保存 API 配置'),
+                            ],
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -6782,7 +7084,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       ListTile(
                         leading: Icon(FluentIcons.toggle_right),
                         title: Text('1. 启用服务'),
-                        subtitle: Text('打开上方 MCP 开关，然后保存设置。'),
+                        subtitle: Text('打开上方 MCP 开关，设置会立即生效。'),
                       ),
                       ListTile(
                         leading: Icon(FluentIcons.copy),
@@ -6804,35 +7106,113 @@ class _SettingsPageState extends State<SettingsPage> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    FilledButton(
-                      key: saveSettingsButtonKey,
-                      onPressed: _saving ? null : _saveSettings,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_saving)
-                            const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: ProgressRing(strokeWidth: 2),
-                            )
-                          else
-                            const Icon(FluentIcons.save),
-                          const SizedBox(width: 8),
-                          const Text('保存设置'),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _SettingsExpansionPanel extends StatefulWidget {
+  const _SettingsExpansionPanel({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.trailing,
+    required this.content,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final Widget trailing;
+  final Widget content;
+
+  @override
+  State<_SettingsExpansionPanel> createState() =>
+      _SettingsExpansionPanelState();
+}
+
+class _SettingsExpansionPanelState extends State<_SettingsExpansionPanel> {
+  var _expanded = false;
+  var _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FluentTheme.of(context);
+    return Card(
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          MouseRegion(
+            onEnter: (_) => setState(() => _hovered = true),
+            onExit: (_) => setState(() => _hovered = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                curve: Curves.easeOutCubic,
+                height: 76,
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                color: _hovered
+                    ? theme.accentColor.withValues(alpha: 0.05)
+                    : Colors.transparent,
+                child: Row(
+                  children: [
+                    Icon(widget.icon, size: 22),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.title,
+                            style: theme.typography.bodyStrong,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            widget.description,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.typography.caption,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    widget.trailing,
+                    const SizedBox(width: 14),
+                    AnimatedRotation(
+                      turns: _expanded ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 280),
+                      curve: Curves.easeInOutCubic,
+                      child: const Icon(FluentIcons.chevron_down, size: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          ClipRect(
+            child: AnimatedSize(
+              alignment: Alignment.topCenter,
+              duration: const Duration(milliseconds: 280),
+              reverseDuration: const Duration(milliseconds: 240),
+              curve: Curves.easeInOutCubic,
+              child: _expanded
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+                      child: widget.content,
+                    )
+                  : const SizedBox(width: double.infinity),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -6992,99 +7372,160 @@ class _StudentHome extends StatelessWidget {
                         ? (record?.position.inMilliseconds ?? 0) /
                               lesson.manifest.duration.inMilliseconds
                         : 0.0;
-                    return Card(
-                      padding: EdgeInsets.zero,
-                      child: SizedBox(
-                        height: 96,
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: ListTile(
-                                leading: openingLessonId == lesson.id
-                                    ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: ProgressRing(strokeWidth: 2),
-                                      )
-                                    : const Icon(FluentIcons.music_note),
-                                title: Text(
-                                  lesson.manifest.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    const SizedBox(height: 4),
-                                    LayoutBuilder(
-                                      builder: (context, lineBounds) => Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              '${formatDuration(record?.position ?? Duration.zero)} / '
-                                              '${formatDuration(lesson.manifest.duration)} · '
-                                              '版本 ${lesson.manifest.packageVersion}',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          SizedBox(
-                                            width: (lineBounds.maxWidth * 0.35)
-                                                .clamp(0.0, 160.0),
-                                            child: _LessonProgressTrack(
-                                              fraction: fraction.clamp(
-                                                0.0,
-                                                1.0,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                onPressed:
-                                    openingLessonId != null ||
-                                        deletingLessonId != null
-                                    ? null
-                                    : () => onOpen(lesson),
-                              ),
-                            ),
-                            const Divider(direction: Axis.vertical, size: 40),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                              ),
-                              child: Tooltip(
-                                message: '移除课程',
-                                child: IconButton(
-                                  key: studentLessonRemoveButtonKey(lesson.id),
-                                  icon: deletingLessonId == lesson.id
-                                      ? const SizedBox(
-                                          width: 14,
-                                          height: 14,
-                                          child: ProgressRing(strokeWidth: 2),
-                                        )
-                                      : const Icon(FluentIcons.delete),
-                                  onPressed:
-                                      deletingLessonId != null ||
-                                          openingLessonId != null
-                                      ? null
-                                      : () => onRemove(lesson),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                    return _RecentLessonRow(
+                      lesson: lesson,
+                      record: record,
+                      fraction: fraction.clamp(0.0, 1.0),
+                      opening: openingLessonId == lesson.id,
+                      deleting: deletingLessonId == lesson.id,
+                      enabled:
+                          openingLessonId == null && deletingLessonId == null,
+                      onOpen: () => onOpen(lesson),
+                      onRemove: () => onRemove(lesson),
                     );
                   },
                 ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentLessonRow extends StatefulWidget {
+  const _RecentLessonRow({
+    required this.lesson,
+    required this.record,
+    required this.fraction,
+    required this.opening,
+    required this.deleting,
+    required this.enabled,
+    required this.onOpen,
+    required this.onRemove,
+  });
+
+  final ImportedLesson lesson;
+  final LessonProgress? record;
+  final double fraction;
+  final bool opening;
+  final bool deleting;
+  final bool enabled;
+  final VoidCallback onOpen;
+  final VoidCallback onRemove;
+
+  @override
+  State<_RecentLessonRow> createState() => _RecentLessonRowState();
+}
+
+class _RecentLessonRowState extends State<_RecentLessonRow> {
+  var _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FluentTheme.of(context);
+    final lesson = widget.lesson;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        height: 88,
+        decoration: BoxDecoration(
+          color: _hovered
+              ? theme.accentColor.withValues(alpha: 0.045)
+              : theme.resources.solidBackgroundFillColorQuarternary,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: theme.resources.cardStrokeColorDefault),
+          boxShadow: _hovered
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : const [],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: MouseRegion(
+                cursor: widget.enabled
+                    ? SystemMouseCursors.click
+                    : SystemMouseCursors.basic,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.enabled ? widget.onOpen : null,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    child: Row(
+                      children: [
+                        widget.opening
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: ProgressRing(strokeWidth: 2),
+                              )
+                            : const Icon(FluentIcons.music_note, size: 22),
+                        const SizedBox(width: 18),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                lesson.manifest.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.typography.bodyStrong,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${formatDuration(widget.record?.position ?? Duration.zero)} / '
+                                '${formatDuration(lesson.manifest.duration)} · '
+                                '版本 ${lesson.manifest.packageVersion}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.typography.caption,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 18),
+                        SizedBox(
+                          width: 148,
+                          child: _LessonProgressTrack(
+                            fraction: widget.fraction,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const Divider(direction: Axis.vertical, size: 40),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Tooltip(
+                message: '移除课程',
+                child: IconButton(
+                  key: studentLessonRemoveButtonKey(lesson.id),
+                  icon: widget.deleting
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: ProgressRing(strokeWidth: 2),
+                        )
+                      : const Icon(FluentIcons.delete),
+                  onPressed: widget.enabled ? widget.onRemove : null,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -7183,132 +7624,158 @@ class PlayerSection extends StatelessWidget {
             .toList(growable: false) ??
         const <LessonMaterial>[];
     return LayoutBuilder(
-      builder: (context, bounds) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxHeight: (bounds.maxHeight * 0.48).clamp(0.0, 480.0),
-                      ),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: Card(
-                          padding: const EdgeInsets.all(16),
-                          child: questions.isEmpty
-                              ? Align(
-                                  heightFactor: 1,
-                                  child: Text(
-                                    '当前题目未设置',
-                                    style: theme.typography.subtitle,
-                                  ),
-                                )
-                              : SingleChildScrollView(
-                                  key: ValueKey(
-                                    activeMaterial?.id ?? 'no-material',
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      for (
-                                        var index = 0;
-                                        index < questions.length;
-                                        index++
-                                      ) ...[
-                                        if (index > 0)
-                                          const SizedBox(height: 14),
-                                        _StudentQuestion(
-                                          key: ValueKey(questions[index].id),
-                                          question: questions[index],
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
+      builder: (context, bounds) {
+        final availableHeight = (bounds.maxHeight - 24).clamp(
+          0.0,
+          double.infinity,
+        );
+        final controlsHeight = (availableHeight / 2.68)
+            .clamp(244.0, 320.0)
+            .clamp(0.0, availableHeight);
+        final questionHeight = availableHeight - controlsHeight;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    height: questionHeight,
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: (questionHeight - 20).clamp(0.0, 520.0),
+                        ),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: IntrinsicHeight(
+                            child: Card(
+                              padding: const EdgeInsets.all(16),
+                              child: questions.isEmpty
+                                  ? Align(
+                                      heightFactor: 1,
+                                      child: Text(
+                                        '当前题目未设置',
+                                        style: theme.typography.subtitle,
+                                      ),
+                                    )
+                                  : SingleChildScrollView(
+                                      key: ValueKey(
+                                        activeMaterial?.id ?? 'no-material',
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          for (
+                                            var index = 0;
+                                            index < questions.length;
+                                            index++
+                                          ) ...[
+                                            if (index > 0)
+                                              const SizedBox(height: 14),
+                                            _StudentQuestion(
+                                              key: ValueKey(
+                                                questions[index].id,
+                                              ),
+                                              question: questions[index],
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 24),
-                PlaybackControls(
-                  duration: duration,
-                  position: position,
-                  playing: playing,
-                  singleSentenceLoop: singleSentenceLoop,
-                  onTogglePlayback: onTogglePlayback,
-                  onSeek: onSeek,
-                  onStepSentence: hasTranscript ? onStepSentence : null,
-                  onStepQuestion: onStepQuestion,
-                  onSingleSentenceLoopChanged: hasTranscript
-                      ? onSingleSentenceLoopChanged
-                      : null,
-                  showSubtitles: showSubtitles,
-                  onShowSubtitlesChanged: hasTranscript
-                      ? onShowSubtitlesChanged
-                      : null,
-                ),
-                if (hasTranscript || onShowAllCloze != null) ...[
-                  const SizedBox(height: 12),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      if (hasTranscript)
-                        Button(
-                          onPressed: onRepeatSentence == null
-                              ? null
-                              : () => unawaited(onRepeatSentence!()),
-                          child: const Text('重复本句'),
-                        ),
-                      if (activeMaterial != null)
-                        Button(
-                          onPressed: onToggleMaterialCloze,
-                          child: Text(
-                            materialClozeVisible ? '隐藏本段挖空' : '显示本段挖空',
-                          ),
-                        ),
-                      if (onShowAllCloze != null)
-                        Button(
-                          onPressed: () => onShowAllCloze!(!showAllCloze),
-                          child: Text(showAllCloze ? '隐藏全部挖空' : '显示全部挖空'),
-                        ),
-                    ],
-                  ),
-                ],
-                if (materials.isNotEmpty) ...[
-                  const SizedBox(height: 12),
                   SizedBox(
-                    height: 44,
-                    child: Row(
+                    height: controlsHeight,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Text('题目索引', style: theme.typography.caption),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _QuestionIndexStrip(
-                            exercises: manifest!.exercises,
-                            materials: materials,
-                            activeMaterialId: activeMaterial?.id,
-                            onJumpMaterial: onJumpMaterial,
-                          ),
+                        PlaybackControls(
+                          duration: duration,
+                          position: position,
+                          playing: playing,
+                          singleSentenceLoop: singleSentenceLoop,
+                          onTogglePlayback: onTogglePlayback,
+                          onSeek: onSeek,
+                          onStepSentence: hasTranscript ? onStepSentence : null,
+                          onStepQuestion: onStepQuestion,
+                          onSingleSentenceLoopChanged: hasTranscript
+                              ? onSingleSentenceLoopChanged
+                              : null,
+                          showSubtitles: showSubtitles,
+                          onShowSubtitlesChanged: hasTranscript
+                              ? onShowSubtitlesChanged
+                              : null,
                         ),
+                        if (hasTranscript || onShowAllCloze != null) ...[
+                          const SizedBox(height: 8),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              if (hasTranscript)
+                                Button(
+                                  onPressed: onRepeatSentence == null
+                                      ? null
+                                      : () => unawaited(onRepeatSentence!()),
+                                  child: const Text('重复本句'),
+                                ),
+                              if (activeMaterial != null)
+                                Button(
+                                  onPressed: onToggleMaterialCloze,
+                                  child: Text(
+                                    materialClozeVisible ? '隐藏本段挖空' : '显示本段挖空',
+                                  ),
+                                ),
+                              if (onShowAllCloze != null)
+                                Button(
+                                  onPressed: () =>
+                                      onShowAllCloze!(!showAllCloze),
+                                  child: Text(
+                                    showAllCloze ? '隐藏全部挖空' : '显示全部挖空',
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                        if (materials.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            height: 44,
+                            child: Row(
+                              children: [
+                                Text('题目索引', style: theme.typography.caption),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _QuestionIndexStrip(
+                                    exercises: manifest!.exercises,
+                                    materials: materials,
+                                    activeMaterialId: activeMaterial?.id,
+                                    onJumpMaterial: onJumpMaterial,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
                 ],
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

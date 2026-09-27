@@ -50,8 +50,29 @@ Filename: "{app}\Intensive Listening.exe"; Description: "启动 Intensive Listen
 procedure SHChangeNotify(wEventId: Integer; uFlags: Integer; dwItem1: Integer; dwItem2: Integer);
   external 'SHChangeNotify@shell32.dll stdcall';
 
+function CoCreateGuid(var Guid: TGUID): Integer;
+  external 'CoCreateGuid@ole32.dll stdcall';
+
+function StringFromGUID2(var Guid: TGUID; GuidString: String; MaxChars: Integer): Integer;
+  external 'StringFromGUID2@ole32.dll stdcall';
+
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Guid: TGUID;
+  Cycle: String;
+  Length: Integer;
 begin
-  if CurStep = ssPostInstall then
+  if CurStep = ssPostInstall then begin
     SHChangeNotify($08000000, 0, 0, 0);
+    if CoCreateGuid(Guid) <> 0 then
+      RaiseException('Unable to create the installation cycle ID.');
+    SetLength(Cycle, 40);
+    Length := StringFromGUID2(Guid, Cycle, 40);
+    if Length < 2 then
+      RaiseException('Unable to format the installation cycle ID.');
+    SetLength(Cycle, Length - 1);
+    if not RegWriteStringValue(HKEY_LOCAL_MACHINE,
+      'Software\Intensive Listening', 'InstallCycle', Cycle) then
+      RaiseException('Unable to save the installation cycle ID.');
+  end;
 end;

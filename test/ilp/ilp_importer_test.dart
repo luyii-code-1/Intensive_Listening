@@ -78,6 +78,30 @@ void main() {
       IlpError.duplicatePackage,
     );
   });
+
+  test('replaces a package while retaining its library identity', () async {
+    final package = await createPackage(temporaryDirectory);
+    final original = await importer.importFile(package);
+
+    final reloaded = await importer.importFile(package, replaceExisting: true);
+
+    expect(reloaded.id, original.id);
+    expect(await File(reloaded.audioPath).readAsBytes(), audioBytes);
+    expect(await File(reloaded.transcriptPath).readAsString(), transcript);
+    expect(
+      libraryDirectory
+          .listSync()
+          .whereType<Directory>()
+          .where(
+            (directory) => !directory.path
+                .split(Platform.pathSeparator)
+                .last
+                .startsWith('.'),
+          )
+          .length,
+      1,
+    );
+  });
 }
 
 const audioBytes = [1, 8, 3, 4, 5, 9, 2];

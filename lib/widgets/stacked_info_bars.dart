@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'spring_motion.dart';
 import '../app_log.dart';
+import '../telemetry/app_telemetry.dart';
 
 const _exitDuration = Duration(milliseconds: 420);
 
@@ -27,6 +28,9 @@ class StackedInfoBarController extends ChangeNotifier {
       isWarning: severity == InfoBarSeverity.warning,
       isError: severity == InfoBarSeverity.error,
     );
+    if (severity == InfoBarSeverity.error) {
+      unawaited(AppTelemetry.instance.errorNotice(title, message));
+    }
     final id = ++_sequence;
     _items.add(
       _StackedInfoBarItem(
@@ -164,12 +168,28 @@ class _AnimatedInlineInfoBarState extends State<AnimatedInlineInfoBar> {
   void initState() {
     super.initState();
     _scheduleDismissal();
+    _reportErrorNotice();
   }
 
   @override
   void didUpdateWidget(covariant AnimatedInlineInfoBar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.noticeId != widget.noticeId) _scheduleDismissal();
+    if (oldWidget.noticeId != widget.noticeId) {
+      _scheduleDismissal();
+      _reportErrorNotice();
+    }
+  }
+
+  void _reportErrorNotice() {
+    if (widget.noticeId == null || widget.severity != InfoBarSeverity.error) {
+      return;
+    }
+    unawaited(
+      AppTelemetry.instance.errorNotice(
+        widget.title ?? '',
+        widget.message ?? '',
+      ),
+    );
   }
 
   void _scheduleDismissal() {

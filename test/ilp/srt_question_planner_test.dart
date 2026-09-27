@@ -44,6 +44,24 @@ void main() {
     expect(result.questions[0].materialId, result.questions[1].materialId);
   });
 
+  test('binds only the final lead-in cue to an automatic material', () {
+    SrtCue cue(String text, int second) => SrtCue(
+      start: Duration(seconds: second),
+      end: Duration(seconds: second + 2),
+      text: text,
+    );
+
+    final result = const SrtQuestionPlanner().plan([
+      cue('听下面的录音，回答第 3 题。', 0),
+      cue('现在回答第 3 题。', 2),
+      cue('Where is the man?', 4),
+    ]);
+
+    expect(result.effectiveMaterials.single.leadInCueIndexes, [1]);
+    expect(result.materialForCue(0), isNull);
+    expect(result.materialForCue(1), isNotNull);
+  });
+
   test('normalizes spaced, full-width and Chinese question numbers', () {
     SrtCue cue(String text, int second) => SrtCue(
       start: Duration(seconds: second),

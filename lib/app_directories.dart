@@ -5,7 +5,7 @@ import 'package:path/path.dart' as p;
 
 const appVersion = String.fromEnvironment(
   'ILP_APP_VERSION',
-  defaultValue: '1.0.0',
+  defaultValue: '1.0.1',
 );
 const appDataSchemaVersion = 1;
 

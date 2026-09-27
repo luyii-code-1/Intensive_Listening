@@ -106,6 +106,12 @@ endif()
 install(FILES "${FFMPEG_BINARY}"
   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
+set(ARMS_BINARY "${CMAKE_CURRENT_SOURCE_DIR}/third_party/arms/alibabacloud_rum.dll")
+if(EXISTS "${ARMS_BINARY}")
+  install(FILES "${ARMS_BINARY}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+endif()
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ffmpeg/LICENSE"
   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}/licenses/ffmpeg"
   COMPONENT Runtime)

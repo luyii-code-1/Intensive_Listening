@@ -40,6 +40,10 @@ typedef AsrRunner = Future<String> Function({
 
 typedef DuplicateResolver = Future<DuplicateMatch?> Function(String sha256);
 typedef CacheProfileResolver = String Function();
+typedef TranscriptionCompleted = void Function(
+  TranscriptionJob job, {
+  required bool cacheHit,
+});
 
 const _unset = Object();
 
@@ -186,6 +190,7 @@ class TranscriptionQueue extends ChangeNotifier {
     required this.store,
     required this.cache,
     required this.resolveCacheProfile,
+    this.onCompleted,
     this.maxConcurrent = 1,
     this.maxRetained = 50,
   });
@@ -195,6 +200,7 @@ class TranscriptionQueue extends ChangeNotifier {
   final QueueStore store;
   final SrtRecognitionCache cache;
   final CacheProfileResolver resolveCacheProfile;
+  final TranscriptionCompleted? onCompleted;
   final int maxConcurrent;
   final int maxRetained;
 
@@ -623,6 +629,10 @@ class TranscriptionQueue extends ChangeNotifier {
       ),
       persist: true,
     );
+    final completed = jobById(jobId);
+    if (completed != null) {
+      onCompleted?.call(completed, cacheHit: fromCache);
+    }
   }
 
   void _applyProgress(String jobId, AsrProgress progress) {

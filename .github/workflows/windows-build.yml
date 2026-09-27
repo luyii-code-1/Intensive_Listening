@@ -29,6 +29,10 @@ jobs:
         shell: pwsh
         run: .\scripts\prepare_windows_dependencies.ps1
 
+      - name: Prepare ARMS SDK
+        shell: pwsh
+        run: .\scripts\prepare_windows_arms_sdk.ps1
+
       - name: Get dependencies
         run: flutter pub get
 

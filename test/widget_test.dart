@@ -81,7 +81,7 @@ void main() {
     await pumpUntilFound(tester, find.text('无法导入'));
 
     expect(find.byType(NavigationView), findsNothing);
-    expect(find.text('教师端'), findsNothing);
+    expect(find.text('制作'), findsNothing);
     expect(find.text('设置'), findsNothing);
     expect(find.text('打开音频或精听包'), findsNothing);
 
@@ -138,7 +138,7 @@ void main() {
 
     await tester.pumpWidget(const IntensiveListeningApp());
     await pumpUntilFound(tester, find.text('学生端'));
-    await tester.tap(find.text('教师端').first);
+    await tester.tap(find.text('制作').first);
     await pumpUntilFound(tester, find.text('还没有课程项目'));
 
     expect(find.text('课程项目'), findsOneWidget);
@@ -169,15 +169,14 @@ void main() {
           .ancestor(of: find.text('MCP'), matching: find.byType(Scrollable))
           .first,
     );
+    await Scrollable.ensureVisible(
+      tester.element(find.text('API 设置')),
+      alignment: 0.5,
+    );
+    await tester.pump();
     expect(find.text('API 设置'), findsOneWidget);
-    final apiSettingsExpander = find.ancestor(
-      of: find.text('API 设置'),
-      matching: find.byType(Expander),
-    );
-    expect(
-      tester.widget<Expander>(apiSettingsExpander).initiallyExpanded,
-      isFalse,
-    );
+    expect(find.text('API Endpoint'), findsNothing);
+    expect(find.text('如何配置？'), findsOneWidget);
     expect(find.text('本地模型'), findsNothing);
 
     await tester.tap(find.text('API 设置'));
@@ -194,6 +193,31 @@ void main() {
     await tester.tap(find.byKey(settingsBackButtonKey));
     await pumpUntilFound(tester, find.text('打开音频或精听包'));
     expect(find.text('打开音频或精听包'), findsOneWidget);
+  });
+
+  testWidgets('saves non-text settings as soon as they change', (tester) async {
+    var settings = AppSettings.defaults();
+    final saved = <AppSettings>[];
+    await tester.pumpWidget(
+      FluentApp(
+        home: StatefulBuilder(
+          builder: (context, update) => SettingsPage(
+            settings: settings,
+            onSettingsChanged: (next) async {
+              saved.add(next);
+              update(() => settings = next);
+            },
+            onBack: () {},
+            onShowEula: () async {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(ToggleSwitch).first);
+    await tester.pump();
+    expect(saved.single.fileAssociationEnabled, isTrue);
+    await tester.pump(const Duration(milliseconds: 150));
   });
 
   testWidgets('navigation pane menu toggles compact and expanded modes', (
@@ -240,7 +264,7 @@ void main() {
 
     await tester.pumpWidget(const IntensiveListeningApp());
     await pumpUntilFound(tester, find.text('学生端'));
-    await tester.tap(find.text('教师端').first);
+    await tester.tap(find.text('制作').first);
     await pumpUntilFound(tester, find.text('lesson'));
     await tester.tap(find.text('lesson').first);
     await pumpUntilFound(tester, find.text('开始转写'));
@@ -278,7 +302,7 @@ void main() {
 
     await tester.pumpWidget(const IntensiveListeningApp());
     await pumpUntilFound(tester, find.text('学生端'));
-    await tester.tap(find.text('教师端').first);
+    await tester.tap(find.text('制作').first);
     await pumpUntilFound(tester, find.text('lesson'));
     await tester.tap(find.text('lesson').first);
     final first = find.byKey(reviewCueSelectionHandleKey(0));
@@ -328,7 +352,7 @@ void main() {
 
     await tester.pumpWidget(const IntensiveListeningApp());
     await pumpUntilFound(tester, find.text('学生端'));
-    await tester.tap(find.text('教师端').first);
+    await tester.tap(find.text('制作').first);
     await pumpUntilFound(tester, find.text('lesson'));
     await tester.tap(find.text('lesson').first);
     await pumpUntilFound(tester, find.byKey(reviewCueSelectionHandleKey(0)));
@@ -371,7 +395,7 @@ void main() {
 
     await tester.pumpWidget(const IntensiveListeningApp());
     await pumpUntilFound(tester, find.text('学生端'));
-    await tester.tap(find.text('教师端').first);
+    await tester.tap(find.text('制作').first);
     await pumpUntilFound(tester, find.text('lesson'));
     await tester.tap(find.text('lesson').first);
     await pumpUntilFound(tester, find.text('Text 1'));

@@ -3,12 +3,11 @@
   <h1>Intensive Listening</h1>
   <p>面向英语听力教学的材料制作与逐句训练工具</p>
   <p>
-    <img src="https://img.shields.io/badge/Release-v1.0.0%20Prelude-B71C1C" alt="v1.0 Prelude" />
+    <img src="https://img.shields.io/badge/Release-v1.0.1%20Prelude-B71C1C" alt="v1.0.1 Prelude" />
     <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4?logo=windows" alt="Windows 10/11" />
     <img src="https://img.shields.io/badge/Framework-Flutter-02569B?logo=flutter" alt="Flutter" />
     <img src="https://img.shields.io/badge/Status-Early%20Development-E7A33E" alt="Early Development" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-blue" alt="GPL-3.0-only" /></a>
-    <a href="https://m8ven.ai/mcp/luyii-code-1/intensive-listening"><img src="https://m8ven.ai/badge/mcp/luyii-code-1/intensive-listening" alt="M8ven Score" /></a>
   </p>
 </div>
 

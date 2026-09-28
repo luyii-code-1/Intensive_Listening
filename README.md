@@ -65,7 +65,7 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 - **全链路自动编排**：智能体可对照原文分页校对并回写 SRT（`read_project_srt`、`set_cue_text`、`import_project_srt`），原子提交材料、小题、选项、答案、题前提示与重复朗读区间（`auto_plan_questions`、`apply_question_plan`），并同步生成词级挖空与校验工程（`apply_cloze_plan`、`validate_course_project`）
 - **会话释放与热刷新**：制作完成后调用 `change_event(event: "User")` 退回用户模式，应用自动刷新工程列表并回到制作首页
 
-设置页提供日志目录、调试模式、日志清理和授权撤回；Windows 安装后引导设置文件关联、MCP、转写 API 与匿名数据分析。遥测现状与版本检查的后续设计见 [规划文档](TELEMETRY_UPDATE_PLAN.md)。
+设置页提供日志目录、调试模式、日志清理和授权撤回；Windows 安装后引导设置文件关联、MCP、转写 API 与匿名数据分析。
 
 <p align="center">
   <img src="assets/screenshots/mcp_collaboration.png" alt="MCP 智能体协同制课" width="100%" />

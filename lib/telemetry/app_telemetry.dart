@@ -16,13 +16,31 @@ abstract class TelemetryTransport {
   Future<bool> event(String name, Map<String, String> fields);
   Future<bool> errorLog(String text);
   Future<String?> installCycle();
+  Future<String?> installUuid();
   Future<Map<String, String>> systemProfile();
+  Future<bool> canReachCollector();
 }
 
 class WindowsTelemetryTransport implements TelemetryTransport {
   const WindowsTelemetryTransport();
 
   static const _channel = MethodChannel('intensive_listening/telemetry');
+  static const _collectorHost = 'hm3xyft6jd-default-cn.rum.aliyuncs.com';
+
+  @override
+  Future<bool> canReachCollector() async {
+    try {
+      final socket = await Socket.connect(
+        _collectorHost,
+        443,
+        timeout: const Duration(seconds: 3),
+      );
+      socket.destroy();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
   Future<bool> start({
@@ -54,6 +72,9 @@ class WindowsTelemetryTransport implements TelemetryTransport {
   @override
   Future<String?> installCycle() =>
       _channel.invokeMethod<String>('installCycle');
+
+  @override
+  Future<String?> installUuid() => _channel.invokeMethod<String>('installUuid');
 
   @override
   Future<Map<String, String>> systemProfile() async {
@@ -96,6 +117,10 @@ class AppTelemetry {
           final cache = Directory(p.join(root.path, 'cache', 'arms-rum'));
           if (!_consent) {
             await _transport.stop(cachePath: cache.path);
+            final pending = File(
+              p.join(root.path, 'telemetry', 'collect.json'),
+            );
+            if (await pending.exists()) await pending.delete();
             return;
           }
           if (_enabled) return;
@@ -114,15 +139,65 @@ class AppTelemetry {
             await _transport.stop(cachePath: cache.path);
             return;
           }
-          if (!_activeReported) {
-            _activeReported = await _transport.event('app_active', const {});
-          }
-          await _reportSystemProfile(root);
+          final reachable = await _transport.canReachCollector();
+          await _reportAppActive(root, reachable: reachable);
+          if (reachable) await _reportSystemProfile(root);
         })
         .catchError((Object error, StackTrace stack) {
           AppLog.warning('遥测状态切换失败: $error', stack);
         });
     return _transition;
+  }
+
+  Future<void> _reportAppActive(
+    Directory root, {
+    required bool reachable,
+  }) async {
+    if (_activeReported) return;
+    final file = File(p.join(root.path, 'telemetry', 'collect.json'));
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final key = '$today|$appVersion';
+    final pending = <String>[];
+    final submitted = <String>{};
+    if (await file.exists()) {
+      try {
+        final saved = jsonDecode(await file.readAsString());
+        if (saved is Map<String, dynamic>) {
+          pending.addAll(
+            (saved['pending'] as List?)?.whereType<String>() ?? const [],
+          );
+          submitted.addAll(
+            (saved['submitted'] as List?)?.whereType<String>() ?? const [],
+          );
+        }
+      } catch (_) {
+        AppLog.warning('启动遥测队列读取失败，将重新建立');
+      }
+    }
+    if (!submitted.contains(key) && !pending.contains(key)) pending.add(key);
+    await file.parent.create(recursive: true);
+    Future<void> save() => file.writeAsString(
+      jsonEncode({'pending': pending, 'submitted': submitted.toList()}),
+      flush: true,
+    );
+    await save();
+    if (!reachable || !_enabled || !_consent) return;
+    final installUuid = await _transport.installUuid();
+    for (final entry in pending.toList()) {
+      final parts = entry.split('|');
+      if (parts.length != 2) continue;
+      final accepted = await _transport.event('app_active', {
+        'active_date': parts[0],
+        'app_version': parts[1],
+        if (installUuid != null && installUuid.isNotEmpty)
+          'install_uuid': installUuid,
+      });
+      if (!accepted) break;
+      pending.remove(entry);
+      submitted.add(entry);
+      if (entry == key) _activeReported = true;
+      await save();
+    }
   }
 
   Future<void> _reportSystemProfile(Directory root) async {
@@ -153,12 +228,28 @@ class AppTelemetry {
     final finished = job.finishedAt;
     if (started == null || finished == null) return Future<void>.value();
     String model = '';
+    String apiHost = 'unknown';
     try {
       final profile =
           jsonDecode(job.cacheProfile ?? '') as Map<String, dynamic>;
-      model = profile['provider'] == 'local'
+      final local = profile['provider'] == 'local';
+      model = local
           ? p.basename('${profile['localModel'] ?? ''}'.replaceAll('\\', '/'))
           : '${profile['model'] ?? ''}';
+      if (local) {
+        apiHost = 'local';
+      } else {
+        final base = '${profile['baseUrl'] ?? ''}'.trim();
+        final endpoint = '${profile['endpoint'] ?? ''}'.trim();
+        final host =
+            (Uri.tryParse(base)?.host.isNotEmpty == true
+                ? Uri.tryParse(base)?.host
+                : Uri.tryParse(endpoint)?.host) ??
+            '';
+        if (RegExp(r'^[A-Za-z0-9.-]{1,253}$').hasMatch(host)) {
+          apiHost = host.toLowerCase();
+        }
+      }
     } catch (_) {
       model = 'unknown';
     }
@@ -169,6 +260,7 @@ class AppTelemetry {
     return _sendEvent('asr_completed', {
       'cache_hit': '$cacheHit',
       'model': model,
+      'api_host': apiHost,
       'duration_ms': '${duration < 0 ? 0 : duration}',
     });
   }

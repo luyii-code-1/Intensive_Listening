@@ -60,9 +60,13 @@ Future<Directory> intensiveListeningApplicationDataDirectory() async {
 }
 
 /// Removes only regenerable application files; projects and settings are kept.
-Future<int> clearIntensiveListeningCache() async {
-  final applicationData = await intensiveListeningApplicationDataDirectory();
-  final data = await intensiveListeningDataDirectory();
+Future<int> clearIntensiveListeningCache({Directory? rootDirectory}) async {
+  final applicationData = rootDirectory == null
+      ? await intensiveListeningApplicationDataDirectory()
+      : Directory(p.join(rootDirectory.path, 'application data'));
+  final data = rootDirectory == null
+      ? await intensiveListeningDataDirectory()
+      : Directory(p.join(rootDirectory.path, 'data'));
   var bytes = 0;
   for (final directory in [
     Directory(p.join(applicationData.path, 'updates')),

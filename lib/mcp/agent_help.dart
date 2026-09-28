@@ -4,11 +4,11 @@ const agentBootstrapFileName = 'MCP.md';
 String agentBootstrapMarkdown(String mcpUrl) =>
     '''# Intensive Listening MCP
 
-1. 保持 Intensive Listening 运行，并在设置中启用 MCP。
-2. 使用以下地址连接标准 HTTP MCP：`$mcpUrl`。
-3. 调用 `intensive_listening_status` 测试连接。`PendingApproval` 表示等待应用内审批；收到 `pending_approval` 时稍后重试。`UserRefused` / `user_refused` 表示用户拒绝本次接管。
-4. 获得 `event=Agent` 后，读取状态返回的 `helpPath` 所指向的 `SKILL.md`，再开始制作。
-5. 制作结束调用 `end_agent_session`（HTTP Tool Call 也可使用 `/v1/agent/disconnect`），确认 `event=User`。
+1. 保持 Intensive Listening 运行，并在设置中启用 MCP。先访问 `http://127.0.0.1:17683/test`；只有返回 `{"status":"ok","version":"x.y.z"}` 才继续。未连接时请用户检查 MCP 开关与应用进程，不要猜测端口占用原因。
+2. 使用以下地址连接标准 HTTP MCP：`$mcpUrl`。如果客户端尚未配置 MCP，请把该地址加入客户端的 HTTP MCP 配置，再执行连接。
+3. 第一次连接调用 `register_agent`，提交自己的名称。应用返回分配的 `agentUuid` 和专属 `mcpUrl`。保存 UUID，并把客户端 MCP URL 改为返回的专属 URL 后重新连接。不要把 UUID 当作公开名称传播。
+4. 调用 `change_event(event: "Agent")` 请求接管。`PendingApproval` 表示等待应用内审批；`UserRefused` 表示用户拒绝或超时，请询问用户是否重新尝试。若用户关闭 MCP，停止连接并让用户自行重新开启。相同 UUID 首次批准后可直接进入 Agent 模式。
+5. 获得 `event=Agent` 后，读取状态返回的 `helpPath` 所指向的 `SKILL.md`，再开始制作。制作结束调用 `change_event(event: "User")`，确认 `event=User`。
 
 所有路径是应用所在电脑的本机绝对路径。MCP 操作只使用当前会话返回的项目 ID 与字幕索引。
 ''';
@@ -22,7 +22,7 @@ description: Create an Intensive Listening course from local audio and exam docu
 
 ## 会话与输入
 
-1. 调用 `intensive_listening_status`；只有 `event=Agent` 时写入。若仍为 `PendingApproval`，等待用户审批；若为 `UserRefused`，停止本次制作。
+1. 按 MCP.md 完成 `/test`、注册与 `change_event(event: "Agent")`，然后调用 `intensive_listening_status`；只有 `event=Agent` 时写入。若仍为 `PendingApproval`，等待用户审批；若为 `UserRefused`，停止本次制作。
 2. 用户通常提供一个音频及两份 DOCX 或可提取文本的 PDF（试卷、答案或听力原文）。若用户尚未提供任何文件，立即暂停制作并向用户索要文件；在收到文件前不要创建工程、启动 ASR 或推测素材。首次发现部分文件缺失时，集中向用户询问，并说明题目、答案或字幕校对可能不完整。音频缺失时等待音频；文档缺失时可在说明后继续有依据的部分，不编造题目或答案。扫描版 PDF 无可用文本时请用户换用可提取文字的文件。
 3. 这些文件与应用位于同一台电脑。读取文件名生成清晰课程名；先调用 `list_course_projects`，复用同一音频和试卷对应的工程，再考虑 `create_course_project`。
 
@@ -41,7 +41,7 @@ description: Create an Intensive Listening course from local audio and exam docu
 ## 完成
 
 10. 回读工程并调用 `validate_course_project`。向用户报告课程名、工程 ID、题目数、答案与挖空状态，以及需复核的缺件或歧义。默认仅保存制作工程；只有用户要求时才加入学生端或导出文件。
-11. 将 event 设回 User：调用 `end_agent_session` 或 HTTP `/v1/agent/disconnect`。确认返回 `event=User`；应用会刷新工程列表并显示制作首页。清理转换临时目录，保留用户原件与工程。
+11. 将 event 设回 User：调用 `change_event(event: "User")`。确认返回 `event=User`；应用会刷新工程列表并显示制作首页。清理转换临时目录，保留用户原件与工程。
 ''';
 
 String agentConnectionInstructions(String helpPath) =>

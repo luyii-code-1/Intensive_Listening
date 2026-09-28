@@ -41,6 +41,28 @@ const _wordIndexes = {
 
 const mcpTools = <McpTool>[
   McpTool(
+    'register_agent',
+    'agent.register',
+    '首次连接时提交自报名称，由应用分配 UUID。请妥善保存返回的 MCP URL。',
+    {
+      'agentName': {'type': 'string', 'description': '智能体自报名称'},
+    },
+    ['agentName'],
+  ),
+  McpTool(
+    'change_event',
+    'agent.changeEvent',
+    '请求接管或结束接管；Agent 需要应用内首次审批。',
+    {
+      'event': {
+        'type': 'string',
+        'enum': ['Agent', 'User'],
+      },
+      'agentUuid': {'type': 'string', 'description': 'register_agent 分配的 UUID'},
+    },
+    ['event'],
+  ),
+  McpTool(
     'end_agent_session',
     'agent.disconnect',
     '制作完成后结束本次接管并返回 User 模式。',

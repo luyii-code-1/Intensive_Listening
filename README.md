@@ -60,12 +60,12 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 
 ### MCP 智能体协同制课
 
-- **一键引导与安全审批**：在设置中启用 MCP 后，复制 MCP 配置到客户端，再复制一键操作提示发送给 AI（引导读取 `MCP.md` 与 `SKILL.md`）；连接时弹出 60 秒倒计时审批（「是 / 否 / 关闭 MCP」），授权后进入 `event=Agent` 接管状态
+- **一键引导与安全审批**：在设置中启用 MCP 后，复制 MCP 配置到客户端，再复制一键操作提示发送给 AI。`MCP.md` 引导先检查 `/test`，再注册自报名称并获得专属 UUID 与 MCP URL；首次调用 `change_event` 请求接管时弹出 60 秒审批（「是 / 否 / 关闭 MCP」），超时按拒绝处理，同一 UUID 获批后可复用授权
 - **多源资料接入**：支持绑定本地音频并触发后台 ASR（`import_project_media`、`start_project_asr`），同时导入从试卷/答案/原文 DOCX 或可提取文本 PDF 转换出的 UTF-8 文本（`import_project_text`、`read_project_text`）
 - **全链路自动编排**：智能体可对照原文分页校对并回写 SRT（`read_project_srt`、`set_cue_text`、`import_project_srt`），原子提交材料、小题、选项、答案、题前提示与重复朗读区间（`auto_plan_questions`、`apply_question_plan`），并同步生成词级挖空与校验工程（`apply_cloze_plan`、`validate_course_project`）
-- **会话释放与热刷新**：制作完成后调用 `end_agent_session`（或 `/v1/agent/disconnect`）退回 `event=User` 模式，应用自动刷新工程列表并回到制作首页
+- **会话释放与热刷新**：制作完成后调用 `change_event(event: "User")` 退回用户模式，应用自动刷新工程列表并回到制作首页
 
-设置页提供日志目录、调试模式和日志清理；数据遥测与版本检查的后续设计见 [规划文档](TELEMETRY_UPDATE_PLAN.md)。
+设置页提供日志目录、调试模式、日志清理和授权撤回；Windows 安装后引导设置文件关联、MCP、转写 API 与匿名数据分析。遥测现状与版本检查的后续设计见 [规划文档](TELEMETRY_UPDATE_PLAN.md)。
 
 <p align="center">
   <img src="assets/screenshots/mcp_collaboration.png" alt="MCP 智能体协同制课" width="100%" />
@@ -84,9 +84,10 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 ### 2. MCP 智能体握手与执行时序
 
 ```text
-开启设置中 MCP 开关 → 配置 MCP 客户端并把一键操作提示发给 AI → AI 读取 MCP.md 并调用 intensive_listening_status
-  → 应用内确认 60s 接管弹窗（event=Agent） → AI 读取 SKILL.md 完成转写、校对、分题与挖空
-  → 调用 validate_course_project 与 end_agent_session（event=User） → 自动刷新制作工程列表
+开启设置中 MCP 开关 → 配置 MCP 客户端并把一键操作提示发给 AI → AI 读取 MCP.md 并调用 /test
+  → register_agent 获取 UUID 和专属 MCP URL → change_event 请求 Agent 接管并完成应用内首次审批
+  → AI 读取 SKILL.md 完成转写、校对、分题与挖空 → validate_course_project 与 change_event(User)
+  → 自动刷新制作工程列表
 ```
 
 ### 3. 学生端精听练习流程

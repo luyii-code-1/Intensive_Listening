@@ -182,6 +182,12 @@ std::string RumTelemetry::InstallCycle() const {
                                  L"InstallCycle"));
 }
 
+std::string RumTelemetry::InstallUuid() const {
+  return Utf8(ReadRegistryString(HKEY_LOCAL_MACHINE,
+                                 L"Software\\Intensive Listening",
+                                 L"InstallUuid"));
+}
+
 std::map<std::string, std::string> RumTelemetry::SystemProfile() const {
   std::map<std::string, std::string> profile;
   profile["windows_version"] = WindowsVersion();

@@ -21,16 +21,24 @@ void main() {
     expect(root.path, isNotEmpty);
   });
 
-  test('intensiveListeningDataDirectory uses root directory on non-Windows', () async {
-    if (!Platform.isWindows) {
-      final root = await intensiveListeningRootDirectory();
-      final data = await intensiveListeningDataDirectory();
-      expect(data.path, equals(root.path));
-    }
-  });
+  test(
+    'intensiveListeningDataDirectory uses root directory on non-Windows',
+    () async {
+      if (!Platform.isWindows) {
+        final root = await intensiveListeningRootDirectory();
+        final data = await intensiveListeningDataDirectory();
+        expect(data.path, equals(root.path));
+      }
+    },
+  );
 
-  test('clearIntensiveListeningCache handles nonexistent cache folders safely', () async {
-    final cleared = await clearIntensiveListeningCache();
-    expect(cleared, isNonNegative);
-  });
+  test(
+    'clearIntensiveListeningCache handles nonexistent cache folders safely',
+    () async {
+      final cleared = await clearIntensiveListeningCache(
+        rootDirectory: tempDir,
+      );
+      expect(cleared, 0);
+    },
+  );
 }

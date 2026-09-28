@@ -10,8 +10,10 @@ import 'package:intensive_listening/projects/course_project.dart';
 
 void main() {
   late Directory temporaryDirectory;
+  late List<AppPrivateApiServer> servers;
 
   setUp(() async {
+    servers = [];
     temporaryDirectory = await Directory.systemTemp.createTemp(
       'intensive-listening-private-api-',
     );
@@ -22,10 +24,21 @@ void main() {
   });
 
   tearDown(() async {
+    for (final server in servers) {
+      await server.stop();
+    }
     debugProjectsDirectory = null;
     debugPrivateApiDiscoveryFile = null;
     if (await temporaryDirectory.exists()) {
-      await temporaryDirectory.delete(recursive: true);
+      for (var attempt = 0; attempt < 5; attempt++) {
+        try {
+          await temporaryDirectory.delete(recursive: true);
+          break;
+        } on FileSystemException {
+          if (!Platform.isWindows || attempt == 4) rethrow;
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      }
     }
   });
 
@@ -472,6 +485,7 @@ void main() {
         },
         onAgentStateChanged: agentStates.add,
       );
+      servers.add(server);
       addTearDown(server.stop);
       await server.start();
       final discovery = jsonDecode(
@@ -483,10 +497,21 @@ void main() {
       final bootstrap = File(discovery['bootstrapPath'] as String);
       expect(
         await bootstrap.readAsString(),
-        contains('intensive_listening_status'),
+        contains('/test'),
       );
       final client = HttpClient()..findProxy = (_) => 'DIRECT';
       addTearDown(() => client.close(force: true));
+
+      final probe = await client.get(
+        discovery['host'] as String,
+        discovery['port'] as int,
+        '/test',
+      );
+      final probeResult = jsonDecode(
+        await utf8.decoder.bind(await probe.close()).join(),
+      ) as Map<String, dynamic>;
+      expect(probeResult['status'], 'ok');
+      expect(probeResult['version'], isNotEmpty);
       Future<Map<String, dynamic>> rpc(String method, {String? event}) async {
         final request = await client.post(
           discovery['host'] as String,
@@ -539,6 +564,7 @@ void main() {
         return approval.future;
       },
     );
+    servers.add(server);
     addTearDown(server.stop);
     await server.start();
     final discovery = jsonDecode(
@@ -584,6 +610,84 @@ void main() {
     expect((refused['error'] as Map)['code'], 'user_refused');
   });
 
+  test('approved agent UUID survives restart and scopes tool calls', () async {
+    var approvalCount = 0;
+    AppPrivateApiServer createServer() {
+      final server = AppPrivateApiServer(
+        dispatch: (method, _) async => {'method': method},
+        onAgentApprovalRequested: (_) async {
+          approvalCount++;
+          return AgentApprovalDecision.approve;
+        },
+      );
+      servers.add(server);
+      return server;
+    }
+    var server = createServer();
+    addTearDown(() => server.stop());
+    await server.start();
+    final client = HttpClient()..findProxy = (_) => 'DIRECT';
+    addTearDown(() => client.close(force: true));
+
+    Future<Map<String, dynamic>> post(
+      Map<String, dynamic> discovery,
+      String path,
+      Map<String, Object?> body,
+    ) async {
+      final request = await client.post(
+        discovery['host'] as String,
+        discovery['port'] as int,
+        path,
+      );
+      request.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer ${discovery['token']}',
+      );
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode(body));
+      return jsonDecode(await utf8.decoder.bind(await request.close()).join())
+          as Map<String, dynamic>;
+    }
+
+    var discovery = jsonDecode(
+      await debugPrivateApiDiscoveryFile!.readAsString(),
+    ) as Map<String, dynamic>;
+    final registered = await post(discovery, '/v1/tools/call', {
+      'name': 'register_agent',
+      'arguments': {'agentName': 'WorkBuddy'},
+    });
+    final uuid =
+        (registered['result'] as Map<String, dynamic>)['agentUuid'] as String;
+    final first = await post(discovery, '/v1/tools/call?agentUuid=$uuid', {
+      'name': 'change_event',
+      'arguments': {'event': 'Agent'},
+    });
+    expect((first['result'] as Map)['event'], 'PendingApproval');
+    for (var attempt = 0; attempt < 40 && !server.agentActive; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    expect(server.agentActive, isTrue);
+    expect(approvalCount, 1);
+    await server.stop();
+
+    server = createServer();
+    await server.start();
+    discovery = jsonDecode(
+      await debugPrivateApiDiscoveryFile!.readAsString(),
+    ) as Map<String, dynamic>;
+    final second = await post(discovery, '/v1/tools/call?agentUuid=$uuid', {
+      'name': 'change_event',
+      'arguments': {'event': 'Agent'},
+    });
+    expect((second['result'] as Map)['event'], 'Agent');
+    expect(approvalCount, 1);
+    final wrongUrl = await post(discovery, '/v1/tools/call', {
+      'name': 'list_course_projects',
+      'arguments': <String, Object?>{},
+    });
+    expect((wrongUrl['error'] as Map)['code'], 'agent_uuid_required');
+  });
+
   test('stores converted document text by role', () async {
     final store = const CourseProjectStore();
     final project = await store.create();
@@ -615,6 +719,7 @@ void main() {
     final server = AppPrivateApiServer(
       dispatch: (method, _) async => {'method': method},
     );
+    servers.add(server);
     addTearDown(server.stop);
     await server.start();
     final discovery = jsonDecode(
@@ -660,7 +765,7 @@ void main() {
     );
     expect(
       (initialized['result'] as Map<String, dynamic>)['instructions'],
-      allOf(contains('SKILL.md'), contains(discovery['helpPath'] as String)),
+      contains('register_agent'),
     );
     final tools = await post('/mcp', {
       'jsonrpc': '2.0',
@@ -669,7 +774,19 @@ void main() {
       'params': <String, Object?>{},
     });
     expect((tools['result'] as Map<String, dynamic>)['tools'], isNotEmpty);
-    final called = await post('/v1/tools/call', {
+    final registered = await post('/v1/tools/call', {
+      'name': 'register_agent',
+      'arguments': {'agentName': 'Test Agent'},
+    });
+    final uuid =
+        (registered['result'] as Map<String, dynamic>)['agentUuid'] as String;
+    expect(uuid, isNotEmpty);
+    final connected = await post('/v1/tools/call?agentUuid=$uuid', {
+      'name': 'change_event',
+      'arguments': {'event': 'Agent'},
+    });
+    expect((connected['result'] as Map<String, dynamic>)['event'], 'Agent');
+    final called = await post('/v1/tools/call?agentUuid=$uuid', {
       'name': 'list_course_projects',
       'arguments': <String, Object?>{},
     });

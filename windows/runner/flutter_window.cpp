@@ -200,6 +200,13 @@ bool FlutterWindow::OnCreate() {
           } else {
             result->Success(flutter::EncodableValue(cycle));
           }
+        } else if (method == "installUuid") {
+          const auto uuid = rum_telemetry_.InstallUuid();
+          if (uuid.empty()) {
+            result->Success();
+          } else {
+            result->Success(flutter::EncodableValue(uuid));
+          }
         } else if (method == "systemProfile") {
           flutter::EncodableMap profile;
           for (const auto& [key, value] : rum_telemetry_.SystemProfile()) {

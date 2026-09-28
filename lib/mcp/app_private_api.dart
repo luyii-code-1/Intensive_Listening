@@ -49,6 +49,12 @@ typedef AppPrivateApiDispatcher = Future<Object?> Function(
   Map<String, dynamic> parameters,
 );
 
+class _RegisteredAgent {
+  const _RegisteredAgent(this.name, this.approved);
+  final String name;
+  final bool approved;
+}
+
 class AppPrivateApiServer {
   AppPrivateApiServer({
     required this.dispatch,
@@ -66,7 +72,11 @@ class AppPrivateApiServer {
   File? _discoveryFile;
   File? _helpFile;
   File? _bootstrapFile;
+  File? _agentsFile;
   String? _token;
+  final Map<String, _RegisteredAgent> _agents = {};
+  String? _activeAgentUuid;
+  String? _pendingAgentUuid;
   bool _agentActive = false;
   _AgentApprovalState _approvalState = _AgentApprovalState.user;
   int _approvalGeneration = 0;
@@ -77,46 +87,117 @@ class AppPrivateApiServer {
   void disconnectAgent() {
     _approvalGeneration++;
     _approvalState = _AgentApprovalState.user;
+    _activeAgentUuid = null;
+    _pendingAgentUuid = null;
     _setAgentActive(false);
   }
 
-  void _beginApproval(String? rawAgentName) {
-    if (_approvalState == _AgentApprovalState.agent ||
-        _approvalState == _AgentApprovalState.pending) {
+  void _beginApproval(String? rawAgentName, {String? agentUuid}) {
+    if (_approvalState == _AgentApprovalState.agent) {
+      if (_activeAgentUuid != agentUuid) {
+        throw const AppPrivateApiException('agent_busy', '已有智能体正在接管');
+      }
       return;
     }
-    final name = (rawAgentName?.trim().isNotEmpty ?? false)
-        ? rawAgentName!.trim().substring(
-            0,
-            rawAgentName.trim().length.clamp(0, 80),
-          )
-        : '未命名智能体';
-    final request = onAgentApprovalRequested;
-    if (request == null) {
+    if (_approvalState == _AgentApprovalState.pending) {
+      if (_pendingAgentUuid != agentUuid) {
+        throw const AppPrivateApiException('agent_busy', '已有智能体正在等待审批');
+      }
+      return;
+    }
+    final registered = agentUuid == null ? null : _agents[agentUuid];
+    if (agentUuid != null && registered == null) {
+      throw const AppPrivateApiException(
+        'agent_not_registered',
+        '智能体 UUID 未注册',
+      );
+    }
+    if (registered?.approved == true) {
+      _activeAgentUuid = agentUuid;
       _approvalState = _AgentApprovalState.agent;
       _setAgentActive(true);
       return;
     }
+    final name =
+        registered?.name ??
+        ((rawAgentName?.trim().isNotEmpty ?? false)
+            ? rawAgentName!.trim().substring(
+                0,
+                rawAgentName.trim().length.clamp(0, 80),
+              )
+            : '未命名智能体');
+    final request = onAgentApprovalRequested;
+    if (request == null) {
+      _activeAgentUuid = agentUuid;
+      _approvalState = _AgentApprovalState.agent;
+      _setAgentActive(true);
+      if (agentUuid != null) unawaited(_approveAgent(agentUuid));
+      return;
+    }
     _approvalState = _AgentApprovalState.pending;
+    _pendingAgentUuid = agentUuid;
     final generation = ++_approvalGeneration;
     unawaited(
       request(name)
-          .then((decision) {
+          .then((decision) async {
             if (generation != _approvalGeneration || _server == null) return;
             if (decision == AgentApprovalDecision.approve) {
+              if (agentUuid != null) await _approveAgent(agentUuid);
+              if (generation != _approvalGeneration || _server == null) return;
+              _activeAgentUuid = agentUuid;
+              _pendingAgentUuid = null;
               _approvalState = _AgentApprovalState.agent;
               _setAgentActive(true);
             } else {
               _approvalState = _AgentApprovalState.refused;
+              _pendingAgentUuid = null;
               _setAgentActive(false);
             }
           })
           .catchError((Object _) {
             if (generation == _approvalGeneration) {
               _approvalState = _AgentApprovalState.refused;
+              _pendingAgentUuid = null;
             }
           }),
     );
+  }
+
+  Future<void> _approveAgent(String uuid) async {
+    final current = _agents[uuid];
+    if (current == null || current.approved) return;
+    _agents[uuid] = _RegisteredAgent(current.name, true);
+    await _saveAgents();
+  }
+
+  String _newUuid() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final value = bytes
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${value.substring(0, 8)}-${value.substring(8, 12)}-'
+        '${value.substring(12, 16)}-${value.substring(16, 20)}-${value.substring(20)}';
+  }
+
+  Future<void> _saveAgents() async {
+    final file = _agentsFile;
+    if (file == null) return;
+    final temporary = File('${file.path}.tmp');
+    await temporary.writeAsString(
+      jsonEncode({
+        for (final entry in _agents.entries)
+          entry.key: {
+            'name': entry.value.name,
+            'approved': entry.value.approved,
+          },
+      }),
+      flush: true,
+    );
+    if (await file.exists()) await file.delete();
+    await temporary.rename(file.path);
   }
 
   void _setAgentActive(bool active) {
@@ -129,6 +210,29 @@ class AppPrivateApiServer {
     if (_server != null) return;
     final discoveryFile = await _resolveDiscoveryFile();
     await discoveryFile.parent.create(recursive: true);
+    _agentsFile = File(p.join(discoveryFile.parent.path, 'agents.json'));
+    _agents.clear();
+    if (await _agentsFile!.exists()) {
+      try {
+        final saved = jsonDecode(await _agentsFile!.readAsString());
+        if (saved is Map<String, dynamic>) {
+          for (final entry in saved.entries) {
+            final value = entry.value;
+            if (value is Map<String, dynamic> && value['name'] is String) {
+              _agents[entry.key] = _RegisteredAgent(
+                value['name'] as String,
+                value['approved'] == true,
+              );
+            }
+          }
+        }
+      } catch (_) {
+        throw const AppPrivateApiException(
+          'agent_registry_invalid',
+          '智能体注册表损坏',
+        );
+      }
+    }
     final helpFile = File(p.join(discoveryFile.parent.path, agentHelpFileName));
     await helpFile.writeAsString(agentHelpMarkdown, flush: true);
     final token = await _loadOrCreateToken(discoveryFile.parent);
@@ -181,6 +285,7 @@ class AppPrivateApiServer {
     _discoveryFile = null;
     _helpFile = null;
     _bootstrapFile = null;
+    _agentsFile = null;
     _token = null;
     if (bootstrapFile != null && await bootstrapFile.exists()) {
       await bootstrapFile.delete();
@@ -214,6 +319,13 @@ class AppPrivateApiServer {
           'ok': false,
           'error': {'code': 'invalid_origin', 'message': '请求来源不受信任'},
         }),
+      );
+      await request.response.close();
+      return;
+    }
+    if (request.method == 'GET' && request.uri.path == '/test') {
+      request.response.write(
+        jsonEncode({'status': 'ok', 'version': appVersion}),
       );
       await request.response.close();
       return;
@@ -320,8 +432,16 @@ class AppPrivateApiServer {
     return decoded;
   }
 
-  void _requireAgent() {
-    if (_agentActive) return;
+  void _requireAgent(String? callerUuid) {
+    if (_agentActive) {
+      if (_activeAgentUuid != null && callerUuid != _activeAgentUuid) {
+        throw const AppPrivateApiException(
+          'agent_uuid_required',
+          '请使用已批准的智能体 MCP URL',
+        );
+      }
+      return;
+    }
     if (_approvalState == _AgentApprovalState.pending) {
       throw const AppPrivateApiException(
         'pending_approval',
@@ -338,7 +458,73 @@ class AppPrivateApiServer {
     );
   }
 
-  Future<Object?> _call(String method, Map<String, dynamic> parameters) async {
+  Future<Object?> _call(
+    String method,
+    Map<String, dynamic> parameters, {
+    String? callerUuid,
+  }) async {
+    if (method == 'agent.register') {
+      final rawName = parameters['agentName'];
+      if (rawName is! String || rawName.trim().isEmpty || rawName.length > 80) {
+        throw const AppPrivateApiException(
+          'invalid_agent_name',
+          '智能体名称须为 1 至 80 个字符',
+        );
+      }
+      final uuid = _newUuid();
+      _agents[uuid] = _RegisteredAgent(rawName.trim(), false);
+      await _saveAgents();
+      final url =
+          Uri.parse(
+                'http://127.0.0.1:${_server!.port}/mcp?event=Agent&token=$_token',
+              )
+              .replace(
+                queryParameters: {
+                  'event': 'Agent',
+                  'token': _token!,
+                  'agentUuid': uuid,
+                },
+              )
+              .toString();
+      return {'agentUuid': uuid, 'mcpUrl': url, 'event': 'User'};
+    }
+    if (method == 'agent.changeEvent') {
+      final event = parameters['event'];
+      if (event == 'User') {
+        final owner = _activeAgentUuid ?? _pendingAgentUuid;
+        if (owner != null && owner != callerUuid) {
+          throw const AppPrivateApiException(
+            'agent_uuid_required',
+            '请使用已注册的智能体 MCP URL',
+          );
+        }
+        disconnectAgent();
+        return {'event': 'User', 'connected': false};
+      }
+      if (event != 'Agent') {
+        throw const AppPrivateApiException(
+          'invalid_event',
+          'event 须为 Agent 或 User',
+        );
+      }
+      final uuid = parameters['agentUuid'] is String
+          ? parameters['agentUuid'] as String
+          : callerUuid;
+      if (uuid == null || !_agents.containsKey(uuid)) {
+        throw const AppPrivateApiException(
+          'agent_not_registered',
+          '请先调用 register_agent',
+        );
+      }
+      if (callerUuid != null && callerUuid != uuid) {
+        throw const AppPrivateApiException(
+          'agent_uuid_mismatch',
+          'MCP URL 与智能体 UUID 不一致',
+        );
+      }
+      _beginApproval(_agents[uuid]!.name, agentUuid: uuid);
+      return _agentConnectionResult();
+    }
     if (method == 'agent.connect') {
       _beginApproval(
         parameters['agentName'] is String
@@ -348,10 +534,11 @@ class AppPrivateApiServer {
       return _agentConnectionResult();
     }
     if (method == 'agent.disconnect') {
+      _requireAgent(callerUuid);
       disconnectAgent();
       return {'event': 'User', 'connected': false};
     }
-    if (method != 'app.status') _requireAgent();
+    if (method != 'app.status') _requireAgent(callerUuid);
     final result = await dispatch(method, parameters);
     if (method == 'app.status' && result is Map) {
       return {...result, ..._agentConnectionResult()};
@@ -372,7 +559,9 @@ class AppPrivateApiServer {
       'helpPath': helpPath,
       'instructions': _agentActive
           ? agentConnectionInstructions(helpPath)
-          : '等待应用内接管审批；批准后重新调用 intensive_listening_status。',
+          : _approvalState == _AgentApprovalState.pending
+          ? '等待应用内接管审批；批准后重新调用 intensive_listening_status。'
+          : '首次连接先调用 register_agent 获取专属 MCP URL；已有 UUID 时调用 change_event 请求接管。',
     };
   }
 
@@ -388,8 +577,12 @@ class AppPrivateApiServer {
         }
         _beginApproval(
           body['agentName'] is String ? body['agentName'] as String : null,
+          agentUuid: body['agentUuid'] is String
+              ? body['agentUuid'] as String
+              : request.uri.queryParameters['agentUuid'],
         );
       } else {
+        _requireAgent(request.uri.queryParameters['agentUuid']);
         disconnectAgent();
       }
       request.response.write(
@@ -429,6 +622,7 @@ class AppPrivateApiServer {
       final result = await _call(
         tool.method,
         arguments as Map<String, dynamic>? ?? const {},
+        callerUuid: request.uri.queryParameters['agentUuid'],
       );
       request.response.write(jsonEncode({'ok': true, 'result': result}));
     } on AppPrivateApiException catch (error) {
@@ -496,12 +690,13 @@ class AppPrivateApiServer {
               'MCP 启动须设置 event=Agent',
             );
           }
-          final clientInfo = arguments['clientInfo'];
-          final identity =
-              arguments['agentName'] ??
-              (clientInfo is Map ? clientInfo['name'] : null) ??
-              request.uri.queryParameters['agentName'];
-          _beginApproval(identity is String ? identity : null);
+          final agentUuid = request.uri.queryParameters['agentUuid'];
+          if (agentUuid != null && !_agents.containsKey(agentUuid)) {
+            throw const AppPrivateApiException(
+              'agent_not_registered',
+              '智能体 UUID 未注册',
+            );
+          }
           result = {
             'protocolVersion': '2025-11-25',
             'capabilities': {
@@ -539,6 +734,7 @@ class AppPrivateApiServer {
             final value = await _call(
               tool.method,
               toolArguments as Map<String, dynamic>? ?? const {},
+              callerUuid: request.uri.queryParameters['agentUuid'],
             );
             result = {
               'content': [
@@ -615,7 +811,11 @@ class AppPrivateApiServer {
         ...?parameters as Map<String, dynamic>?,
         if (method == 'agent.connect') 'agentName': decoded['agentName'],
       };
-      final result = await _call(method, callParameters);
+      final result = await _call(
+        method,
+        callParameters,
+        callerUuid: request.uri.queryParameters['agentUuid'],
+      );
       request.response.write(
         jsonEncode({
           'version': appPrivateApiVersion,

@@ -64,6 +64,7 @@ flutter:
   assets:
     - assets/certificates/globalsign-root-ca-r3.pem
     - assets/legal/eula_zh_cn.txt
+    - assets/legal/privacy_zh_cn.txt
   fonts:
     - family: SourceHanSansSC
       fonts:

@@ -11,6 +11,10 @@ class _FakeTransport implements TelemetryTransport {
   final events = <(String, Map<String, String>)>[];
   final logs = <String>[];
   String cycle = 'installation-1';
+  bool reachable = true;
+
+  @override
+  Future<bool> canReachCollector() async => reachable;
 
   @override
   Future<bool> start({
@@ -42,6 +46,9 @@ class _FakeTransport implements TelemetryTransport {
 
   @override
   Future<String?> installCycle() async => cycle;
+
+  @override
+  Future<String?> installUuid() async => 'anonymous-installation';
 
   @override
   Future<Map<String, String>> systemProfile() async => {
@@ -107,6 +114,7 @@ void main() {
     expect(asr.map((entry) => entry.$2['cache_hit']), ['false', 'true']);
     expect(asr.map((entry) => entry.$2['duration_ms']), ['275', '275']);
     expect(asr.map((entry) => entry.$2['model']), ['model.bin', 'model.bin']);
+    expect(asr.map((entry) => entry.$2['api_host']), ['local', 'local']);
     await telemetry.errorNotice('错误 1', '响应 1');
     await telemetry.errorNotice('错误 2', '响应 2');
     expect(transport.logs, ['错误 1: 响应 1', '错误 2: 响应 2']);
@@ -134,4 +142,27 @@ void main() {
       2,
     );
   });
+
+  test(
+    'keeps a daily startup event pending while the collector is offline',
+    () async {
+      transport.reachable = false;
+      await telemetry.applyConsent(true, mainInstance: true);
+      expect(transport.events, isEmpty);
+      final queue = File('${root.path}/telemetry/collect.json');
+      expect(await queue.exists(), isTrue);
+
+      transport.reachable = true;
+      final nextLaunch = AppTelemetry(
+        transport: transport,
+        dataDirectory: () async => root,
+        supportedPlatform: true,
+      );
+      await nextLaunch.applyConsent(true, mainInstance: true);
+      expect(
+        transport.events.where((event) => event.$1 == 'app_active').length,
+        1,
+      );
+    },
+  );
 }

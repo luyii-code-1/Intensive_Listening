@@ -39,6 +39,7 @@ import 'settings/api_configuration_archive.dart';
 import 'settings/file_association.dart';
 import 'student/lesson_progress_store.dart';
 import 'telemetry/app_telemetry.dart';
+import 'telemetry/telemetry_consent_ui.dart';
 import 'transcription/duplicate_dialog.dart';
 import 'transcription/duplicate_match.dart';
 import 'transcription/queue_store.dart';
@@ -47,6 +48,7 @@ import 'transcription/transcription_queue.dart';
 import 'transcription/transcription_queue_panel.dart';
 import 'widgets/confirm_delete_dialog.dart';
 import 'widgets/empty_state.dart';
+import 'widgets/first_run_wizard.dart';
 import 'widgets/spring_motion.dart';
 import 'widgets/stacked_info_bars.dart';
 
@@ -773,6 +775,46 @@ class _AppShellState extends State<AppShell> {
     setState(() => _settings = settings);
     if (!kIsWeb &&
         Platform.isWindows &&
+        widget.initialPackagePath == null &&
+        !Platform.environment.containsKey('FLUTTER_TEST')) {
+      final data = await intensiveListeningDataDirectory();
+      final marker = File(p.join(data.path, 'installed.lock'));
+      final completedCycle = File(
+        p.join(data.path, 'installation', 'setup-cycle.txt'),
+      );
+      String? installCycle;
+      try {
+        installCycle = await const WindowsTelemetryTransport().installCycle();
+      } catch (error) {
+        AppLog.warning('安装周期读取失败: $error');
+      }
+      final previousCycle = await completedCycle.exists()
+          ? (await completedCycle.readAsString()).trim()
+          : '';
+      if (await marker.exists() ||
+          (installCycle != null &&
+              installCycle.isNotEmpty &&
+              installCycle != previousCycle)) {
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted) return;
+        final configured = await _showFirstRunSetup(settings);
+        if (configured == null) {
+          exit(0);
+        }
+        settings = configured;
+        await _settingsStore.save(settings);
+        widget.onThemeChanged?.call(settings.themeMode);
+        if (installCycle != null && installCycle.isNotEmpty) {
+          await completedCycle.parent.create(recursive: true);
+          await completedCycle.writeAsString(installCycle, flush: true);
+        }
+        if (await marker.exists()) await marker.delete();
+        if (!mounted) return;
+        setState(() => _settings = settings);
+      }
+    }
+    if (!kIsWeb &&
+        Platform.isWindows &&
         !Platform.environment.containsKey('FLUTTER_TEST') &&
         settings.eulaAcceptedVersion != '2026-09-22') {
       await WidgetsBinding.instance.endOfFrame;
@@ -842,6 +884,24 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  Future<AppSettings?> _showFirstRunSetup(AppSettings initial) async {
+    final agreement = await rootBundle.loadString(
+      'assets/legal/eula_zh_cn.txt',
+    );
+    final privacy = await rootBundle.loadString(
+      'assets/legal/privacy_zh_cn.txt',
+    );
+    if (!mounted) return null;
+    return showSpringDialog<AppSettings>(
+      context: context,
+      builder: (_) => FirstRunWizard(
+        initial: initial,
+        agreement: agreement,
+        privacy: privacy,
+      ),
+    );
+  }
+
   Future<bool?> _showEula({bool acceptanceRequired = false}) async {
     final agreement = await rootBundle.loadString(
       'assets/legal/eula_zh_cn.txt',
@@ -883,23 +943,28 @@ class _AppShellState extends State<AppShell> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '开启后，应用会向阿里云 ARMS 发送匿名设备 ID、应用版本、ASR 完成耗时与模型、'
-                'Windows 系统和硬件信息，以及应用内红色错误提示的原文。错误原文可能含文件名或服务响应。'
-                'SDK 还会产生时间戳、网络 IP 等运行元数据。可随时在设置中关闭；关闭后会清理待发送缓存。',
-              ),
+              const Text('$telemetryDisclosure\n\n$telemetryRetention'),
               const SizedBox(height: 16),
               Checkbox(
                 checked: selected,
-                onChanged: (value) =>
-                    setDialogState(() => selected = value == true),
+                onChanged: (value) async {
+                  final next = value == true;
+                  if (!next && !await confirmTelemetryDisable(context)) return;
+                  if (!context.mounted) return;
+                  setDialogState(() => selected = next);
+                },
                 content: const Text('开启匿名数据分析'),
               ),
             ],
           ),
           actions: [
             Button(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
+              onPressed: () async {
+                if (selected && !await confirmTelemetryDisable(context)) return;
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop(false);
+                }
+              },
               child: const Text('暂不启用'),
             ),
             FilledButton(
@@ -1090,7 +1155,7 @@ class _AppShellState extends State<AppShell> {
         Navigator.of(
           dialogContext!,
           rootNavigator: true,
-        ).pop(AgentApprovalDecision.approve);
+        ).pop(AgentApprovalDecision.refuse);
       }
     });
     final decision = await showSpringDialog<AgentApprovalDecision>(
@@ -1105,7 +1170,10 @@ class _AppShellState extends State<AppShell> {
             children: [
               Text('接管者（自报）：$name'),
               const SizedBox(height: 12),
-              const Text('未经授权的接管可能导致您的数据损失'),
+              const Text(
+                '未经授权的接管可能导致您的数据损失',
+                style: TextStyle(color: Color(0xFFD13438)),
+              ),
             ],
           ),
           actions: [
@@ -6240,6 +6308,19 @@ class _SettingsPageState extends State<SettingsPage> {
     unawaited(_preferenceSaveQueue);
   }
 
+  Future<void> _changeTelemetryPreference(bool enabled) async {
+    if (!enabled &&
+        _settings.telemetryEnabled &&
+        !await confirmTelemetryDisable(context)) {
+      return;
+    }
+    if (!mounted) return;
+    _updatePreference(
+      _settings.copyWith(telemetryEnabled: enabled, telemetryPrompted: true),
+      '匿名使用情况分析',
+    );
+  }
+
   Future<void> _persistPreference(AppSettings updated, String label) async {
     try {
       await widget.onSettingsChanged(updated);
@@ -6551,6 +6632,79 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Future<void> _withdrawAgreement() async {
+    final confirmed = await showSpringDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ContentDialog(
+        title: const Text('撤回同意'),
+        content: const Text(
+          '撤回用户协议与匿名数据分析同意后，应用会停止上报、清理待发送缓存并退出。'
+          '课程与本机设置会保留；下次启动需重新确认协议和遥测选择。',
+        ),
+        actions: [
+          Button(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('撤回并退出'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _preferenceSaveQueue;
+      await widget.onSettingsChanged(
+        _settings.copyWith(
+          telemetryEnabled: false,
+          telemetryPrompted: false,
+          eulaAcceptedVersion: '',
+        ),
+      );
+      try {
+        final data = await intensiveListeningDataDirectory();
+        final setupCycle = File(
+          p.join(data.path, 'installation', 'setup-cycle.txt'),
+        );
+        if (await setupCycle.exists()) await setupCycle.delete();
+      } catch (error) {
+        AppLog.warning('重新显示安装引导标记失败: $error');
+      }
+      exit(0);
+    } catch (error) {
+      if (mounted) {
+        _showSettingsNotice('撤回未完成', '$error', severity: InfoBarSeverity.error);
+      }
+    }
+  }
+
+  Future<void> _showPrivacy() async {
+    final privacy = await rootBundle.loadString(
+      'assets/legal/privacy_zh_cn.txt',
+    );
+    if (!mounted) return;
+    await showSpringDialog<void>(
+      context: context,
+      builder: (dialogContext) => ContentDialog(
+        title: const Text('隐私说明'),
+        constraints: const BoxConstraints(maxWidth: 680, maxHeight: 620),
+        content: SizedBox(
+          width: 620,
+          height: 420,
+          child: SingleChildScrollView(child: SelectableText(privacy)),
+        ),
+        actions: [
+          Button(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openDataDirectory() async {
     try {
       final directory = await intensiveListeningDataDirectory();
@@ -6838,14 +6992,29 @@ class _SettingsPageState extends State<SettingsPage> {
                       child: _SettingsToggleRow(
                         icon: FluentIcons.chart,
                         title: '匿名使用情况分析',
-                        description: '向阿里云发送匿名设备 ID、ASR 指标、系统与硬件信息、红色错误提示原文及运行元数据。可随时关闭。',
+                        description: '向阿里云发送匿名设备 ID、ASR 指标与 API 主机名、系统与硬件信息、红色错误提示原文及运行元数据。可随时关闭。',
                         checked: _settings.telemetryEnabled,
-                        onChanged: (value) => _updatePreference(
-                          _settings.copyWith(
-                            telemetryEnabled: value,
-                            telemetryPrompted: true,
-                          ),
-                          '匿名使用情况分析',
+                        onChanged: _changeTelemetryPreference,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(
+                      child: ListTile(
+                        leading: const Icon(FluentIcons.document),
+                        title: const Text('用户协议与隐私'),
+                        subtitle: const Text('查看协议，或撤回此前的同意。'),
+                        trailing: Wrap(
+                          spacing: 8,
+                          children: [
+                            Button(
+                              onPressed: _showPrivacy,
+                              child: const Text('查看隐私说明'),
+                            ),
+                            Button(
+                              onPressed: _withdrawAgreement,
+                              child: const Text('撤回同意'),
+                            ),
+                          ],
                         ),
                       ),
                     ),

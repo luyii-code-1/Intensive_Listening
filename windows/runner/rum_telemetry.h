@@ -21,6 +21,7 @@ class RumTelemetry {
              const std::map<std::string, std::string>& fields);
   bool ErrorLog(const std::string& text);
   std::string InstallCycle() const;
+  std::string InstallUuid() const;
   std::map<std::string, std::string> SystemProfile() const;
 
  private:

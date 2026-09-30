@@ -162,7 +162,11 @@ flutter build windows --release
 
 ### 自动构建
 
-`dev` 用于日常开发，`main` 用于发布并保留为 GitHub 默认分支。日常改动提交到 `dev`，PR 的目标分支选择 `dev`。发布时，由管理员在确认 `dev` 已推送后，手动将远端 `main` 更新为 `dev` 的提交。`main` 上独有的后续提交会被该次发布替换，已有版本标签仍保留。
+`dev` 用于日常开发，`main` 用于发布并保留为 GitHub 默认分支。日常改动提交到 `dev`，PR 的目标分支选择 `dev`。发布时，手动运行 **Publish dev snapshot to main** 工作流；它以触发时远端 `dev` 的完整文件树创建一个以旧 `main` 为父提交的发布提交。工作流验证两个分支的文件树一致；如远端 `main` 在发布期间改变，推送会失败。
+
+该工作流需要 `GITHUB_TOKEN` 对 `main` 有直接推送权限。若 `main` 的 Branch Protection 或 Ruleset 要求 PR、状态检查或其他限制而拒绝该推送，应在 GitHub Settings 中为发布所用的 GitHub App 配置适用的 bypass，或调整阻止直接推送的规则。工作流不会更改保护设置。
+
+首次使用前，需先将该工作流文件提交到默认分支 `main`；GitHub 仅为默认分支上已有的 `workflow_dispatch` 工作流提供手动运行入口。
 
 GitHub Actions 在 `dev` 或 `main` 分支提交、面向 `dev` 的 PR，以及 Release 发布时构建 Windows 安装包。每次成功构建的安装包可在对应工作流的 Artifacts 中下载；Release 构建完成后也会自动附加到该 Release。
 

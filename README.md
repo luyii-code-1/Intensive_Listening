@@ -168,7 +168,7 @@ flutter build windows --release
 
 首次使用前，需先将该工作流文件提交到默认分支 `main`；GitHub 仅为默认分支上已有的 `workflow_dispatch` 工作流提供手动运行入口。
 
-GitHub Actions 在 `dev` 或 `main` 分支提交、面向 `dev` 的 PR，以及 Release 发布时构建 Windows 安装包。每次成功构建的安装包可在对应工作流的 Artifacts 中下载。正式版 Release 发布时，工作流依次完成构建、附加 Release 资产，并将安装包传到 `il.luyii.cn`，供网站下载。分发使用仓库 Secret `IL_DEPLOY_SSH_KEY` 和 Variable `IL_DEPLOY_KNOWN_HOSTS`。
+GitHub Actions 在 `dev` 或 `main` 分支提交、面向 `dev` 的 PR，以及 Release 发布时构建 Windows 安装包。每次成功构建的安装包可在对应工作流的 Artifacts 中下载。正式版 Release 发布时，工作流依次完成构建、附加 Release 资产，并将安装包传到 `il.luyii.cn`，供网站下载。分发使用仓库 Secrets `IL_DEPLOY_SSH_KEY`、`IL_DEPLOY_HOST` 和 `IL_DEPLOY_KNOWN_HOSTS`；部署地址和主机验证信息由 Secrets 提供，并在 CI 日志中遮蔽。
 
 ## 技术组成
 

@@ -168,7 +168,8 @@ jobs:
         shell: bash
         env:
           DEPLOY_KEY: ${{ secrets.IL_DEPLOY_SSH_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ vars.IL_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.IL_DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.IL_DEPLOY_KNOWN_HOSTS }}
           INSTALLER: ${{ steps.prepare.outputs.installer }}
         run: |
           set -euo pipefail
@@ -177,7 +178,7 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
 
-          remote='il-deploy@162.211.181.148'
+          remote="il-deploy@$DEPLOY_HOST"
           downloads='/opt/1panel/www/sites/il.luyii.cn/index/downloads'
           suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           scp -o BatchMode=yes "$INSTALLER" "$remote:$downloads/.incoming-$suffix.exe"

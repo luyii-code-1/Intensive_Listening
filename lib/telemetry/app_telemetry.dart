@@ -104,6 +104,7 @@ class AppTelemetry {
   bool _enabled = false;
   bool _consent = false;
   bool _activeReported = false;
+  bool _launchReported = false;
 
   bool get enabled => _enabled;
 
@@ -139,6 +140,7 @@ class AppTelemetry {
             await _transport.stop(cachePath: cache.path);
             return;
           }
+          await _reportAppLaunch();
           final reachable = await _transport.canReachCollector();
           await _reportAppActive(root, reachable: reachable);
           if (reachable) await _reportSystemProfile(root);
@@ -147,6 +149,17 @@ class AppTelemetry {
           AppLog.warning('遥测状态切换失败: $error', stack);
         });
     return _transition;
+  }
+
+  Future<void> _reportAppLaunch() async {
+    if (_launchReported || !_enabled || !_consent) return;
+    final installUuid = await _transport.installUuid();
+    if (!_enabled || !_consent) return;
+    _launchReported = await _transport.event('app_launch', {
+      'app_version': appVersion,
+      if (installUuid != null && installUuid.isNotEmpty)
+        'install_uuid': installUuid,
+    });
   }
 
   Future<void> _reportAppActive(

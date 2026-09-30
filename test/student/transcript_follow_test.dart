@@ -80,4 +80,96 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text(' 50'), findsOneWidget);
   });
+
+  testWidgets('playing transcript click seeks directly', (tester) async {
+    final jumps = <int>[];
+    await tester.pumpWidget(
+      FluentApp(
+        home: TranscriptPane(
+          cues: cues.take(2).toList(),
+          activeIndex: 0,
+          onSelected: (_) {},
+          exercises: const LessonExercises(),
+          revealedCloze: const {},
+          showAllCloze: false,
+          showSubtitles: true,
+          onToggleCloze: (_, _) {},
+          onShowAllCloze: (_) {},
+          questionIndex: -1,
+          playing: true,
+          onJumpCue: (index) async => jumps.add(index),
+        ),
+      ),
+    );
+
+    tester.widgetList<ListTile>(find.byType(ListTile)).last.onPressed!();
+    await tester.pump();
+
+    expect(jumps, [1]);
+    expect(find.text('播放并暂停'), findsNothing);
+  });
+
+  testWidgets(
+    'paused transcript click highlights one cue and offers playback',
+    (tester) async {
+      var activeIndex = 0;
+      final playback = <bool>[];
+      await tester.pumpWidget(
+        FluentApp(
+          home: StatefulBuilder(
+            builder: (context, setState) => TranscriptPane(
+              cues: cues.take(2).toList(),
+              activeIndex: activeIndex,
+              onSelected: (_) {},
+              exercises: const LessonExercises(),
+              revealedCloze: const {},
+              showAllCloze: false,
+              showSubtitles: true,
+              onToggleCloze: (_, _) {},
+              onShowAllCloze: (_) {},
+              questionIndex: -1,
+              playing: false,
+              onAdoptPausedCue: (index) async =>
+                  setState(() => activeIndex = index),
+              onPlaySelected: (index, {required pauseAfterSentence}) async {
+                playback.add(pauseAfterSentence);
+              },
+            ),
+          ),
+        ),
+      );
+
+      tester.widgetList<ListTile>(find.byType(ListTile)).last.onPressed!();
+      await tester.pump();
+
+      expect(activeIndex, 1);
+      expect(
+        tester
+            .widgetList<ListTile>(find.byType(ListTile))
+            .where((tile) => tile.selected)
+            .length,
+        1,
+      );
+      expect(find.text('播放'), findsOneWidget);
+      expect(find.text('播放并暂停'), findsOneWidget);
+
+      await tester.tap(find.text('播放并暂停'));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(playback, [true]);
+
+      tester.widgetList<ListTile>(find.byType(ListTile)).first.onPressed!();
+      await tester.pump();
+      expect(activeIndex, 0);
+      expect(
+        tester
+            .widgetList<ListTile>(find.byType(ListTile))
+            .where((tile) => tile.selected)
+            .length,
+        1,
+      );
+      await tester.tap(find.text('播放'));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(playback, [true, false]);
+    },
+  );
 }

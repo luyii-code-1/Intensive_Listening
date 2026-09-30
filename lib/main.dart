@@ -2162,13 +2162,23 @@ class _StudentPageState extends State<StudentPage> {
     await player.play();
   }
 
-  Future<void> _playSelectedCue(int index, {required bool loop}) async {
+  Future<void> _playSelectedCue(
+    int index, {
+    required bool pauseAfterSentence,
+  }) async {
     if (index < 0 || index >= _cues.length) return;
     _pausedOriginalCueIndex = null;
-    _setSingleSentenceLoop(loop);
+    _setSingleSentenceLoop(false);
     if (_playing) _jumpGeneration++;
     await _seekToCue(index);
+    if (pauseAfterSentence) _repeatOnceStopAt = _cues[index].end;
     await (await _ensurePlayer()).play();
+  }
+
+  Future<void> _jumpToCue(int index) async {
+    if (index < 0 || index >= _cues.length) return;
+    _jumpGeneration++;
+    await _seekToCue(index);
   }
 
   Future<void> _adoptPausedCue(int index) async {
@@ -2496,6 +2506,7 @@ class _StudentPageState extends State<StudentPage> {
                   playing: _playing,
                   navigationGeneration: _jumpGeneration,
                   onPlaySelected: _playSelectedCue,
+                  onJumpCue: _jumpToCue,
                   onAdoptPausedCue: _adoptPausedCue,
                   onReturnOriginal: _returnToOriginalCue,
                   onDismissReturnOriginal: _dismissReturnCue,
@@ -8253,6 +8264,7 @@ class TranscriptPane extends StatefulWidget {
     this.playing = false,
     this.navigationGeneration = 0,
     this.onPlaySelected,
+    this.onJumpCue,
     this.onAdoptPausedCue,
     this.onReturnOriginal,
     this.onDismissReturnOriginal,
@@ -8275,7 +8287,9 @@ class TranscriptPane extends StatefulWidget {
   final int questionIndex;
   final bool playing;
   final int navigationGeneration;
-  final Future<void> Function(int index, {required bool loop})? onPlaySelected;
+  final Future<void> Function(int index, {required bool pauseAfterSentence})?
+  onPlaySelected;
+  final Future<void> Function(int index)? onJumpCue;
   final Future<void> Function(int index)? onAdoptPausedCue;
   final Future<void> Function()? onReturnOriginal;
   final VoidCallback? onDismissReturnOriginal;
@@ -8486,6 +8500,13 @@ class _TranscriptPaneState extends State<TranscriptPane> {
   }
 
   void _selectCue(int index) {
+    _pauseFollowingForUserScroll(notify: false);
+    if (widget.playing) {
+      _lastPointerGlobalPosition = null;
+      widget.onSelected(index);
+      unawaited(widget.onJumpCue?.call(index) ?? Future<void>.value());
+      return;
+    }
     final area = _popupAreaKey.currentContext?.findRenderObject() as RenderBox?;
     final cue =
         _cueKeys[index]?.currentContext?.findRenderObject() as RenderBox?;
@@ -8493,7 +8514,6 @@ class _TranscriptPaneState extends State<TranscriptPane> {
         _lastPointerGlobalPosition ??
         cue?.localToGlobal(Offset(cue.size.width / 2, cue.size.height / 2));
     _lastPointerGlobalPosition = null;
-    _pauseFollowingForUserScroll(notify: false);
     setState(() {
       _cuePopupIndex = index;
       _cuePopupPosition = area != null && globalPosition != null
@@ -8501,6 +8521,7 @@ class _TranscriptPaneState extends State<TranscriptPane> {
           : const Offset(24, 24);
     });
     widget.onSelected(index);
+    unawaited(widget.onAdoptPausedCue?.call(index) ?? Future<void>.value());
   }
 
   void _dismissCuePopup() {
@@ -8769,9 +8790,9 @@ class _TranscriptPaneState extends State<TranscriptPane> {
               ),
             if (_cuePopupIndex case final cueIndex?)
               Positioned(
-                left: ((_cuePopupPosition?.dx ?? 24) - 95).clamp(
+                left: ((_cuePopupPosition?.dx ?? 24) - 112).clamp(
                   8.0,
-                  (bounds.maxWidth - 202).clamp(8.0, double.infinity),
+                  (bounds.maxWidth - 236).clamp(8.0, double.infinity),
                 ),
                 top:
                     ((_cuePopupPosition?.dy ?? 24) > bounds.maxHeight - 70
@@ -8786,7 +8807,7 @@ class _TranscriptPaneState extends State<TranscriptPane> {
                   child: Card(
                     padding: const EdgeInsets.all(6),
                     child: SizedBox(
-                      width: 190,
+                      width: 224,
                       child: Row(
                         children: [
                           Expanded(
@@ -8796,7 +8817,7 @@ class _TranscriptPaneState extends State<TranscriptPane> {
                                 unawaited(
                                   widget.onPlaySelected?.call(
                                         cueIndex,
-                                        loop: false,
+                                        pauseAfterSentence: false,
                                       ) ??
                                       Future<void>.value(),
                                 );
@@ -8812,12 +8833,12 @@ class _TranscriptPaneState extends State<TranscriptPane> {
                                 unawaited(
                                   widget.onPlaySelected?.call(
                                         cueIndex,
-                                        loop: true,
+                                        pauseAfterSentence: true,
                                       ) ??
                                       Future<void>.value(),
                                 );
                               },
-                              child: const Text('循环播放'),
+                              child: const Text('播放并暂停'),
                             ),
                           ),
                         ],

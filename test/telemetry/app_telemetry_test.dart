@@ -86,6 +86,7 @@ void main() {
     await telemetry.applyConsent(true, mainInstance: true);
     expect(transport.starts, 1);
     expect(transport.events.map((entry) => entry.$1), [
+      'app_launch',
       'app_active',
       'system_profile',
     ]);
@@ -148,7 +149,7 @@ void main() {
     () async {
       transport.reachable = false;
       await telemetry.applyConsent(true, mainInstance: true);
-      expect(transport.events, isEmpty);
+      expect(transport.events.map((event) => event.$1), ['app_launch']);
       final queue = File('${root.path}/telemetry/collect.json');
       expect(await queue.exists(), isTrue);
 
@@ -163,6 +164,41 @@ void main() {
         transport.events.where((event) => event.$1 == 'app_active').length,
         1,
       );
+      expect(
+        transport.events.where((event) => event.$1 == 'app_launch').length,
+        2,
+      );
+    },
+  );
+
+  test(
+    'launch is once per main process, independent of daily activity',
+    () async {
+      await telemetry.applyConsent(true, mainInstance: false);
+      expect(transport.events, isEmpty);
+      expect(transport.starts, 0);
+
+      await telemetry.applyConsent(true, mainInstance: true);
+      await telemetry.applyConsent(true, mainInstance: true);
+      await telemetry.applyConsent(false, mainInstance: true);
+      await telemetry.applyConsent(true, mainInstance: true);
+      expect(
+        transport.events.where((event) => event.$1 == 'app_launch').length,
+        1,
+      );
+
+      final nextLaunch = AppTelemetry(
+        transport: transport,
+        dataDirectory: () async => root,
+        supportedPlatform: true,
+      );
+      await nextLaunch.applyConsent(true, mainInstance: true);
+      final launches = transport.events
+          .where((event) => event.$1 == 'app_launch')
+          .toList();
+      expect(launches.length, 2);
+      expect(launches.first.$2['app_version'], isNotEmpty);
+      expect(launches.first.$2['install_uuid'], 'anonymous-installation');
     },
   );
 }

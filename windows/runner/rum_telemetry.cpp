@@ -127,9 +127,9 @@ bool RumTelemetry::Start(const std::string& version,
   set_app_name_(options_, "Intensive Listening");
   set_app_version_(options_, version.c_str());
   set_cache_path_(options_, cache_path.c_str());
-  set_auto_curl_(options_, 0);
+  set_auto_curl_(options_, 1);
   set_auto_cef_(options_, 0);
-  set_auto_crash_(options_, 0);
+  set_auto_crash_(options_, 1);
   running_ = init_(options_) == 0;
   if (!running_) {
     options_free_(options_);

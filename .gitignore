@@ -47,6 +47,7 @@ scripts/*
 !.github/workflows/
 .github/workflows/*
 !.github/workflows/windows-build.yml
+!.github/workflows/sync-dev-to-main.yml
 docs/
 HANDOFF*.md
 README.en.md

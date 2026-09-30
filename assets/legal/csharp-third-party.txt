@@ -1,0 +1,15 @@
+Intensive Listening 2.0 C# components
+
+Avalonia 12.1.3 - MIT - https://github.com/AvaloniaUI/Avalonia
+FluentAvalonia 3.0.1 - MIT - https://github.com/amwx/FluentAvalonia
+CommunityToolkit.Mvvm 8.4.0 - MIT - https://github.com/CommunityToolkit/dotnet
+LibVLCSharp 3.10.1 - LGPL-2.1-or-later - https://code.videolan.org/videolan/LibVLCSharp
+LibVLC Windows 3.0.24 - LGPL-2.1-or-later - https://code.videolan.org/videolan/vlc
+SharpZipLib 1.4.2 - MIT - https://github.com/icsharpcode/SharpZipLib
+FFmpeg 9.0.1 essentials - GPLv3 - https://github.com/FFmpeg/FFmpeg/tree/n9.0.1
+ARMS RUM PC SDK 0.4.4 - Proprietary / Alibaba Cloud Terms
+
+The LibVLC and LibVLCSharp source and license are available from their project URLs above.
+FFmpeg source and pinned binary provenance are recorded in licenses/FFmpeg-README.md.
+ARMS source URL and SHA-256 pins are recorded in licenses/ARMS.md.
+Other runtime components retain their own copyright and licenses.

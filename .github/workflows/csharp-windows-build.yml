@@ -1,0 +1,32 @@
+name: C# Windows preview
+on:
+  push:
+    branches: [2.0-dev]
+  pull_request:
+    branches: [2.0-dev]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet test IL2.slnx -c Release --nologo
+  portable-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: scripts/publish-csharp-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IL2-win-x64
+          path: |
+            artifacts/IL2-win-x64.zip
+            artifacts/IL2-win-x64.zip.sha256

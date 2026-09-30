@@ -1,0 +1,15 @@
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="IL.App.MainWindow" Width="1280" Height="820" MinWidth="1000" MinHeight="650" Title="Intensive Listening 2.0">
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Padding="20,12" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+      <StackPanel Orientation="Horizontal" Spacing="12">
+        <TextBlock Text="Intensive Listening" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,24,0" />
+        <Button Name="StudentButton" Content="精听" />
+        <Button Name="TeacherButton" Content="制作课程" />
+        <Button Name="QueueButton" Content="转写队列" />
+        <Button Name="SettingsButton" Content="设置" />
+        <Button Name="AgentButton" Content="结束智能体接管" IsVisible="False" />
+      </StackPanel>
+    </Border>
+    <ContentControl Name="PageHost" />
+  </DockPanel>
+</Window>

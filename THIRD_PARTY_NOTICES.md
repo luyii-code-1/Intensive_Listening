@@ -31,3 +31,10 @@ Windows 版内置官方 RUM PC SDK 0.4.4 的 x64 DLL。下载来源及 SHA-256 �
 `windows/third_party/arms/README.md`。应用仅在用户明确授权后加载 SDK，
 使用 SDK 默认采集配置：开启 libcurl 网络请求与原生崩溃采集，CEF 采集保持默认关闭。
 用户关闭匿名数据分析后，应用关闭 SDK 并清理待发送缓存。
+
+## C# 2.0 桌面组件
+
+Avalonia 12.1.3、FluentAvalonia 3.0.1、CommunityToolkit.Mvvm 8.4.0 与 SharpZipLib
+1.4.2 使用 MIT 许可证；LibVLCSharp 3.10.1 与 LibVLC Windows 3.0.24 使用
+LGPL-2.1-or-later。版本、来源见 `assets/legal/csharp-third-party.txt`，
+LGPL 文本见 `assets/legal/LGPL-2.1.txt`。Windows 包保留各组件的动态库与来源声明。

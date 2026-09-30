@@ -67,3 +67,17 @@ THIRD_PARTY_NOTICES*.md
 *.7z
 *.exe
 dist/
+
+# C# migration build output
+**/bin/
+**/obj/
+artifacts/
+TestResults/
+!scripts/publish-csharp-windows.sh
+!scripts/test-csharp.sh
+!scripts/export-csharp-fixtures.dart
+!scripts/csharp-windows-installer.iss
+!tests/fixtures/*.zip
+!scripts/validate-csharp-windows.ps1
+!scripts/package-csharp-windows.ps1
+!.github/workflows/csharp-windows-build.yml

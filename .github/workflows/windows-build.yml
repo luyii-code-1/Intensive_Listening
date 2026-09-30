@@ -140,6 +140,7 @@ jobs:
           fi
           installer="${installers[0]}"
           asset_name="$(basename "$installer")"
+          asset_name="${asset_name// /.}"
           asset="$(jq --arg name "$asset_name" '[.assets[] | select(.name == $name)] | if length == 1 then .[0] else error("Expected one matching Release asset") end' release.json)"
           expected_size="$(jq -r '.size' <<< "$asset")"
           expected_sha="$(jq -r '.digest | select(startswith("sha256:")) | ltrimstr("sha256:")' <<< "$asset")"

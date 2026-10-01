@@ -122,3 +122,25 @@ Mac ZIP 解压到新目录后的签名与 12 项原生检查通过，报告为
 Windows SSH 会话启动探针记录到应用初始化完成，但该会话的 ANGLE 交换链创建
 返回 `0x887A0022`，无法据此确认桌面显示。`windows-ui-startup.json` 中的
 窗口句柄为 0；这项探针不计作界面通过。Windows 桌面视觉与交互仍待用户验收。
+
+### 弹窗与通知修复（2026-10-01）
+
+弹窗尺寸通过 FluentAvalonia 的 `ContentDialogMaxWidth` /
+`ContentDialogMaxHeight` 资源限制内部内容面板，窗口遮罩保持全覆盖。
+转写任务内容同步使用内部宽度，并随窗口缩小调整。
+
+各页面操作提示统一为窗口右下角 InfoBar，参考
+[ClassIsland 2 AppToastAdorner](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland.Core/Controls/AppToastAdorner.axaml)
+的排列与滑入、淡出表现。成功通知 5 秒、错误通知 15 秒开始关闭，
+关闭淡出持续 300 ms；页面切换保留通知，错误支持复制详情。
+
+离屏验证包含文件信息、五项任务队列、遮罩范围与内容宽度断言，
+以及成功／错误通知期限和页面切换保留检查。产物保存在
+`artifacts/ui-fixes`；实际 UI 验收由用户完成。
+
+本轮标准 Windows 发布通过 52 项测试。两种离屏配置（1440×900 浅色、
+900×900 深色）均通过上述断言并分别生成 20 张图。Mac 标准发布通过
+签名检查和 12 项原生运行检查；本轮报告为
+`artifacts/ui-fixes/macos-runtime.json`，标准脚本同时更新
+`artifacts/verification/macos-arm64.json`。Windows 更新安装包位于
+`10.0.0.3` 的 `F:\dev\il2-ui-fixes-20261001\dist`。

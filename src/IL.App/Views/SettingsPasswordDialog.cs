@@ -13,12 +13,9 @@ internal static class SettingsPasswordDialog
         var repeated = new TextBox { PasswordChar = '●', PlaceholderText = "再次输入密码", IsVisible = confirm };
         var error = WorkspaceUi.Text(""); error.Foreground = Brushes.Firebrick; error.IsVisible = false;
         var content = WorkspaceUi.Stack(password, repeated, error); content.Width = 360;
-        var dialog = new FAContentDialog
-        {
-            Title = confirm ? "设置配置包密码" : "输入配置包密码", Content = content,
-            PrimaryButtonText = confirm ? "导出" : "导入", CloseButtonText = "取消",
-            DefaultButton = FAContentDialogButton.Primary
-        };
+        var dialog = AppDialogs.Create(owner, confirm ? "设置配置包密码" : "输入配置包密码", content);
+        dialog.PrimaryButtonText = confirm ? "导出" : "导入"; dialog.CloseButtonText = "取消";
+        dialog.DefaultButton = FAContentDialogButton.Primary;
         dialog.PrimaryButtonClick += (_, args) =>
         {
             var message = string.IsNullOrEmpty(password.Text) ? "密码不能为空" : confirm && password.Text != repeated.Text ? "两次输入的密码不一致" : "";

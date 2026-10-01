@@ -9,11 +9,25 @@ namespace IL.App.Views.Dialogs;
 
 public static class AppDialogs
 {
+    public static FAContentDialog Create(Window owner, string title, object content, double maxWidth = 560, double maxHeight = 756)
+    {
+        var dialog = new FAContentDialog { Title = title, Content = content };
+        // The control includes the smoke layer; only the inner surface is constrained.
+        void Resize()
+        {
+            dialog.Resources["ContentDialogMaxWidth"] = Math.Max(0, Math.Min(maxWidth, owner.ClientSize.Width - 32));
+            dialog.Resources["ContentDialogMaxHeight"] = Math.Max(0, Math.Min(maxHeight, owner.ClientSize.Height - 32));
+        }
+        void OnSizeChanged(object? sender, SizeChangedEventArgs args) => Resize();
+        Resize(); owner.SizeChanged += OnSizeChanged;
+        dialog.Closed += (_, _) => owner.SizeChanged -= OnSizeChanged;
+        return dialog;
+    }
     public static async Task<int> ChooseAsync(Window owner, string title, string message, params string[] choices)
     {
         var answer = -1;
         var body = WorkspaceUi.Stack(WorkspaceUi.Text(message));
-        var dialog = new FAContentDialog { Title = title, Content = body, MaxWidth = 560 };
+        var dialog = Create(owner, title, body);
         var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 20, 0, 0) };
         for (var i = 0; i < choices.Length; i++)
         {
@@ -34,14 +48,15 @@ public static class AppDialogs
     public static async Task<string?> PasswordAsync(Window owner, string title)
     {
         var input = new TextBox { PasswordChar = '●', PlaceholderText = "配置归档密码", MinWidth = 330 };
-        var dialog = new FAContentDialog { Title = title, Content = WorkspaceUi.Stack(WorkspaceUi.Text("请填写用于加密或解密 API 配置的密码。"), input), CloseButtonText = "取消", PrimaryButtonText = "确认", DefaultButton = FAContentDialogButton.Primary };
+        var dialog = Create(owner, title, WorkspaceUi.Stack(WorkspaceUi.Text("请填写用于加密或解密 API 配置的密码。"), input));
+        dialog.CloseButtonText = "取消"; dialog.PrimaryButtonText = "确认"; dialog.DefaultButton = FAContentDialogButton.Primary;
         dialog.PrimaryButtonClick += (_, e) => e.Cancel = string.IsNullOrEmpty(input.Text);
         return await dialog.ShowAsync(owner) == FAContentDialogResult.Primary ? input.Text : null;
     }
     public static async Task DocumentAsync(Window owner, string title, string text)
     {
-        var dialog = new FAContentDialog { Title = title, MaxWidth = 700, MaxHeight = 660, CloseButtonText = "关闭",
-            Content = new ScrollViewer { Width = 620, Height = 460, Content = new SelectableTextBlock { Text = text, TextWrapping = Avalonia.Media.TextWrapping.Wrap } } };
+        var dialog = Create(owner, title, new ScrollViewer { MaxWidth = 620, Height = 460, Content = new SelectableTextBlock { Text = text, TextWrapping = Avalonia.Media.TextWrapping.Wrap } }, 700, 660);
+        dialog.CloseButtonText = "关闭";
         await dialog.ShowAsync(owner);
     }
     public static Task<AppSettings?> FirstRunAsync(Window owner, AppSettings initial, string agreement, string privacy) =>

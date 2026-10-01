@@ -42,7 +42,6 @@ public sealed class StudentView : UserControl
     private string? _displayedLessonId, _questionMaterialId;
     private bool _displayingMedia, _displayingTranscript, _importing, _handlingOperationStatus;
     private string? _openingLessonId, _deletingLessonId;
-    private readonly StackPanel _notices = new() { Spacing = 8 };
     private DateTimeOffset _followPausedUntil;
 
     public StudentView(StudentViewModel vm)
@@ -74,8 +73,7 @@ public sealed class StudentView : UserControl
             { _followPausedUntil = DateTimeOffset.MinValue; await vm.JumpCueCommand.ExecuteAsync(vm.Cues[material.CueIndexes[0]]); }
         };
         _page.Children.Add(_header); _page.Children.Add(_body);
-        var notices = new ScrollViewer { Content = _notices, MaxWidth = 380, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(18), HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, [Grid.RowSpanProperty] = 2 };
-        _page.Children.Add(notices); _page.SizeChanged += (_, e) => notices.MaxHeight = e.NewSize.Height * .65; Content = _page;
+        Content = _page;
         _page.AddHandler(PointerPressedEvent, (_, e) =>
         {
             if (!_vm.CanReturn) return;
@@ -506,14 +504,15 @@ public sealed class StudentView : UserControl
         if (manifest is not null) details.AddRange([$"精听包版本：{manifest.PackageVersion}", $"格式版本：{manifest.FormatVersion}", $"包 UUID：{manifest.PackageUuid}", $"字幕：{_vm.Cues.Count} 句"]);
         if (File.Exists(path)) details.Add($"音频大小：{new FileInfo(path).Length / (1024.0 * 1024):F2} MB");
         details.Add($"文件位置：{path}");
-        var dialog = new FAContentDialog { Title = "文件信息", Content = new SelectableTextBlock { Text = string.Join('\n', details), Width = 500, TextWrapping = TextWrapping.Wrap }, MaxWidth = 548, CloseButtonText = "关闭" };
+        var dialog = AppDialogs.Create(WorkspaceUi.Owner(this), "文件信息", new SelectableTextBlock { Text = string.Join('\n', details), MaxWidth = 500, TextWrapping = TextWrapping.Wrap }, 548);
+        dialog.CloseButtonText = "关闭";
         await dialog.ShowAsync(WorkspaceUi.Owner(this));
     }
     private async Task PickLessonAsync()
     {
         var owner = WorkspaceUi.Owner(this);
         var list = new ListBox { ItemsSource = _vm.Lessons, ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<LessonListItem>((item, _) => WorkspaceUi.Stack(Text(item!.Title), Text($"{FormatTime(item.Lesson.Manifest.Duration)} · {item.Lesson.Cues.Count} 句", 12))), Height = 360, Width = 420 };
-        var dialog = new FAContentDialog { Title = "打开课程", Content = list, CloseButtonText = "关闭", MaxWidth = 468 };
+        var dialog = AppDialogs.Create(owner, "打开课程", list, 468); dialog.CloseButtonText = "关闭";
         list.SelectionChanged += async (_, _) => { if (list.SelectedItem is LessonListItem lesson) { dialog.Hide(); await _vm.OpenLessonAsync(lesson); } };
         await dialog.ShowAsync(owner);
     }
@@ -536,13 +535,8 @@ public sealed class StudentView : UserControl
         }
         finally { _deletingLessonId = null; _handlingOperationStatus = false; if (!_vm.HasMedia) BuildHome(); }
     }
-    private void ShowNotice(string title, string message, bool error = false)
-    {
-        StudentNotice? notice = null;
-        notice = new StudentNotice(title, message, error, () => _notices.Children.Remove(notice!));
-        _notices.Children.Add(notice);
-        if (!error) DispatcherTimer.RunOnce(() => _notices.Children.Remove(notice), TimeSpan.FromSeconds(5));
-    }
+    private void ShowNotice(string title, string message, bool error = false) =>
+        WorkspaceToast.Show(this, title, message, error);
     private async Task<bool> ImportLessonAsync(string file, bool replace = false, string? title = null, string noticeTitle = "导入完成", string noticeMessage = "课程已保存到主页。")
     {
         await _vm.ImportAsync(file, replace, title);
@@ -555,7 +549,8 @@ public sealed class StudentView : UserControl
     private async Task<string?> RenameLessonAsync(string initialTitle)
     {
         var input = new TextBox { Text = initialTitle };
-        var dialog = new FAContentDialog { Title = "重命名课程", Content = WorkspaceUi.Field("课程名称", input), CloseButtonText = "取消", PrimaryButtonText = "导入", DefaultButton = FAContentDialogButton.Primary };
+        var dialog = AppDialogs.Create(WorkspaceUi.Owner(this), "重命名课程", WorkspaceUi.Field("课程名称", input));
+        dialog.CloseButtonText = "取消"; dialog.PrimaryButtonText = "导入"; dialog.DefaultButton = FAContentDialogButton.Primary;
         dialog.PrimaryButtonClick += (_, e) => e.Cancel = string.IsNullOrWhiteSpace(input.Text);
         dialog.Opened += (_, _) => input.Focus();
         return await dialog.ShowAsync(WorkspaceUi.Owner(this)) == FAContentDialogResult.Primary ? input.Text!.Trim() : null;

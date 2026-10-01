@@ -7,6 +7,8 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Layout;
 using Avalonia.LogicalTree;
+using Avalonia.VisualTree;
+using IL.App.Views.Dialogs;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -53,13 +55,10 @@ internal static class Program
             AvaloniaSynchronizationContext.InstallIfNeeded();
             Application.Current!.RequestedThemeVariant = _dark ? ThemeVariant.Dark : ThemeVariant.Light;
             var task = RenderAsync(isolated);
-            var timeout = Stopwatch.StartNew();
-            while (!task.IsCompleted)
-            {
-                Dispatcher.UIThread.RunJobs();
-                if (timeout.Elapsed > TimeSpan.FromMinutes(2)) throw new TimeoutException("Offscreen snapshots did not complete within two minutes.");
-                Thread.Sleep(5);
-            }
+            using var loop = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            _ = task.ContinueWith(_ => loop.Cancel(), TaskScheduler.Default);
+            Dispatcher.UIThread.MainLoop(loop.Token);
+            if (!task.IsCompleted) throw new TimeoutException("Offscreen snapshots did not complete within two minutes.");
             task.GetAwaiter().GetResult();
             Console.WriteLine($"Rendered {Captures.Count} snapshots to {_output}");
             return 0;
@@ -111,9 +110,15 @@ internal static class Program
         SetDestination(shell, host, teacher, 1); await teacher.RefreshAsync(); await CaptureAsync(shell, "teacher-empty");
         SetDestination(shell, host, settingsView, 2); await settingsView.ReloadAsync(); await CaptureAsync(shell, "settings");
         SetDestination(shell, host, student, 0);
-        var taskDialog = new FAContentDialog { Title = "转写任务", Content = queueView, CloseButtonText = "关闭", MaxWidth = Math.Clamp(_width * .618, 640, 980) };
-        queueView.Width = Math.Clamp(_width * .618, 640, 980) - 48; queueView.Height = Math.Clamp(_height * .72, 480, 720) - 112;
-        var shown = taskDialog.ShowAsync(shell); await CaptureAsync(shell, "queue-empty"); taskDialog.Hide(); await shown;
+        var dialogWidth = Math.Min(_width - 32, Math.Clamp(_width * .618, 640, 980));
+        var taskDialog = AppDialogs.Create(shell, "转写任务", queueView, dialogWidth); taskDialog.CloseButtonText = "关闭";
+        queueView.Width = dialogWidth - 50; queueView.Height = Math.Clamp(_height * .72, 480, 720) - 112;
+        var shown = taskDialog.ShowAsync(shell); await CaptureAsync(shell, "queue-empty"); CheckDialog(shell, taskDialog); taskDialog.Hide(); await shown;
+        var queueStore = (QueueStore)GetField(queue, "store")!;
+        await queueStore.SaveAsync(Enumerable.Range(1, 5).Select(index => new TranscriptionJob(index.ToString(), "2608福建名校联盟高三开学联考英语听力 · 示例任务 " + index, "reference.wav", TranscriptionJobStatus.Completed, TranscriptionStage.Formatting, "字幕已生成", DateTimeOffset.UtcNow, Srt: "字幕示例")).ToArray());
+        await queue.RestoreAsync();
+        shown = taskDialog.ShowAsync(shell); await CaptureAsync(shell, "queue-loaded"); CheckDialog(shell, taskDialog); taskDialog.Hide(); await shown;
+        await CheckNotificationsAsync(shell, host, teacher, student);
         var audio = Path.Combine(isolated, "reference.wav"); WriteSilentWave(audio, 8);
         var cues = new SrtCue[] { new(TimeSpan.Zero, TimeSpan.FromSeconds(2), "听下面的录音，回答第1小题。"), new(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), "Hello, Emma. How are you today?"), new(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(8), "I am fine. Thank you.") };
         var transcript = SrtParser.Serialize(cues); var exercises = SrtQuestionPlanner.Plan(cues);
@@ -126,6 +131,8 @@ internal static class Program
         var transcription = await projects.CreateAsync(audio); await teacher.OpenProjectAsync(transcription.Id); await CaptureAsync(shell, "teacher-transcription");
         var package = Path.Combine(isolated, "reference.ilp"); await new ProjectDelivery().CreateIlpAsync(project, package); await new IlpImporter(library).ImportFileAsync(package);
         SetDestination(shell, host, student, 0); await studentVm.RefreshAsync(); studentVm.SelectedLesson = studentVm.Lessons.Single(); await studentVm.CurrentLoad; await CaptureAsync(shell, "student-loaded");
+        var fileInfo = InvokeAsync(student, "ShowFileInfoAsync"); await CaptureAsync(shell, "file-info");
+        var infoDialog = shell.GetVisualDescendants().OfType<FAContentDialog>().Single(); CheckDialog(shell, infoDialog); infoDialog.Hide(); await fileInfo;
         host.Content = null; shell.Close();
         var owner = CreateWindow(new Grid()); owner.Show();
         var wizardType = AppAssembly.GetType("IL.App.Views.Dialogs.FirstRunWizard", throwOnError: true)!;
@@ -140,6 +147,28 @@ internal static class Program
         }
         var finish = (Action<AppSettings?>)GetField(wizard, "_finish")!; finish(null); await wizardTask; owner.Close();
         await File.WriteAllTextAsync(Path.Combine(_output, "snapshots.json"), JsonSerializer.Serialize(new { Platform = "Avalonia.Headless 12.1.3 + Skia", Size = new { Width = _width, Height = _height }, Theme = _dark ? "dark" : "light", Fixtures = "isolated temporary stores + fixture audio player", Snapshots = Captures }, Json));
+    }
+
+    private static void CheckDialog(Window owner, FAContentDialog dialog)
+    {
+        var smoke = dialog.GetVisualDescendants().OfType<Panel>().Single(control => control.Name == "LayoutRoot");
+        var surface = dialog.GetVisualDescendants().OfType<Border>().Single(control => control.Name == "BackgroundElement");
+        if (Math.Abs(smoke.Bounds.Width - owner.ClientSize.Width) > 1 || Math.Abs(smoke.Bounds.Height - owner.ClientSize.Height) > 1) throw new InvalidOperationException("The dialog smoke layer does not cover its owner.");
+        if (dialog.Content is Control content && content.Bounds.Width > surface.Bounds.Width - 46) throw new InvalidOperationException("The dialog content exceeds its surface width.");
+    }
+    private static async Task CheckNotificationsAsync(Window owner, ContentControl host, TeacherView teacher, StudentView student)
+    {
+        SetDestination(owner, host, teacher, 1);
+        WorkspaceToast.Show(teacher, "课程已加入播放库。");
+        WorkspaceToast.Show(teacher, "导出失败", "无法写入所选目录，请检查路径或选择其他目录。", true);
+        await CaptureAsync(owner, "notifications");
+        SetDestination(owner, host, student, 0);
+        await Task.Delay(5200); Dispatcher.UIThread.RunJobs();
+        var toastHost = owner.GetVisualDescendants().OfType<WorkspaceToast>().Single();
+        var bars = toastHost.GetVisualDescendants().OfType<FAInfoBar>().ToArray();
+        if (bars.Length != 1 || bars[0].Severity != FAInfoBarSeverity.Error) throw new InvalidOperationException("Success/error notification expiry or navigation persistence failed: " + string.Join("; ", bars.Select(bar => $"{bar.Severity}: {bar.Title} {bar.Message}")));
+        await Task.Delay(9900); Dispatcher.UIThread.RunJobs();
+        if (toastHost.GetVisualDescendants().OfType<FAInfoBar>().Any()) throw new InvalidOperationException("The error notification did not expire after 15 seconds.");
     }
 
     private static Window CreateWindow(Control content) => new() { Width = _width, Height = _height, WindowDecorations = WindowDecorations.None, CanResize = false, Content = content };

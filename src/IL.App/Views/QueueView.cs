@@ -16,7 +16,6 @@ public sealed class QueueView : UserControl
     private readonly Func<DuplicateMatch, Task>? _openExisting;
     private readonly Func<Task>? _pickAudio;
     private readonly StackPanel _content = new() { Spacing = 10 };
-    private readonly TextBlock _status = WorkspaceUi.Text("");
     private readonly DispatcherTimer _refresh = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private bool _listening;
     public QueueView(TranscriptionQueue queue, Func<TranscriptionJob, Task> loadSrt, Func<DuplicateMatch, Task>? openExisting = null, Func<Task>? pickAudio = null)
@@ -24,7 +23,7 @@ public sealed class QueueView : UserControl
         _queue = queue; _loadSrt = loadSrt; _openExisting = openExisting; _pickAudio = pickAudio;
         var root = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
         root.Children.Add(new ScrollViewer { Content = _content, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled });
-        Grid.SetRow(_status, 1); root.Children.Add(_status); Content = root;
+        Content = root;
         _refresh.Tick += (_, _) => { _refresh.Stop(); Render(); };
         AttachedToVisualTree += (_, _) => { if (!_listening) { _queue.Changed += OnChanged; _listening = true; } Render(); };
         DetachedFromVisualTree += (_, _) => { _queue.Changed -= OnChanged; _listening = false; _refresh.Stop(); };
@@ -72,7 +71,7 @@ public sealed class QueueView : UserControl
             if (job.IsActive) actions.Children.Add(Action("取消", () => { _queue.Cancel(job.Id); return Task.CompletedTask; }));
             if (job.Status is TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted) actions.Children.Add(Action("重试", () => { _queue.Retry(job.Id); return Task.CompletedTask; }));
             if (job.Status == TranscriptionJobStatus.Completed && !string.IsNullOrWhiteSpace(job.Srt)) actions.Children.Add(Action("导出 SRT", async () => { var path = await WorkspaceUi.Save(this, "导出转写字幕", job.Title + ".srt", "srt"); if (path != null) await File.WriteAllTextAsync(path, job.Srt); }));
-            actions.Children.Add(Action("删除", async () => { if (await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "删除转写任务？", job.IsActive ? $"将取消并永久删除「{job.Title}」。" : $"将永久删除「{job.Title}」的任务记录。", "删除")) { _queue.Delete(job.Id); _status.Text = $"任务已删除：「{job.Title}」已从转写队列移除。"; } }));
+            actions.Children.Add(Action("删除", async () => { if (await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "删除转写任务？", job.IsActive ? $"将取消并永久删除「{job.Title}」。" : $"将永久删除「{job.Title}」的任务记录。", "删除")) { _queue.Delete(job.Id); WorkspaceToast.Show(this, "任务已删除", $"「{job.Title}」已从转写队列移除。"); } }));
             body.Children.Add(actions); Grid.SetColumn(body, 2); row.Children.Add(body); _content.Children.Add(WorkspaceUi.Surface(row, new Thickness(14)));
         }
     }
@@ -96,6 +95,6 @@ public sealed class QueueView : UserControl
     };
     private static string StatusIcon(TranscriptionJob job) => job.Status switch { TranscriptionJobStatus.Completed => "completed", TranscriptionJobStatus.Failed => "error_badge", TranscriptionJobStatus.Canceled => "cancel", TranscriptionJobStatus.Interrupted => "warning", TranscriptionJobStatus.AwaitingDecision => "help", TranscriptionJobStatus.Queued => "clock", _ => "sync" };
     private static IBrush StatusBrush(TranscriptionJob job) => job.Status switch { TranscriptionJobStatus.Completed => Brushes.ForestGreen, TranscriptionJobStatus.Failed => Brushes.Firebrick, TranscriptionJobStatus.Canceled => Brushes.Gray, TranscriptionJobStatus.Interrupted or TranscriptionJobStatus.AwaitingDecision => Brushes.DarkOrange, _ => WorkspaceUi.Accent };
-    private async Task RunAsync(Func<Task> action) { try { await action(); Render(); } catch (Exception ex) { _status.Foreground = Brushes.Firebrick; _status.Text = ex.Message; AppLog(ex); } }
+    private async Task RunAsync(Func<Task> action) { try { await action(); Render(); } catch (Exception ex) { WorkspaceToast.Show(this, "转写任务操作失败", ex.Message, true); AppLog(ex); } }
     private static void AppLog(Exception ex) => IL.Core.Infrastructure.AppLog.Error("转写任务操作失败", ex);
 }

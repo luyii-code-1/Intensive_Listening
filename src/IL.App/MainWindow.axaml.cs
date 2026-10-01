@@ -93,10 +93,17 @@ public partial class MainWindow : Window
     private async Task ShowTasksAsync()
     {
         if(_taskDialog is not null)return;
-        _taskDialog=new FAContentDialog{Title="转写任务",Content=_queue,CloseButtonText="关闭",MaxWidth=Math.Clamp(ClientSize.Width*.618,640,980)};
-        _queue.Width=Math.Clamp(ClientSize.Width*.618,640,980)-48;
-        _queue.Height=Math.Clamp(ClientSize.Height*.72,480,720)-112;
-        try{await _taskDialog.ShowAsync(this);}finally{_taskDialog=null;}
+        var width=Math.Min(ClientSize.Width-32,Math.Clamp(ClientSize.Width*.618,640,980));
+        _taskDialog=AppDialogs.Create(this,"转写任务",_queue,width);
+        _taskDialog.CloseButtonText="关闭";
+        void ResizeQueue()
+        {
+            _queue.Width=Math.Min(width,ClientSize.Width-32)-50;
+            _queue.Height=Math.Min(ClientSize.Height-32,Math.Clamp(ClientSize.Height*.72,480,720))-112;
+        }
+        void OnResize(object? sender,SizeChangedEventArgs args)=>ResizeQueue();
+        ResizeQueue();SizeChanged+=OnResize;
+        try{await _taskDialog.ShowAsync(this);}finally{SizeChanged-=OnResize;_taskDialog=null;}
     }
     private static void ApplyTheme(AppSettings settings){if(Avalonia.Application.Current is {} app)app.RequestedThemeVariant=settings.ThemeMode switch{"dark"=>ThemeVariant.Dark,"light"=>ThemeVariant.Light,_=>ThemeVariant.Default};}
     private async Task InitializeAsync()

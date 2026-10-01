@@ -20,7 +20,11 @@ dotnet run --project tools/IL.UiSnapshots/IL.UiSnapshots.csproj -- \
 
 The screenshots cover the student home and loaded lesson; teacher empty,
 audio, transcription, grouping, question overview, cloze and completed states;
-settings; the empty task dialog; and all six first-run pages. The outer shell
+settings; empty and loaded task dialogs; file information; success and error notifications; and all six first-run pages.
+
+The harness runs the dispatcher event loop and checks that dialog smoke layers
+cover the entire owner, content fits the inner surface, and notifications survive
+page changes while expiring after 5 seconds (success) and 15 seconds (error). The outer shell
 mirrors `MainWindow.axaml` and uses the production navigation-content method.
 The actual first-run control is accessed through reflection for each render.
 

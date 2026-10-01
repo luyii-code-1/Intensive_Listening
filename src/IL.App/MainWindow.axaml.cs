@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Icon = AppBrand.WindowIcon();
         _paneMotion = new(320, width => ShellGrid.ColumnDefinitions[0].Width = new GridLength(width));
         Closed += (_, _) => _paneMotion.Stop();
         var standalone=Program.Arguments.Contains("--standalone");

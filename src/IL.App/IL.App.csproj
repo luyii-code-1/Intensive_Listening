@@ -23,4 +23,5 @@
   <ItemGroup><Content Include="../../assets/fonts/LICENSE.txt" Link="assets/legal/source-han-sans-license.txt" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
   <ItemGroup><AvaloniaResource Include="../../assets/fonts/HarmonyOS_Sans_SC_*.ttf;../../assets/fonts/FluentIcons.ttf" Link="Assets/Fonts/%(Filename)%(Extension)" /></ItemGroup>
   <ItemGroup><AvaloniaResource Include="../../windows/runner/resources/app_icon.ico" Link="Assets/app_icon.ico" /></ItemGroup>
+  <ItemGroup><AvaloniaResource Include="../../assets/app_logo.png" Link="Assets/app_logo.png" /></ItemGroup>
 </Project>

@@ -12,6 +12,7 @@ AppPublisher=Luyii
 DefaultDirName={localappdata}\Programs\Intensive Listening 2.0
 DefaultGroupName=Intensive Listening 2.0
 UninstallDisplayIcon={app}\IL.App.exe
+SetupIconFile=..\windows\runner\resources\app_icon.ico
 OutputDir={#OutputDirectory}
 OutputBaseFilename=Intensive-Listening-2.0-dev-win-x64-Setup
 Compression=lzma2

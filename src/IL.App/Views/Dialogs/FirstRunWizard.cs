@@ -83,7 +83,7 @@ internal sealed class FirstRunWizard : Border
     {
         var window = new FAAppWindow
         {
-            Title = "Intensive Listening", Width = 800, Height = 600, CanResize = false,
+            Title = "Intensive Listening", Icon = AppBrand.Image, Width = 800, Height = 600, CanResize = false,
             WindowStartupLocation = WindowStartupLocation.CenterScreen, ShowAsDialog = true,
             RequestedThemeVariant = owner.ActualThemeVariant, Background = Brushes.Transparent,
             TransparencyLevelHint = [WindowTransparencyLevel.Mica, WindowTransparencyLevel.None],
@@ -115,8 +115,7 @@ internal sealed class FirstRunWizard : Border
     }
     private static Border Brand(double size)
     {
-        var icon = WorkspaceUi.Icon("play", size * .48); icon.Foreground = Brushes.White;
-        return new Border { Width = size, Height = size, CornerRadius = new CornerRadius(size * .24), Background = WorkspaceUi.Accent, Child = icon, HorizontalAlignment = HorizontalAlignment.Center };
+        return new Border { Width = size, Height = size, Child = new Image { Source = AppBrand.Image, Stretch = Stretch.Uniform }, HorizontalAlignment = HorizontalAlignment.Center };
     }
     private static TextBlock CenterText(string value, double size = 14, bool bold = false)
     { var text = WorkspaceUi.Text(value, size, bold); text.TextAlignment = TextAlignment.Center; text.HorizontalAlignment = HorizontalAlignment.Center; return text; }

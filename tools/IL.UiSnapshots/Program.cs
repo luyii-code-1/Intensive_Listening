@@ -140,6 +140,7 @@ internal static partial class Program
         var transcription = await projects.CreateAsync(audio); await teacher.OpenProjectAsync(transcription.Id); await CaptureAsync(shell, "teacher-transcription");
         var package = Path.Combine(isolated, "reference.ilp"); await new ProjectDelivery().CreateIlpAsync(project, package); await new IlpImporter(library).ImportFileAsync(package);
         SetDestination(shell, host, student, 0); await studentVm.RefreshAsync(); studentVm.SelectedLesson = studentVm.Lessons.Single(); await studentVm.CurrentLoad; await CaptureAsync(shell, "student-loaded");
+        await studentVm.TogglePlaybackCommand.ExecuteAsync(null); await CaptureAsync(shell, "student-playing"); await studentVm.TogglePlaybackCommand.ExecuteAsync(null);
         var fileInfo = InvokeAsync(student, "ShowFileInfoAsync"); await CaptureAsync(shell, "file-info");
         var infoDialog = shell.GetVisualDescendants().OfType<FAContentDialog>().Single(); CheckDialog(shell, infoDialog); infoDialog.Hide(); await fileInfo;
         host.Content = null; shell.Close();

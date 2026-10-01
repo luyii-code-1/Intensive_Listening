@@ -58,7 +58,10 @@ public sealed class StudentView : UserControl
         _return = WorkspaceUi.Button("返回", async () => { _followPausedUntil = DateTimeOffset.MinValue; _pausedBrowseTimer.Stop(); await vm.ReturnCueCommand.ExecuteAsync(null); FollowActiveCue(); });
         _return.Bind(IsVisibleProperty, new Binding(nameof(vm.CanReturn)));
         _play = new Button { Command = vm.TogglePlaybackCommand, Padding = new Thickness(18, 12) };
-        _play.Classes.Add("accent"); _play.Content = WorkspaceUi.Icon("play_solid", 22);
+        _play.Classes.Add("accent");
+        var playbackGlyph = new PlaybackGlyph();
+        playbackGlyph.Bind(PlaybackGlyph.IsPlayingProperty, new Binding(nameof(vm.IsPlaying)));
+        _play.Content = playbackGlyph;
         _hideSubtitles.IsCheckedChanged += (_, _) => _vm.ShowSubtitles = _hideSubtitles.IsChecked != true;
         _play.Bind(IsEnabledProperty, new Binding(nameof(vm.CanPlay)));
         _transcript.Content = _transcriptContent;
@@ -552,7 +555,7 @@ public sealed class StudentView : UserControl
         }
         if (e.PropertyName == nameof(_vm.IsPlaying))
         {
-            _play.Content = WorkspaceUi.Icon(_vm.IsPlaying ? "pause" : "play_solid", 22); ToolTip.SetTip(_play, _vm.PlayLabel);
+            ToolTip.SetTip(_play, _vm.PlayLabel);
             if (_vm.IsPlaying) { _followPausedUntil = DateTimeOffset.MinValue; _pausedBrowseTimer.Stop(); }
         }
     }

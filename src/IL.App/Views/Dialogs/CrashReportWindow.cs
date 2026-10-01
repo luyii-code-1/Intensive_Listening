@@ -17,6 +17,7 @@ public sealed class CrashReportWindow : Window
         var report = CrashReportStore.Load(path) ?? new CrashReport { Message = "崩溃报告读取失败，请查看日志目录。" };
         var root = Directory.GetParent(Path.GetDirectoryName(path)!)!.FullName;
         var store = new CrashReportStore(root);
+        Icon = AppBrand.WindowIcon();
         Title = "Intensive Listening · 崩溃报告"; Width = 720; Height = 540; MinWidth = 540; MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var status = WorkspaceUi.Text(report.UploadAllowed ? "报告已保存在本机，正在尝试提交遥测。" : "报告已保存在本机。遥测已关闭。", 13);

@@ -1,32 +1,96 @@
-name: C# Windows preview
+name: C# Windows build
 on:
   push:
-    branches: [2.0-dev]
+    branches: [2.0-dev, main]
   pull_request:
-    branches: [2.0-dev]
+    branches: [2.0-dev, main]
+  release:
+    types: [published]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  windows-tests:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: global.json
-      - run: dotnet test IL2.slnx -c Release --nologo
   portable-build:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v2.')
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
       - run: scripts/publish-csharp-windows.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: IL2-win-x64
           path: |
             artifacts/IL2-win-x64.zip
             artifacts/IL2-win-x64.zip.sha256
+          if-no-files-found: error
+  build:
+    needs: portable-build
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet test IL2.slnx -c Release --nologo
+      - uses: actions/download-artifact@v8
+        with:
+          name: IL2-win-x64
+          path: artifacts
+      - name: Verify Windows runtime
+        shell: pwsh
+        run: |
+          $expected = ((Get-Content artifacts/IL2-win-x64.zip.sha256 -Raw).Trim() -split ' ')[0]
+          if ((Get-FileHash artifacts/IL2-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Runtime archive checksum mismatch.' }
+          Expand-Archive artifacts/IL2-win-x64.zip artifacts/runtime
+          $runtime = (Resolve-Path artifacts/runtime).Path
+          ./scripts/validate-csharp-windows.ps1 -RuntimeDirectory $runtime -ReportDirectory artifacts/verification
+          $report = (Join-Path (Resolve-Path artifacts/verification).Path 'instance.json')
+          $process = Start-Process (Join-Path $runtime 'IL.App.exe') -ArgumentList @('--verify-instance', $report) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Windows single-instance verification failed.' }
+          $identity = Get-Content artifacts/verification/runtime.json -Raw | ConvertFrom-Json
+          $commit = (git rev-parse --short=7 HEAD).Trim()
+          if ($identity.build -ne $commit -or $identity.version -ne '2.0.0') { throw 'Release build identity mismatch.' }
+      - name: Package installer
+        shell: pwsh
+        run: |
+          ./scripts/package-csharp-windows.ps1 -RuntimeDirectory (Resolve-Path artifacts/runtime).Path -OutputDirectory (Join-Path $PWD 'artifacts/installer') -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          $installer = Get-Item artifacts/installer/*.exe
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content artifacts/installer/SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          path: artifacts/installer/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-verification
+          path: artifacts/verification/*
+  publish:
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-installer
+          path: artifacts/installer
+      - name: Attach Windows installer and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          cd artifacts/installer
+          sha256sum --check SHA256SUMS.txt
+          gh release upload "$RELEASE_TAG" ./*.exe SHA256SUMS.txt --clobber

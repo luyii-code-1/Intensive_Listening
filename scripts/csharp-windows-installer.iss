@@ -6,15 +6,15 @@
 #endif
 [Setup]
 AppId=IntensiveListening.2Preview.Luyii
-AppName=Intensive Listening 2.0 Preview
-AppVersion=2.0.0-dev
+AppName=Intensive Listening 2.0
+AppVersion=2.0.0
 AppPublisher=Luyii
 DefaultDirName={localappdata}\Programs\Intensive Listening 2.0
 DefaultGroupName=Intensive Listening 2.0
 UninstallDisplayIcon={app}\IL.App.exe
 SetupIconFile=..\windows\runner\resources\app_icon.ico
 OutputDir={#OutputDirectory}
-OutputBaseFilename=Intensive-Listening-2.0-dev-win-x64-Setup
+OutputBaseFilename=Intensive-Listening-2.0.0-win-x64-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

@@ -1,6 +1,6 @@
 # Intensive Listening 2.0
 
-C# 开发位于 `2.0-dev`，行为参考同一仓库的 Dart `lib/` 与 `test/`。
+C# 开发位于 `2.0-dev`，2.0 发布源码同步到 `main`，行为参考同一仓库的 Dart `lib/` 与 `test/`。
 优先目标是 Windows x64，同时提供 macOS ARM64 开发包。技术栈为 .NET 10、Avalonia 12、FluentAvalonia、CommunityToolkit.Mvvm，音频播放使用 LibVLC，转写音频处理使用 FFmpeg。
 
 ## 开发与构建

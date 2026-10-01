@@ -6,6 +6,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Media;
 using Avalonia.Threading;
 using IL.App.Views.Dialogs;
+using FluentAvalonia.UI.Controls;
 
 namespace IL.App.Views;
 
@@ -90,6 +91,11 @@ public sealed class SpringMotion
     {
         if (_installed) return; _installed = true;
         Control.LoadedEvent.AddClassHandler<Expander>((expander, args) => expander.ContentTransition = new SpringDisclosureTransition());
+        Control.LoadedEvent.AddClassHandler<FAMenuFlyoutItem>((item, args) => For(item).Set());
+        Avalonia.Input.InputElement.PointerPressedEvent.AddClassHandler<FAMenuFlyoutItem>((item, args) =>
+        { if (TopLevel.GetTopLevel(item) != null) _ = For(item).To(opacity: .88, scale: .98, response: .18); });
+        Avalonia.Input.InputElement.PointerReleasedEvent.AddClassHandler<FAMenuFlyoutItem>((item, args) =>
+        { if (TopLevel.GetTopLevel(item) != null) _ = For(item).To(response: .18); else For(item).Set(); }, handledEventsToo: true);
         ListBoxItem.IsSelectedProperty.Changed.AddClassHandler<ListBoxItem>((item, args) =>
         { if (TopLevel.GetTopLevel(item) != null && item.IsSelected) _ = For(item).Pulse(); });
         Button.IsPressedProperty.Changed.AddClassHandler<Button>((button, args) =>

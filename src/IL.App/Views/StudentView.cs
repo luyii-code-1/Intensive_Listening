@@ -449,8 +449,8 @@ public sealed class StudentView : UserControl
                     word.PointerReleased += async (_, e) => { if (e.InitialPressMouseButton != MouseButton.Left) return; e.Handled = true; await _vm.ToggleClozeAsync(row.Index, part.WordIndex!.Value); };
                     word.KeyDown += async (_, e) => { if (e.Key is Key.Enter or Key.Space) { e.Handled = true; await _vm.ToggleClozeAsync(row.Index, part.WordIndex!.Value); } };
                 }
-                var lookup = new MenuItem { Header = "查词" }; lookup.Click += (_, _) => LookupWord?.Invoke(new(part.Text, row.Text, row.Index));
-                word.ContextMenu = new ContextMenu { ItemsSource = new[] { lookup } }; control = word;
+                var lookup = new FAMenuFlyoutItem { Text = "查词" }; lookup.Click += (_, _) => LookupWord?.Invoke(new(part.Text, row.Text, row.Index));
+                word.ContextFlyout = new FAMenuFlyout { ItemsSource = new[] { lookup } }; control = word;
             }
             else control = new TextBlock { Text = part.Text, FontSize = _vm.TranscriptFontSize, LineHeight = _vm.TranscriptFontSize * 1.4, VerticalAlignment = VerticalAlignment.Center };
             words.Add((control, part)); text.Children.Add(control);
@@ -468,17 +468,17 @@ public sealed class StudentView : UserControl
         var popup = new Flyout { Content = Row(playSelected, playPause), Placement = PlacementMode.Bottom };
         playSelected.Click += (_, _) => popup.Hide(); playPause.Click += (_, _) => popup.Hide();
         FlyoutBase.SetAttachedFlyout(border, popup);
-        async Task SelectCue()
+        async Task SelectCue(bool atPointer = false)
         {
             _followPausedUntil = _vm.IsPlaying ? DateTimeOffset.UtcNow.AddSeconds(5) : DateTimeOffset.MaxValue; _pausedBrowseTimer.Stop();
             await _vm.JumpCueCommand.ExecuteAsync(row);
-            if (!_vm.IsPlaying) FlyoutBase.ShowAttachedFlyout(border);
+            if (!_vm.IsPlaying) popup.ShowAt(border, atPointer);
         }
-        border.PointerReleased += async (_, e) => { if (e.Handled || e.InitialPressMouseButton != MouseButton.Left) return; await SelectCue(); };
+        border.PointerReleased += async (_, e) => { if (e.Handled || e.InitialPressMouseButton != MouseButton.Left) return; await SelectCue(atPointer: true); };
         border.KeyDown += async (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; await SelectCue(); } };
-        var playItem = new MenuItem { Header = "播放" }; playItem.Click += async (_, _) => await _vm.PlaySelectedCueAsync(row, false);
-        var pauseItem = new MenuItem { Header = "播放并暂停" }; pauseItem.Click += async (_, _) => await _vm.PlaySelectedCueAsync(row, true);
-        border.ContextMenu = new ContextMenu { ItemsSource = new[] { playItem, pauseItem } };
+        var playItem = new FAMenuFlyoutItem { Text = "播放" }; playItem.Click += async (_, _) => await _vm.PlaySelectedCueAsync(row, false);
+        var pauseItem = new FAMenuFlyoutItem { Text = "播放并暂停" }; pauseItem.Click += async (_, _) => await _vm.PlaySelectedCueAsync(row, true);
+        border.ContextFlyout = new FAMenuFlyout { ItemsSource = new[] { playItem, pauseItem } };
         return border;
     }
     private void UpdatePresentation()

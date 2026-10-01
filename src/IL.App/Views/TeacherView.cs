@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Text;
 using Avalonia;
+using FluentAvalonia.UI.Controls;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
@@ -162,13 +163,13 @@ public sealed class TeacherView : UserControl
     }
     private static Button MenuButton(string text, IEnumerable<(string Title, Func<Task> Action, bool Enabled)> entries)
     {
-        var menu = new ContextMenu();
+        var menu = new FAMenuFlyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
         foreach (var entry in entries)
         {
-            var item = new MenuItem { Header = entry.Title, IsEnabled = entry.Enabled }; item.Click += async (_, _) => await entry.Action(); menu.Items.Add(item);
+            var item = new FAMenuFlyoutItem { Text = entry.Title, IsEnabled = entry.Enabled }; item.Click += async (_, _) => await entry.Action(); menu.Items.Add(item);
         }
         var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; label.Children.Add(WorkspaceUi.Text(text)); label.Children.Add(WorkspaceUi.Icon("chevron_down", 12));
-        var button = new Button { Content = label }; button.Click += (_, _) => menu.Open(button); return button;
+        var button = new Button { Content = label, Flyout = menu }; return button;
     }
     private void BuildCommands()
     {

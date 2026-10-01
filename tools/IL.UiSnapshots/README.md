@@ -53,6 +53,7 @@ Performance and motion probes:
 
 ```sh
 dotnet run --project tools/IL.UiSnapshots -- --performance --output artifacts/motion/after
+dotnet run --project tools/IL.UiSnapshots -- --popups --output artifacts/motion/popups
 dotnet run --project tools/IL.UiSnapshots -- --motion --output artifacts/motion/animation
 dotnet run --project tools/IL.UiSnapshots -- --motion --dark --output artifacts/motion/animation-dark
 ```

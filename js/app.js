@@ -1655,6 +1655,13 @@ class IntensiveListeningApp {
   }
 
   reportTelemetryEvent(name, properties = {}) {
+    const payload = {
+      app_version: '1.0.1+7',
+      commit_id: 'c38d937',
+      ...properties,
+      timestamp: Date.now()
+    };
+
     // 1. 阿里云 ARMS RUM
     try {
       const rumInstance = window.RumSDK?.default;
@@ -1662,10 +1669,7 @@ class IntensiveListeningApp {
         rumInstance.sendCustom({
           type: 'user_action',
           name,
-          properties: {
-            ...properties,
-            timestamp: Date.now()
-          }
+          properties: payload
         });
       }
     } catch (e) {
@@ -1675,7 +1679,7 @@ class IntensiveListeningApp {
     // 2. 51.la 网站统计自定义事件
     try {
       if (window.LA && typeof window.LA.track === 'function') {
-        window.LA.track(name, properties);
+        window.LA.track(name, payload);
       }
     } catch (e) {
       // Silently ignore

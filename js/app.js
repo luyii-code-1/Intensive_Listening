@@ -120,6 +120,7 @@ class IntensiveListeningApp {
       btnCloseLegal: document.getElementById('btn-close-legal'),
       legalContentAgreement: document.getElementById('legal-content-agreement'),
       legalContentPrivacy: document.getElementById('legal-content-privacy'),
+      legalContentAudio: document.getElementById('legal-content-audio'),
       blockingLegalOverlay: document.getElementById('blocking-legal-overlay'),
       chkBlockingConsent: document.getElementById('chk-blocking-consent'),
       chkBlockingBox: document.getElementById('chk-blocking-box'),
@@ -127,6 +128,7 @@ class IntensiveListeningApp {
       btnBlockingDecline: document.getElementById('btn-blocking-decline'),
       blockArticleAgreement: document.getElementById('block-article-agreement'),
       blockArticlePrivacy: document.getElementById('block-article-privacy'),
+      blockArticleAudio: document.getElementById('block-article-audio'),
 
       // Ad Blocker Warning Modal
       adblockOverlay: document.getElementById('adblock-overlay'),
@@ -149,6 +151,9 @@ class IntensiveListeningApp {
     this.pendingPlayAction = null;
     this.telemetryWarningDismissed = false;
     this.isCheckingTelemetry = false;
+    this.cachedTelemetryBlocked = undefined;
+    this.audioSessionUnlocked = false;
+    this.audioCtx = null;
 
     this.init();
   }
@@ -159,6 +164,7 @@ class IntensiveListeningApp {
     this.refreshRecentLessons();
     this.initTelemetryAndLegal();
     this.initPwaServiceWorker();
+    this.initGlobalAudioUnlock();
   }
 
   // --- Theme Handling ---
@@ -349,9 +355,11 @@ class IntensiveListeningApp {
     if (this.dom.btnBlockingAccept) {
       this.dom.btnBlockingAccept.addEventListener('click', () => {
         if (!this.dom.chkBlockingConsent.classList.contains('checked')) {
-          this.showAlert('请确认', '请先勾选同意《用户协议》与《隐私政策及阿里云遥测声明》');
+          this.showAlert('请确认', '请先勾选同意《用户协议》、《隐私政策》并授权浏览器音频播放');
           return;
         }
+        // 关键：在用户直接点击同意的手势事件中，同步激活并解锁浏览器音频硬件输出通道
+        this.unlockAudioSession();
         localStorage.setItem('il_privacy_consent', 'true');
         if (this.dom.blockingLegalOverlay) {
           this.dom.blockingLegalOverlay.style.display = 'none';
@@ -361,7 +369,7 @@ class IntensiveListeningApp {
 
     if (this.dom.btnBlockingDecline) {
       this.dom.btnBlockingDecline.addEventListener('click', () => {
-        this.showAlert('温馨提示', '本在线播放器需要用户同意《用户协议》与基础性能遥测声明方可正常使用。如您不同意，可关闭本网页标签。');
+        this.showAlert('温馨提示', '本在线播放器需要用户同意《用户协议》与音频播放权限方可正常使用。如您不同意，可关闭本网页标签。');
       });
     }
 
@@ -375,6 +383,9 @@ class IntensiveListeningApp {
         }
         if (this.dom.blockArticlePrivacy) {
           this.dom.blockArticlePrivacy.style.display = (tab === 'privacy' ? 'block' : 'none');
+        }
+        if (this.dom.blockArticleAudio) {
+          this.dom.blockArticleAudio.style.display = (tab === 'audio' ? 'block' : 'none');
         }
       });
     });
@@ -550,7 +561,10 @@ class IntensiveListeningApp {
       audioUrl = URL.createObjectURL(lesson.audioBlob);
       lesson.audioUrl = audioUrl;
     }
+    this.audio.volume = 1.0;
+    this.audio.muted = false;
     this.audio.src = audioUrl;
+    this.updateMediaSession(lesson);
 
     // Render Transcript & Question Strip
     this.renderTranscriptPane();
@@ -748,7 +762,7 @@ class IntensiveListeningApp {
     if (!this.audio.src) return;
     if (this.audio.paused) {
       this.ensureTelemetryBeforePlay(() => {
-        this.audio.play().catch(e => console.warn('Play interrupted:', e));
+        this.safePlayAudio();
       });
     } else {
       this.audio.pause();
@@ -1005,7 +1019,7 @@ class IntensiveListeningApp {
     this.ensureTelemetryBeforePlay(() => {
       this.audio.currentTime = cue.start;
       this.repeatOnceStopAt = cue.end;
-      this.audio.play().catch(e => console.warn(e));
+      this.safePlayAudio();
     });
   }
 
@@ -1019,7 +1033,7 @@ class IntensiveListeningApp {
       } else {
         this.repeatOnceStopAt = null;
       }
-      this.audio.play().catch(e => console.warn(e));
+      this.safePlayAudio();
     });
   }
 
@@ -1523,6 +1537,113 @@ class IntensiveListeningApp {
     if (this.dom.legalContentPrivacy) {
       this.dom.legalContentPrivacy.style.display = (tabName === 'privacy' ? 'block' : 'none');
     }
+    if (this.dom.legalContentAudio) {
+      this.dom.legalContentAudio.style.display = (tabName === 'audio' ? 'block' : 'none');
+    }
+  }
+
+  // --- Global Audio Activation & Unlocking ---
+  initGlobalAudioUnlock() {
+    const unlockHandler = () => {
+      this.unlockAudioSession();
+      window.removeEventListener('pointerdown', unlockHandler);
+      window.removeEventListener('keydown', unlockHandler);
+    };
+    window.addEventListener('pointerdown', unlockHandler, { passive: true, once: true });
+    window.addEventListener('keydown', unlockHandler, { passive: true, once: true });
+  }
+
+  unlockAudioSession() {
+    if (this.audioSessionUnlocked) return;
+    try {
+      // 1. 唤醒并激活 Web Audio Context（解决 iOS/Android 硬件静音通道与 Autoplay 限制）
+      const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtxClass) {
+        if (!this.audioCtx) {
+          this.audioCtx = new AudioCtxClass();
+        }
+        if (this.audioCtx.state === 'suspended') {
+          this.audioCtx.resume();
+        }
+        // 播放极短的静音频脉冲以激活移动端底层硬件音频管道
+        const buffer = this.audioCtx.createBuffer(1, 1, 22050);
+        const source = this.audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(this.audioCtx.destination);
+        source.start(0);
+      }
+
+      // 2. 预热激活 HTML5 Audio Engine
+      if (this.audio) {
+        this.audio.volume = 1.0;
+        this.audio.muted = false;
+        if (!this.audio.src) {
+          // 1ms 哑音 wav，避免首次发声被浏览器的自动播放策略静音拦截
+          const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+          this.audio.src = silentWav;
+          const p = this.audio.play();
+          if (p !== undefined) {
+            p.then(() => {
+              this.audio.pause();
+              this.audio.currentTime = 0;
+            }).catch(() => {});
+          }
+        }
+      }
+
+      this.audioSessionUnlocked = true;
+      console.log('[Audio] Audio session unlocked and authorized by user gesture');
+    } catch (e) {
+      console.warn('[Audio] Audio session unlock exception:', e);
+    }
+  }
+
+  safePlayAudio() {
+    this.unlockAudioSession();
+    if (!this.audio || !this.audio.src) return;
+    this.audio.volume = 1.0;
+    this.audio.muted = false;
+
+    const playPromise = this.audio.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(err => {
+        console.warn('[Audio Engine] Play interrupted or blocked:', err);
+        if (err.name === 'NotAllowedError') {
+          this.showAlert(
+            '音频发声受限',
+            '检测到浏览器限制了音频发声。请轻触屏幕任意位置或点击下方“好”以完成发声授权；若使用的是 iPhone/iPad，请确认机身左侧物理静音开关已拨回响铃模式（或插上耳机）。'
+          );
+        }
+      });
+    }
+  }
+
+  updateMediaSession(lesson) {
+    if (!('mediaSession' in navigator) || !lesson) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: lesson.manifest?.title || '精听音频',
+        artist: 'Intensive Listening',
+        album: '精听训练',
+        artwork: [
+          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }
+        ]
+      });
+
+      navigator.mediaSession.setActionHandler('play', () => this.togglePlayback());
+      navigator.mediaSession.setActionHandler('pause', () => this.togglePlayback());
+      navigator.mediaSession.setActionHandler('previoustrack', () => this.stepSentence(-1));
+      navigator.mediaSession.setActionHandler('nexttrack', () => this.stepSentence(1));
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (details.seekTime !== undefined) {
+          this.audio.currentTime = details.seekTime;
+          this.currentTime = details.seekTime;
+        }
+      });
+    } catch (e) {
+      console.warn('[MediaSession] Setup error:', e);
+    }
   }
 
   reportTelemetryEvent(name, properties = {}) {
@@ -1599,34 +1720,35 @@ class IntensiveListeningApp {
     }
   }
 
-  async ensureTelemetryBeforePlay(playAction) {
+  ensureTelemetryBeforePlay(playAction) {
     if (typeof playAction !== 'function') return;
 
-    // 若用户已点击“坚持播放”，或处于离线 PWA 模式，直接放行
+    // 1. 同步唤醒激活音频会话管道，确保处于直接用户交互手势 tick 内，杜绝移动端/iOS无声
+    this.unlockAudioSession();
+
+    // 2. 若用户已选择忽略、或离线模式，直接同步放行
     if (this.telemetryWarningDismissed || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       playAction();
       return;
     }
 
-    if (this.isCheckingTelemetry) {
-      playAction();
+    // 3. 若缓存结果已知被广告拦截，弹窗提醒
+    if (this.cachedTelemetryBlocked === true) {
+      this.pendingPlayAction = playAction;
+      this.showAdblockModal();
       return;
     }
 
-    this.isCheckingTelemetry = true;
-    try {
-      const isBlocked = await this.checkTelemetryBlocked();
-      if (isBlocked) {
-        this.pendingPlayAction = playAction;
-        this.showAdblockModal();
-        return;
-      }
-    } catch (e) {
-      // 探针检测异常时不阻止正常播放
-    } finally {
-      this.isCheckingTelemetry = false;
+    // 4. 若尚未完成背景检测，发起静默检测更新缓存，但不阻塞当前发声
+    if (this.cachedTelemetryBlocked === undefined) {
+      this.checkTelemetryBlocked().then(isBlocked => {
+        this.cachedTelemetryBlocked = isBlocked;
+      }).catch(() => {
+        this.cachedTelemetryBlocked = false;
+      });
     }
 
+    // 同步执行播放，确保 100% 保持浏览器用户交互手势授权
     playAction();
   }
 
@@ -1774,6 +1896,13 @@ class IntensiveListeningApp {
         }
       }, 200);
     }
+
+    // 5. Background pre-check for telemetry channel (silent, non-blocking)
+    this.checkTelemetryBlocked().then(isBlocked => {
+      this.cachedTelemetryBlocked = isBlocked;
+    }).catch(() => {
+      this.cachedTelemetryBlocked = false;
+    });
   }
 
   initPwaServiceWorker() {

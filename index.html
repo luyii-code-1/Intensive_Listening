@@ -300,7 +300,7 @@
     <input type="file" id="audio-file-input" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" style="display: none;">
 
     <!-- Hidden Audio Engine -->
-    <audio id="audio-engine" preload="auto"></audio>
+    <audio id="audio-engine" preload="auto" playsinline webkit-playsinline></audio>
 
     <!-- Drag & Drop Fullscreen Overlay -->
     <div id="drop-overlay" class="drop-overlay">
@@ -363,6 +363,7 @@
         <div class="legal-nav">
           <div class="legal-tab active" data-legal="agreement">用户协议</div>
           <div class="legal-tab" data-legal="privacy">隐私政策与遥测说明</div>
+          <div class="legal-tab" data-legal="audio">音频播放与声音权限</div>
         </div>
         <div class="legal-content">
           <!-- Agreement Tab -->
@@ -398,6 +399,21 @@
             <h4>四、用户的选择权</h4>
             <p>使用本播放器即代表您已了解并接受上述性能监控与本地存储机制。如您不同意，可随时关闭页面或通过浏览器屏蔽脚本插件阻止探针运行，这不会影响本地基础播放核心功能的完整性。</p>
           </div>
+          <!-- Audio Permission Tab -->
+          <div id="legal-content-audio" style="display: none;">
+            <h4>Intensive Listening 音频播放与声音输出权限说明</h4>
+            <p>为确保播放器发音清晰流畅，并适配各类移动设备与桌面浏览器的系统声音策略，特做如下说明：</p>
+            <h4>一、浏览器自动播放策略 (Autoplay Policy)</h4>
+            <p>现代浏览器（如 iOS Safari、Chrome、Edge）对网页音频有严格限制，禁止网页未经用户交互在后台静默出声。本播放器在您点击“播放”、“跳句”或首次进入应用时，会自动调用系统底层 <code>AudioContext</code> 与 HTML5 <code>&lt;audio&gt;</code> 管道，解锁浏览器音频会话。</p>
+            <h4>二、系统媒体会话集成 (Media Session API)</h4>
+            <p>本播放器深度适配操作系统媒体控制协议。在播放精听内容时，您可以在<strong>手机锁屏界面、系统通知中心及蓝牙耳机控制按键</strong>上直接进行播放/暂停、上一句、下一句及进度调节，无需频繁解锁屏幕。</p>
+            <h4>三、常见无声音问题排查</h4>
+            <ul>
+              <li><strong>iOS 实体静音开关：</strong>部分 iPhone/iPad 若机身左侧静音键处于开启状态（红点露出），可能会阻断网页音频输出。若无声音，请将拨片拨回响铃模式或插上耳机；</li>
+              <li><strong>系统媒体音量：</strong>请检查设备系统音量设置中的“媒体音量”（Media Volume）是否已调大；</li>
+              <li><strong>后台锁屏休眠：</strong>部分安卓定制系统可能在锁屏后杀死后台网页进程，推荐通过浏览器菜单中的“安装应用 / 添加到主屏幕”将本站安装为 PWA 客户端使用。</li>
+            </ul>
+          </div>
         </div>
         <div class="dialog-footer">
           <button id="btn-close-legal" class="fluent-btn filled">关闭</button>
@@ -419,14 +435,15 @@
           </div>
           <div class="brand-text-block">
             <h2 class="brand-heading">Intensive Listening 在线播放器</h2>
-            <div class="brand-subheading">首次使用提示：服务协议、隐私保护与阿里云性能遥测合规声明</div>
+            <div class="brand-subheading">首次使用提示：服务协议、隐私保护与音频播放权限授权</div>
           </div>
         </div>
 
         <!-- Navigation Tabs -->
         <div class="blocking-tabs">
           <button class="blocking-tab-btn active" data-tab="agreement">用户协议 (GPL-3.0 许可)</button>
-          <button class="blocking-tab-btn" data-tab="privacy">隐私政策与阿里云遥测说明</button>
+          <button class="blocking-tab-btn" data-tab="privacy">隐私政策与遥测说明</button>
+          <button class="blocking-tab-btn" data-tab="audio">音频播放权限说明</button>
         </div>
 
         <!-- Scrollable Document Content -->
@@ -472,6 +489,29 @@
             <h4>三、知情同意与退出机制</h4>
             <p>使用本播放器即代表您已了解并接受上述性能监控与本地存储机制。如您不同意，可点击下方“不同意并退出”关闭页面，或通过浏览器扩展屏蔽探针脚本，这不会影响本地离线播放功能的完整性。</p>
           </div>
+
+          <div id="block-article-audio" class="blocking-article" style="display: none;">
+            <h3>音频输出与自动播放授权说明</h3>
+            <p class="article-meta">生效版本：2026-10-01 ｜ 适用平台：iOS Safari / Android Chrome / Windows / macOS</p>
+
+            <h4>一、现代浏览器音频播放机制</h4>
+            <p>现代移动端与桌面浏览器（尤其是 iOS WebKit 与 Android Chrome）对网页发声设有严格的<strong>自动播放限制策略 (Autoplay Policy)</strong>。为了防止网页静默发声骚扰用户，浏览器规定：<strong>必须获得用户的直接交互授权后，音频硬件通道方可被唤醒输出声音</strong>。</p>
+
+            <h4>二、本播放器的权限申请与激活</h4>
+            <p>当您点击下方<strong>【同意协议并授权播放】</strong>按钮时，系统将通过一次同步的用户交互手势，同时完成：</p>
+            <ul>
+              <li><strong>唤醒 Web Audio 引擎：</strong>激活底层硬件音频通道（AudioContext Session），确保后续点句、循环、挖空朗读随时发声；</li>
+              <li><strong>注册系统媒体会话 (Media Session)：</strong>支持在手机锁屏、通知中心与蓝牙耳机上直接控制播放、暂停与跳句；</li>
+              <li><strong>零隐私风险：</strong>所有的音频播放完全在本地离线解码，绝不索取麦克风录音权限，也绝不向外网传输任何录音数据。</li>
+            </ul>
+
+            <h4>三、移动设备无声排查指引</h4>
+            <p>如果您在播放过程中听不到声音，请检查以下设备设置：</p>
+            <ul>
+              <li><strong>iOS 物理静音开关：</strong>iPhone 机身左侧若拨动至橙色静音状态，部分 iOS 版本可能会将网页声音静音，请拨回响铃模式或插上耳机；</li>
+              <li><strong>系统媒体音量：</strong>请确认手机或电脑的“媒体音量”已调至合适大小（而非仅铃声音量）。</li>
+            </ul>
+          </div>
         </div>
 
         <!-- Footer Actions -->
@@ -482,11 +522,11 @@
                 <polyline points="2 6 4.5 9 10 3"></polyline>
               </svg>
             </span>
-            <span class="checkbox-label-text">我已认真阅读并同意《用户协议》与《隐私政策及阿里云遥测声明》</span>
+            <span class="checkbox-label-text">我已认真阅读并同意《用户协议》、《隐私政策》并授权浏览器音频播放</span>
           </label>
           <div class="blocking-action-buttons">
             <button id="btn-blocking-decline" class="fluent-btn">不同意并退出</button>
-            <button id="btn-blocking-accept" class="fluent-btn filled lg">同意并进入播放器</button>
+            <button id="btn-blocking-accept" class="fluent-btn filled lg">同意协议并授权播放</button>
           </div>
         </div>
       </div>

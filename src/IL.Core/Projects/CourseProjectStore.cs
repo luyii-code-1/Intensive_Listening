@@ -9,6 +9,7 @@ namespace IL.Core.Projects;
 public sealed class CourseProjectStore(string? root=null)
 {
     private static readonly JsonSerializerOptions JsonOptions=new(){PropertyNamingPolicy=JsonNamingPolicy.CamelCase,WriteIndented=true};
+    private readonly SemaphoreSlim _io = new(1, 1);
     public string RootDirectory=>root??Path.Combine(AppDirectories.DataDirectory(),"projects");
     private string DirectoryFor(string id)
     {
@@ -18,11 +19,19 @@ public sealed class CourseProjectStore(string? root=null)
     private static string NewId()=>DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()+"-"+Guid.NewGuid().ToString("N")[..8];
     public async Task<IReadOnlyList<CourseProject>> LoadAllAsync(CancellationToken ct=default)
     {
+        await _io.WaitAsync(ct); try
+        {
         if(!Directory.Exists(RootDirectory))return [];
         var projects=new List<CourseProject>();foreach(var directory in Directory.GetDirectories(RootDirectory)){var project=await LoadDirectoryAsync(directory,ct);if(project!=null)projects.Add(project);}return projects.OrderByDescending(p=>p.UpdatedAt).ToArray();
+        }
+        finally { _io.Release(); }
     }
-    public Task<CourseProject?> LoadByIdAsync(string id,CancellationToken ct=default)
-    {try{return LoadDirectoryAsync(DirectoryFor(id),ct);}catch(ArgumentException){return Task.FromResult<CourseProject?>(null);}}
+    public async Task<CourseProject?> LoadByIdAsync(string id,CancellationToken ct=default)
+    {
+        await _io.WaitAsync(ct); try { return await LoadDirectoryAsync(DirectoryFor(id),ct); }
+        catch(ArgumentException) { return null; }
+        finally { _io.Release(); }
+    }
     public async Task<CourseProject> CreateAsync(string? audioPath=null,CancellationToken ct=default)
     {
         var now=DateTimeOffset.Now;var project=new CourseProject(NewId(),audioPath==null?"未命名项目":Path.GetFileNameWithoutExtension(audioPath),now,now,CourseProjectStep.Audio,Guid.NewGuid().ToString());
@@ -36,6 +45,21 @@ public sealed class CourseProjectStore(string? root=null)
         await SaveAsync(updated,ct);return updated;
     }
     public async Task SaveAsync(CourseProject project,CancellationToken ct=default)
+    {
+        await _io.WaitAsync(ct); try { await SaveCoreAsync(project, ct); } finally { _io.Release(); }
+    }
+    public async Task<CourseProject?> UpdateAsync(string id, Func<CourseProject?, CourseProject?> update, CancellationToken ct=default)
+    {
+        await _io.WaitAsync(ct);
+        try
+        {
+            var project = update(await LoadDirectoryAsync(DirectoryFor(id), ct));
+            if (project != null) await SaveCoreAsync(project, ct);
+            return project;
+        }
+        finally { _io.Release(); }
+    }
+    private async Task SaveCoreAsync(CourseProject project,CancellationToken ct)
     {
         var directory=DirectoryFor(project.Id);Directory.CreateDirectory(directory);
         await File.WriteAllTextAsync(Path.Combine(directory,"transcript.srt"),project.Transcript,new UTF8Encoding(false),ct);

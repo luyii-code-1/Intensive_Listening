@@ -27,13 +27,16 @@ public sealed class TeacherWorkspaceViewModel(CourseProjectStore store) : Observ
     }
     public async Task SaveAsync(CourseProject project)
     {
-        if (project.TranscriptionJobId is not null && Project?.TranscriptionJobId == project.TranscriptionJobId &&
-            await store.LoadByIdAsync(project.Id) is { HasTranscript: true, TranscriptionJobId: null } bound && bound.AudioPath == project.AudioPath)
-            project = project with { Transcript = bound.Transcript, Step = bound.Step, ReviewPhase = bound.ReviewPhase,
-                TranscriptionJobId = null, Exercises = bound.Exercises, AutomaticQuestionPlanApplied = bound.AutomaticQuestionPlanApplied, AutoQuestionPlanDeferred = bound.AutoQuestionPlanDeferred };
-        project = project with { UpdatedAt = DateTimeOffset.Now };
+        var pendingJob = Project?.TranscriptionJobId;
+        project = (await store.UpdateAsync(project.Id, latest =>
+        {
+            if (project.TranscriptionJobId is not null && pendingJob == project.TranscriptionJobId &&
+                latest is { HasTranscript: true, TranscriptionJobId: null } bound && bound.AudioPath == project.AudioPath)
+                project = project with { Transcript = bound.Transcript, Step = bound.Step, ReviewPhase = bound.ReviewPhase,
+                    TranscriptionJobId = null, Exercises = bound.Exercises, AutomaticQuestionPlanApplied = bound.AutomaticQuestionPlanApplied, AutoQuestionPlanDeferred = bound.AutoQuestionPlanDeferred };
+            return project with { UpdatedAt = DateTimeOffset.Now };
+        }))!;
         var parseCues = Project?.Id != project.Id || Project?.Transcript != project.Transcript || Project?.AudioDuration != project.AudioDuration;
-        await store.SaveAsync(project);
         Project = project;
         if (parseCues) ParseCues();
         UpdateProjects(project);

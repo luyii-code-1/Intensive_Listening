@@ -45,13 +45,15 @@ public sealed class ProjectTranscriptionBinding : IAsyncDisposable
         await _gate.WaitAsync();
         try
         {
-            var project = await _store.LoadByIdAsync(job.ProjectId);
-            if (project == null || project.TranscriptionJobId != job.Id) return null;
-            var cues = SrtParser.Parse(Encoding.UTF8.GetBytes(job.Srt), project.AudioDuration ?? TimeSpan.FromDays(7));
-            if (cues.Count == 0) return null;
-            var updated = project with { Transcript = job.Srt, TranscriptionJobId = null, Step = CourseProjectStep.Review,
-                ReviewPhase = ReviewPhase.Grouping, AutomaticQuestionPlanApplied = false, AutoQuestionPlanDeferred = false, UpdatedAt = DateTimeOffset.Now };
-            await _store.SaveAsync(updated);
+            var updated = await _store.UpdateAsync(job.ProjectId, project =>
+            {
+                if (project == null || project.TranscriptionJobId != job.Id) return null;
+                var cues = SrtParser.Parse(Encoding.UTF8.GetBytes(job.Srt), project.AudioDuration ?? TimeSpan.FromDays(7));
+                if (cues.Count == 0) return null;
+                return project with { Transcript = job.Srt, TranscriptionJobId = null, Step = CourseProjectStep.Review,
+                    ReviewPhase = ReviewPhase.Grouping, AutomaticQuestionPlanApplied = false, AutoQuestionPlanDeferred = false, UpdatedAt = DateTimeOffset.Now };
+            });
+            if (updated == null) return null;
             _queue.MarkSrtConsumed(job.Id);
             TranscriptBound?.Invoke(updated);
             return updated;

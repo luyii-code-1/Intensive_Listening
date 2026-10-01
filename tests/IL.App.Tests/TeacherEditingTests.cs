@@ -1,11 +1,37 @@
 using IL.App.ViewModels;
 using IL.Core.Models;
 using IL.Core.Projects;
+using IL.Core.Transcription;
 using Xunit;
 
 namespace IL.App.Tests;
 public sealed class TeacherEditingTests
 {
+    [Fact]
+    public async Task BackgroundCompletionAndTitleAutosaveKeepBothResultsWhenConcurrent()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il2-review-concurrent-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new CourseProjectStore(Path.Combine(root, "projects"));
+            await using var queue = new TranscriptionQueue((_, _, _, _) => throw new InvalidOperationException("No ASR calls"),
+                _ => Task.FromResult<DuplicateMatch?>(null), new QueueStore(Path.Combine(root, "queue.json")), new SrtRecognitionCache(Path.Combine(root, "cache")), () => "test");
+            await using var binding = new ProjectTranscriptionBinding(store, queue);
+            for (var i = 0; i < 12; i++)
+            {
+                var pending = (await store.CreateAsync()) with { Step = CourseProjectStep.Transcription, TranscriptionJobId = "queued-" + i };
+                await store.SaveAsync(pending); var vm = new TeacherWorkspaceViewModel(store); await vm.OpenAsync(pending.Id);
+                var job = new TranscriptionJob(pending.TranscriptionJobId!, "Recognition", "fixture.wav", TranscriptionJobStatus.Completed,
+                    TranscriptionStage.Formatting, "done", DateTimeOffset.Now, ProjectId: pending.Id, Srt: "1\n00:00:00,000 --> 00:00:01,000\nHello.\n");
+                var tasks = new Func<Task>[] { async () => { await binding.BindAsync(job); }, () => vm.SaveAsync(pending with { Title = "Edited title" }) };
+                await Task.WhenAll((i % 2 == 0 ? tasks : tasks.Reverse()).Select(action => Task.Run(action)));
+                var saved = await store.LoadByIdAsync(pending.Id);
+                Assert.Equal("Edited title", saved!.Title); Assert.Equal(job.Srt, saved.Transcript);
+                Assert.Equal(CourseProjectStep.Review, saved.Step); Assert.Null(saved.TranscriptionJobId);
+            }
+        }
+        finally { Directory.Delete(root, true); }
+    }
     [Fact]
     public async Task ValidImportedSubtitlesAdvanceStaleStepAndCompletedProjectsRemainCompleted()
     {

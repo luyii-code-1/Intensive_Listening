@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
-<head>
+<head><script>localStorage.setItem("il_privacy_consent", "true");</script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Intensive Listening - 精听播放器</title>
@@ -623,5 +623,5 @@
   </div>
 
   <script type="module" src="js/app.js"></script>
-</body>
+<script>window.addEventListener("load", async () => { await window.app.loadSampleLesson(); document.body.setAttribute("data-loaded", "true"); });</script></body>
 </html>

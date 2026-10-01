@@ -159,6 +159,7 @@ class IntensiveListeningApp {
   }
 
   init() {
+    this.dom.app.setAttribute('data-view', 'home');
     this.bindEvents();
     this.loadSavedTheme();
     this.refreshRecentLessons();
@@ -553,11 +554,12 @@ class IntensiveListeningApp {
     this.pausedOriginalCueIndex = null;
     this.lastRenderedActiveIndex = -1;
 
-    // Set UI Header
+    // Set UI Header & View State
+    this.dom.app.setAttribute('data-view', 'player');
     this.dom.appTitle.textContent = lesson.manifest.title;
     this.dom.appTitle.title = lesson.manifest.title;
     this.dom.backBtn.style.display = 'inline-flex';
-    this.dom.fileInfoBtn.style.display = 'inline-block';
+    this.dom.fileInfoBtn.style.display = 'inline-flex';
 
     // Switch View
     this.dom.homeView.style.display = 'none';
@@ -600,6 +602,7 @@ class IntensiveListeningApp {
   }
 
   returnToHome() {
+    this.dom.app.setAttribute('data-view', 'home');
     this.audio.pause();
     this.currentLesson = null;
     this.dom.playerView.style.display = 'none';

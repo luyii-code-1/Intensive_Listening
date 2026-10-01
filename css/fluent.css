@@ -171,9 +171,10 @@ body {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .header-right {
@@ -181,6 +182,17 @@ body {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.header-import-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* In player view, import actions are hidden to keep header clean and give focus to current lesson */
+#app[data-view="player"] .header-import-actions {
+  display: none !important;
 }
 
 .icon-btn {
@@ -217,13 +229,14 @@ body {
 }
 
 .app-title {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 460px;
+  flex: 1;
+  min-width: 0;
 }
 
 /* Version & Commit Badge */
@@ -1850,12 +1863,19 @@ body {
 /* Mobile Adaptation (max-width: 860px) */
 @media (max-width: 860px) {
   .app-header {
-    height: 46px;
-    padding: 0 10px;
+    height: 48px;
+    padding: 0 12px;
+  }
+
+  .header-left {
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
   }
 
   .header-right {
-    gap: 4px;
+    gap: 6px;
+    flex-shrink: 0;
   }
 
   .header-right .fluent-btn span {
@@ -1868,7 +1888,10 @@ body {
 
   .app-title {
     font-size: 15px;
-    max-width: 140px;
+    font-weight: 600;
+    max-width: none;
+    flex: 1;
+    min-width: 0;
   }
 
   .app-version-badge {
@@ -1877,7 +1900,25 @@ body {
     gap: 4px;
   }
 
-  .mobile-tabs-bar {
+  /* Player View Header on Mobile: Unclutter completely to maximize title */
+  #app[data-view="player"] .app-version-badge {
+    display: none !important;
+  }
+
+  #app[data-view="player"] .app-logo-mark {
+    display: none !important;
+  }
+
+  #app[data-view="player"] .header-import-actions {
+    display: none !important;
+  }
+
+  /* Mobile tabs bar only visible in player view */
+  #app[data-view="home"] .mobile-tabs-bar {
+    display: none !important;
+  }
+
+  #app[data-view="player"] .mobile-tabs-bar {
     display: flex;
   }
 

@@ -82,3 +82,43 @@ macOS ARM64 开发包在 macOS 27.0 本机完成 Release 构建，52 项测试�
 ZIP 解压到另一目录后，签名验证和相同原生检查再次通过。报告为
 `artifacts/verification/macos-arm64.json` 与 `artifacts/verification/macos-relocated.json`。
 应用及 ZIP 内含运行依赖，最低系统版本为 macOS 26.0。UI 视觉与交互由用户验收。
+
+## 2026-10-01 Dart UI 还原
+
+`2.0-dev` 按当前 `lib/main.dart` 的实际 `StudentPage`、`TeacherPage`、
+`SettingsPage` 和 `lib/widgets/first_run_wizard.dart` 重新实现 C# 界面。
+导航改为左侧展开/紧凑窗格；制作页恢复音频、转写、审阅、完成四阶段，
+分题、题目总览与挖空各自的原布局；播放页恢复课程主页与题目/字幕双栏；
+设置恢复居中卡片与折叠 API 区；任务中心和文档使用窗口内弹窗。
+OOBE 恢复分步渐变面板，按已有云端配置选择五步或六步。
+
+界面内嵌 Dart 原版思源黑体 Regular/Medium/Bold 与原图标字体。
+字体诊断确认三种字重、中文、拉丁文字和图标实际解析。
+
+可重复生成原版离屏图：
+
+```sh
+flutter test test/ui_reference_render_test.dart
+```
+
+C# 离屏生成工具与说明在 `tools/IL.UiSnapshots/README.md`。
+当前基准为 Dart 11 张和 C# 两种窗口尺寸各 17 张，输出在
+`artifacts/ui-reference`；`index.html` 提供并排对照。
+这些图片确认离屏渲染、字体和布局接入，视觉与真实交互由用户验收。
+
+本机 Release 构建与现有 52 项测试通过；更新的 Windows x64 包已在
+外部连接地址 `10.0.0.3` 运行原生检查及独立播放器检查，全部通过。
+远端目录为 `F:\dev\il2-ui-20261001`，报告复制到
+`artifacts/verification/windows-ui-runtime.json`。
+
+macOS ARM64 更新包已构建并通过 ad-hoc 签名检查。
+原生检查首次在“暂停后跳转并恢复”失败，同一产物重新运行 12 项检查通过。
+首跑与重跑报告分别保留为 `artifacts/verification/macos-arm64.json`、
+`artifacts/verification/macos-ui-retry.json`，本次未修改原生播放实现。
+
+Mac ZIP 解压到新目录后的签名与 12 项原生检查通过，报告为
+`artifacts/verification/macos-ui-relocated.json`。
+
+Windows SSH 会话启动探针记录到应用初始化完成，但该会话的 ANGLE 交换链创建
+返回 `0x887A0022`，无法据此确认桌面显示。`windows-ui-startup.json` 中的
+窗口句柄为 0；这项探针不计作界面通过。Windows 桌面视觉与交互仍待用户验收。

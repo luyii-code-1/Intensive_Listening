@@ -1,3 +1,31 @@
 <Application xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:fa="clr-namespace:FluentAvalonia.Styling;assembly=FluentAvalonia" x:Class="IL.App.App" RequestedThemeVariant="Default">
-  <Application.Styles><fa:FluentAvaloniaTheme /></Application.Styles>
+  <Application.Resources>
+    <ResourceDictionary>
+      <FontFamily x:Key="WorkspaceFont">avares://IL.App/Assets/Fonts#Source Han Sans CN</FontFamily>
+      <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+          <SolidColorBrush x:Key="WorkspaceBackgroundBrush">#FAF9F8</SolidColorBrush>
+          <SolidColorBrush x:Key="WorkspacePaneBrush">#F3F3F3</SolidColorBrush>
+          <SolidColorBrush x:Key="WorkspaceCardBorderBrush">#0A000000</SolidColorBrush>
+          <SolidColorBrush x:Key="WorkspaceTextBrush">#E4000000</SolidColorBrush>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+          <SolidColorBrush x:Key="WorkspaceBackgroundBrush">#201F1E</SolidColorBrush>
+          <SolidColorBrush x:Key="WorkspacePaneBrush">#202020</SolidColorBrush>
+          <SolidColorBrush x:Key="WorkspaceCardBorderBrush">#20FFFFFF</SolidColorBrush>
+          <SolidColorBrush x:Key="WorkspaceTextBrush">#F2FFFFFF</SolidColorBrush>
+        </ResourceDictionary>
+      </ResourceDictionary.ThemeDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+  <Application.Styles>
+    <fa:FluentAvaloniaTheme CustomAccentColor="#B90D1C" />
+    <Style Selector="Window"><Setter Property="FontFamily" Value="{StaticResource WorkspaceFont}" /><Setter Property="FontSize" Value="14" /><Setter Property="Background" Value="{DynamicResource WorkspaceBackgroundBrush}" /><Setter Property="Foreground" Value="{DynamicResource WorkspaceTextBrush}" /></Style>
+    <Style Selector="Button"><Setter Property="MinHeight" Value="32" /><Setter Property="Padding" Value="12,5" /><Setter Property="CornerRadius" Value="4" /></Style>
+    <Style Selector="TextBox"><Setter Property="MinHeight" Value="32" /></Style>
+    <Style Selector="Button.subtle"><Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" /></Style>
+    <Style Selector="Button.round"><Setter Property="CornerRadius" Value="27" /><Setter Property="Width" Value="54" /><Setter Property="Height" Value="54" /><Setter Property="Padding" Value="0" /></Style>
+    <Style Selector="Button.nav"><Setter Property="HorizontalAlignment" Value="Stretch" /><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" /><Setter Property="Padding" Value="0" /><Setter Property="Height" Value="40" /></Style>
+    <Style Selector="Button.nav.selected"><Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" /></Style>
+  </Application.Styles>
 </Application>

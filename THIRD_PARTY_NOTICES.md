@@ -17,6 +17,12 @@ License 1.1 授权，许可证文本在 `assets/fonts/LICENSE.txt`。
 
 Flutter、Dart 以及 `pubspec.lock` 中列出的各个三方包保留其原有版权声明和许可条款。
 
+### C# 界面复用的原版图标
+
+C# 2.0 界面内嵌原 Dart 应用所用的 `fluent_ui` 4.16.1 `FluentIcons.ttf`，
+并保留同包的 BSD-3-Clause 声明于 `assets/legal/fluent_ui_license.txt`。
+思源黑体及图标字体用于维持原版页面的文字和图标尺寸。
+
 ## 阿里云 ARMS RUM PC SDK
 
 **Alibaba Cloud ARMS RUM PC SDK**

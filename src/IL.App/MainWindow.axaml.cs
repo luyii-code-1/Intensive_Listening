@@ -1,4 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
+using FluentAvalonia.UI.Controls;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using IL.App.Services;
@@ -16,7 +20,10 @@ public partial class MainWindow : Window
     private readonly TeacherView _teacher;
     private readonly QueueView _queue;
     private readonly SettingsView _settings;
-    private bool _closing;
+    private bool _closing, _paneExpanded = true;
+    private int _destination, _settingsBack;
+    private string? _openedAudioPath;
+    private FAContentDialog? _taskDialog;
     public MainWindow()
     {
         InitializeComponent();
@@ -25,24 +32,72 @@ public partial class MainWindow : Window
         _student=new(_services.Student);
         _teacher=new(_services.Projects,_services.Queue,()=>_services.Settings,_services.LibraryDirectory,()=>Dispatcher.UIThread.Post(async()=>await _services.Student.RefreshAsync()),()=>ShowSettings());
         _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);});
-        _queue=new(_services.Queue,async job=>{await _teacher.LoadJobTranscriptAsync(job);PageHost.Content=_teacher;},async match=>{if(match.LessonId is {} id){PageHost.Content=_student;_services.Student.SelectedLesson=_services.Student.Lessons.FirstOrDefault(l=>l.Id==id);await _services.Student.CurrentLoad;}},()=>PickAudioForQueueAsync());
+        _queue=new(_services.Queue,async job=>{_taskDialog?.Hide();await _teacher.LoadJobTranscriptAsync(job);Navigate(1);},async match=>{if(match.LessonId is {} id){_taskDialog?.Hide();Navigate(0);_services.Student.SelectedLesson=_services.Student.Lessons.FirstOrDefault(l=>l.Id==id);await _services.Student.CurrentLoad;}},()=>PickAudioForQueueAsync());
         _services.ConfirmForcedCuts=()=>OnUiAsync(()=>AppDialogs.ConfirmForcedCutsAsync(this));
         _services.Server.ApprovalRequested=name=>OnUiAsync(async()=>{var decision=await AppDialogs.ApproveAgentAsync(this,name);if(decision==IL.Core.Mcp.AgentApprovalDecision.Approve)await _teacher.PrepareAgentSessionAsync();else if(decision==IL.Core.Mcp.AgentApprovalDecision.DisableMcp){var settings=_services.Settings with{McpEnabled=false};await _services.SettingsStore.SaveAsync(settings);await _services.ApplySettingsAsync(settings);}return decision;});
-        _services.Server.AgentStateChanged+=active=>Dispatcher.UIThread.Post(async()=>{AgentButton.IsVisible=active;_teacher.SetAgentMode(active);if(active)PageHost.Content=_teacher;else await _teacher.FinishAgentSessionAsync();});
+        _services.Server.AgentStateChanged+=active=>Dispatcher.UIThread.Post(async()=>{AgentOverlay.IsVisible=active;ShellGrid.Effect=active?new BlurEffect{Radius=12}:null;_teacher.SetAgentMode(active);if(active)Navigate(1);else await _teacher.FinishAgentSessionAsync();});
         _services.Api.ProjectChanged=()=>Dispatcher.UIThread.Post(async()=>await _teacher.RefreshAsync());
-        _services.Api.OpenProject=id=>Dispatcher.UIThread.Post(async()=>{await _teacher.OpenProjectAsync(id);PageHost.Content=_teacher;});
+        _services.Api.OpenProject=id=>Dispatcher.UIThread.Post(async()=>{await _teacher.OpenProjectAsync(id);Navigate(1);});
         _services.Api.LibraryChanged=()=>Dispatcher.UIThread.Post(async()=>await _services.Student.RefreshAsync());
         _teacher.StandaloneExporter=async project=>{if(await WorkspaceUi.Save(this,"导出独立播放器",project.Title+".exe","exe") is {} file)return await _services.ExportStandaloneAsync(project,file);return null;};
-        StudentButton.Click+=(_,_)=>PageHost.Content=_student;
-        TeacherButton.Click+=async(_,_)=>{await _services.Student.PauseAsync();PageHost.Content=_teacher;await _teacher.RefreshAsync();};
-        QueueButton.Click+=(_,_)=>PageHost.Content=_queue;SettingsButton.Click+=(_,_)=>ShowSettings();
+        StudentButton.Click+=(_,_)=>Navigate(0);
+        TeacherButton.Click+=async(_,_)=>{await _services.Student.PauseAsync();if(_destination==0)await _teacher.ReturnToProjectsAsync();Navigate(1);await _teacher.RefreshAsync();};
+        QueueButton.Click+=async(_,_)=>await ShowTasksAsync();SettingsButton.Click+=(_,_)=>ShowSettings();
         AgentButton.Click+=(_,_)=>_services.Server.DisconnectAgent();
-        PageHost.Content=_student;
-        if(standalone){TeacherButton.IsVisible=QueueButton.IsVisible=SettingsButton.IsVisible=false;Width=1120;}
+        PaneToggle.Content=WorkspaceUi.Icon("global_nav_button");
+        PaneToggle.Click+=(_,_)=>{_paneExpanded=!_paneExpanded;UpdatePane();};
+        _settings.BackRequested=()=>Navigate(_settingsBack);
+        _teacher.ProjectOpened=CollapsePane;
+        _services.Student.PresentationChanged+=()=>{var path=_services.Student.AudioPath;if(path!=_openedAudioPath){_openedAudioPath=path;if(path!=null)CollapsePane();}};
+        _settings.WithdrawAgreementRequested=async()=>
+        {
+            var reset=_services.Settings with{EulaAcceptedVersion="",TelemetryEnabled=false,TelemetryPrompted=false};
+            await _services.SettingsStore.SaveAsync(reset);await _services.ApplySettingsAsync(reset);
+            var marker=Path.Combine(AppDirectories.DataDirectory(),"installation","setup-cycle.txt");if(File.Exists(marker))File.Delete(marker);
+            Close();
+        };
+        SizeChanged+=(_,_)=>UpdatePane();
+        _services.Queue.Changed+=(_,_)=>Dispatcher.UIThread.Post(UpdatePane);
+        Navigate(0);
+        if(standalone){NavigationPane.IsVisible=false;ShellGrid.ColumnDefinitions[0].Width=new GridLength(0);Width=1120;}
         Opened+=async(_,_)=>await InitializeAsync();
         Closing+=async(_,e)=>{if(_closing)return;e.Cancel=true;_closing=true;try{await _services.DisposeAsync();}catch(Exception ex){AppLog.Warning("关闭时保存失败",ex);}Close();};
     }
-    private void ShowSettings(){PageHost.Content=_settings;_settings.Populate(_services.Settings);}
+    private void ShowSettings(){if(_destination!=2)_settingsBack=_destination;_settings.Populate(_services.Settings);Navigate(2);}
+    private void Navigate(int destination)
+    {
+        _destination=destination;PageHost.Content=destination switch{1=>_teacher,2=>_settings,_=>_student};
+        UpdatePane();
+    }
+    private void CollapsePane(){_paneExpanded=false;UpdatePane();}
+    private void UpdatePane()
+    {
+        if(_services.Standalone)return;
+        var expanded=_paneExpanded&&ClientSize.Width>=1200;
+        ShellGrid.ColumnDefinitions[0].Width=new GridLength(expanded?320:48);
+        NavigationContent(StudentButton,"play","播放",expanded,_destination==0);
+        NavigationContent(TeacherButton,"education","制作",expanded,_destination==1);
+        NavigationContent(SettingsButton,"settings","设置",expanded,_destination==2);
+        NavigationContent(QueueButton,"sync","转写任务",expanded,false,_services.Queue.Jobs.Count(j=>j.IsActive));
+    }
+    private static void NavigationContent(Button button,string icon,string label,bool expanded,bool selected,int count=0)
+    {
+        button.Classes.Set("selected",selected); ToolTip.SetTip(button,label);
+        var content=new Grid{ColumnDefinitions=new ColumnDefinitions("4,36,*,Auto")};
+        if(selected)content.Children.Add(new Border{Width=3,Height=20,Background=WorkspaceUi.Accent,CornerRadius=new CornerRadius(2),VerticalAlignment=VerticalAlignment.Center});
+        var glyph=WorkspaceUi.Icon(icon);Grid.SetColumn(glyph,1);content.Children.Add(glyph);
+        if(expanded){var text=WorkspaceUi.Text(label);text.VerticalAlignment=VerticalAlignment.Center;Grid.SetColumn(text,2);content.Children.Add(text);}
+        if(count>0&&expanded){var badge=WorkspaceUi.Text(count.ToString(),12);badge.Foreground=Brushes.White;var border=new Border{Background=WorkspaceUi.Accent,CornerRadius=new CornerRadius(10),Padding=new Thickness(6,1),Margin=new Thickness(8,0,12,0),VerticalAlignment=VerticalAlignment.Center,Child=badge};Grid.SetColumn(border,3);content.Children.Add(border);}
+        button.Content=content;
+    }
+    private async Task ShowTasksAsync()
+    {
+        if(_taskDialog is not null)return;
+        _taskDialog=new FAContentDialog{Title="转写任务",Content=_queue,CloseButtonText="关闭",MaxWidth=Math.Clamp(ClientSize.Width*.618,640,980)};
+        _queue.Width=Math.Clamp(ClientSize.Width*.618,640,980)-48;
+        _queue.Height=Math.Clamp(ClientSize.Height*.72,480,720)-112;
+        try{await _taskDialog.ShowAsync(this);}finally{_taskDialog=null;}
+    }
     private static void ApplyTheme(AppSettings settings){if(Avalonia.Application.Current is {} app)app.RequestedThemeVariant=settings.ThemeMode switch{"dark"=>ThemeVariant.Dark,"light"=>ThemeVariant.Light,_=>ThemeVariant.Default};}
     private async Task InitializeAsync()
     {
@@ -67,7 +122,7 @@ public partial class MainWindow : Window
     }
     private async Task PickAudioForQueueAsync()
     {
-        PageHost.Content=_teacher;await _teacher.PickAudioAndEnqueueAsync();
+        _taskDialog?.Hide();Navigate(1);await _teacher.PickAudioAndEnqueueAsync();
     }
     private static Task<T> OnUiAsync<T>(Func<Task<T>> action)
     {

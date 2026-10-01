@@ -41,7 +41,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     private int? _preroll, _returnCue;
     private TimeSpan? _repeatEnd;
     private DateTimeOffset _lastProgressSave;
-    private bool _switching, _disposed;
+    private bool _switching, _disposed, _clearingSelection;
 
     public StudentViewModel(Func<IAudioPlayer> factory, string libraryDirectory, LessonProgressStore progressStore,
         AppSettingsStore settings, Action<Action>? dispatch = null)
@@ -55,6 +55,13 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     public IReadOnlyList<double> PlaybackRates { get; } = [0.5, 0.75, 0.8, 1, 1.25, 1.5, 2];
     public Task CurrentLoad { get; private set; } = Task.CompletedTask;
     public ImportedLesson? CurrentLesson => _lesson;
+    public bool HasMedia => _audioPath is not null;
+    public bool HasTranscript => _lesson is not null;
+    public string? AudioPath => _audioPath;
+    public LessonMaterial? ActiveMaterial => _lesson?.Manifest.Exercises.MaterialForCue(ActiveCue?.Index ?? -1);
+    public LessonProgress? ProgressFor(string id) => _progress.GetValueOrDefault(id);
+    public bool MaterialClozeVisible => ActiveMaterial is { } material &&
+        (_revealedMaterials.Contains(material.Id) || ShowAllCloze && !_hiddenMaterials.Contains(material.Id));
     public bool CanPlay => _audioPath is not null && !IsBusy;
     public bool CanReturn => _returnCue is not null;
     public string PlayLabel => IsPlaying ? "暂停" : "播放";
@@ -84,6 +91,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
 
     partial void OnSelectedLessonChanged(LessonListItem? value)
     {
+        if (_clearingSelection) return;
         var item = value;
         SelectLesson(item);
     }
@@ -119,6 +127,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
                 UpdatePosition(resume);
                 Status = $"{Cues.Count} 条字幕 · v{lesson.Manifest.PackageVersion}";
                 await SaveProgressAsync();
+                OnPropertyChanged(nameof(HasMedia)); OnPropertyChanged(nameof(HasTranscript));
                 PresentationChanged?.Invoke();
             }
             finally { _switching = false; OnPropertyChanged(nameof(CanPlay)); }
@@ -156,6 +165,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     public Task OpenAudioAsync(string file) => RunAsync(async () =>
     {
         await CloseMediaAsync();
+        ClearSelectedLesson();
         _audioPath = file;
         Title = Path.GetFileNameWithoutExtension(file);
         await EnsurePlayerLoadedAsync();
@@ -163,6 +173,51 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         UpdatePosition(TimeSpan.Zero);
         OnPropertyChanged(nameof(CanPlay));
         Status = "音频已打开";
+        OnPropertyChanged(nameof(HasMedia)); OnPropertyChanged(nameof(HasTranscript));
+    });
+
+    public Task ReturnHomeAsync() => RunAsync(async () =>
+    {
+        await CloseMediaAsync();
+        ClearSelectedLesson();
+        Title = "精听";
+        Status = "选择课程或导入精听包";
+    });
+
+    public void DismissReturnCue()
+    {
+        _returnCue = null; OnPropertyChanged(nameof(CanReturn));
+    }
+
+    private void ClearSelectedLesson()
+    {
+        _clearingSelection = true;
+        try { SelectedLesson = null; }
+        finally { _clearingSelection = false; }
+    }
+
+    public Task OpenLessonAsync(LessonListItem item)
+    {
+        if (ReferenceEquals(SelectedLesson, item)) SelectLesson(item);
+        else SelectedLesson = item;
+        return CurrentLoad;
+    }
+
+    public Task JumpMaterialAsync(LessonMaterial material)
+    {
+        var index = material.LeadInCueIndexes.FirstOrDefault(material.CueIndexes.FirstOrDefault(-1));
+        return index >= 0 && index < Cues.Count ? JumpCueCommand.ExecuteAsync(Cues[index]) : Task.CompletedTask;
+    }
+
+    public Task PlaySelectedCueAsync(CueRow row, bool pauseAfterSentence) => RunAsync(async () =>
+    {
+        if (!Cues.Contains(row)) return;
+        SingleSentenceLoop = false;
+        await SeekCoreAsync(PlaybackNavigation.CueNavigationPosition(row.Cue), row.Index);
+        if (pauseAfterSentence) _repeatEnd = row.Cue.End;
+        await EnsurePlayerLoadedAsync();
+        await _player!.PlayAsync(); IsPlaying = true;
+        _returnCue = null; OnPropertyChanged(nameof(CanReturn));
     });
 
     [RelayCommand] private Task TogglePlaybackAsync() => RunAsync(async () =>
@@ -251,9 +306,12 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     partial void OnShowAllClozeChanged(bool value) => PresentationChanged?.Invoke();
     partial void OnActiveCueChanged(CueRow? value)
     {
+        var previousMaterial = Questions.FirstOrDefault()?.MaterialId;
+        var material = _lesson?.Manifest.Exercises.MaterialForCue(value?.Index ?? -1);
+        if (previousMaterial == material?.Id && Questions.Count > 0) return;
         Questions.Clear();
-        if (_lesson?.Manifest.Exercises.MaterialForCue(value?.Index ?? -1) is { } material)
-            foreach (var question in _lesson.Manifest.Exercises.QuestionsForMaterial(material)) Questions.Add(question);
+        if (material is not null)
+            foreach (var question in _lesson!.Manifest.Exercises.QuestionsForMaterial(material)) Questions.Add(question);
         RevealAnswer = false;
     }
     public bool IsClozeHidden(int cue, int word)
@@ -369,6 +427,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
             _revealedMaterials.Clear(); _hiddenMaterials.Clear();
             PositionSeconds = SeekPositionSeconds = DurationSeconds = 0;
             OnPropertyChanged(nameof(CanPlay)); OnPropertyChanged(nameof(CanReturn));
+            OnPropertyChanged(nameof(HasMedia)); OnPropertyChanged(nameof(HasTranscript));
         }
         finally { _switching = false; }
     }

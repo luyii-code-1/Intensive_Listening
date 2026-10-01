@@ -10,6 +10,7 @@ using Avalonia.Threading;
 using FluentAvalonia.UI.Windowing;
 using System.Runtime.InteropServices;
 using IL.Core.Settings;
+using IL.App.Services;
 
 namespace IL.App.Views.Dialogs;
 
@@ -61,7 +62,7 @@ internal sealed class FirstRunWizard : Border
         scroll.SizeChanged += (_, _) => { centered.MinHeight = Math.Max(0, scroll.Bounds.Height - 40); _page.Width = Math.Max(0, Math.Min(_page.MaxWidth, scroll.Bounds.Width - (windows ? 80 : 56))); };
         Grid.SetRow(scroll, windows ? 0 : 1); layout.Children.Add(scroll);
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,*"), Margin = new Thickness(22, 0, 22, windows ? 12 : 16) };
-        var version = CenterText("2.0.0-dev Prelude", 12); version.Opacity = .75; Grid.SetColumn(version, 1); footer.Children.Add(version);
+        var version = CenterText(AppBuildInfo.Version + " Prelude", 12); version.Opacity = .75; Grid.SetColumn(version, 1); footer.Children.Add(version);
         _fraction.FontSize = 12; _fraction.Opacity = .6; _fraction.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(_fraction, 2); footer.Children.Add(_fraction); Grid.SetRow(footer, windows ? 1 : 2); layout.Children.Add(footer);
         Child = layout; Render();
         AttachedToVisualTree += (_, _) =>
@@ -164,10 +165,11 @@ internal sealed class FirstRunWizard : Border
         {
             case 0:
                 body = new StackPanel { Spacing = 8 };
-                var brand = Brand(_windows ? 80 : 76); brand.Margin = new Thickness(0, 0, 0, 8); body.Children.Add(brand);
+                var brand = Brand(_windows ? 80 : 76); brand.Name = "OobeWelcomeLogo"; brand.Margin = new Thickness(0, 0, 0, 8); body.Children.Add(brand);
                 var brandTitle = CenterText("Intensive Listening", _windows ? 32 : 22, true);
                 if (_windows) brandTitle.FontWeight = FontWeight.Medium;
-                body.Children.Add(brandTitle); body.Children.Add(CenterText("欢迎使用精听课程制作与播放")); break;
+                body.Children.Add(brandTitle); body.Children.Add(CenterText("欢迎使用精听课程制作与播放"));
+                var build = CenterText(AppBuildInfo.Display, 12); build.Name = "OobeBuildInfo"; build.Opacity = .65; build.Margin = new Thickness(0, 4, 0, 0); body.Children.Add(build); break;
             case 1:
                 body = Page("同意许可条款", "请先阅读并确认用户协议与隐私说明。");
                 CheckBox Consent(string document, string text, bool value, Action<bool> set)
@@ -208,7 +210,7 @@ internal sealed class FirstRunWizard : Border
                 body.Children.Add(Card("cloud", "API Key", "密钥只保存在本机设置中。", key));
                 var help = WorkspaceUi.Button("如何配置？", () => { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://il.luyii.cn/guide.html#api-setup") { UseShellExecute = true }); return Task.CompletedTask; }); help.HorizontalAlignment = HorizontalAlignment.Center; help.Margin = new Thickness(0, 6, 0, 0); body.Children.Add(help); break;
             default:
-                body = new StackPanel { Spacing = 10 }; var doneBrand = Brand(66); doneBrand.Margin = new Thickness(0, 0, 0, 14); body.Children.Add(doneBrand); body.Children.Add(CenterText("设置完成", 22, true)); body.Children.Add(CenterText("现在可以开始播放精听包，或创建一份课程。")); break;
+                body = new StackPanel { Spacing = 10 }; var doneBrand = Brand(66); doneBrand.Name = "OobeDoneLogo"; doneBrand.Margin = new Thickness(0, 0, 0, 14); body.Children.Add(doneBrand); body.Children.Add(CenterText("设置完成", 22, true)); body.Children.Add(CenterText("现在可以开始播放精听包，或创建一份课程。")); break;
         }
         if (_windows) body.Spacing = 6;
         body.Name = $"OobePage{_step}";
@@ -281,7 +283,16 @@ internal sealed class FirstRunWizard : Border
         var motion = SpringMotion.For(body);
         motion.Set(0, x: MotionReduced() ? 0 : x, y: MotionReduced() ? 0 : y);
         using var registration = cancellation.Register(motion.Stop);
-        await motion.To(); cancellation.ThrowIfCancellationRequested();
+        var logo = (body as StackPanel)?.Children.OfType<Border>().FirstOrDefault(c => c.Name is "OobeWelcomeLogo" or "OobeDoneLogo");
+        if (logo != null)
+        {
+            var logoMotion = SpringMotion.For(logo);
+            logoMotion.Set(0, y: MotionReduced() ? 0 : 18, scale: MotionReduced() ? 1 : .78);
+            using var logoRegistration = cancellation.Register(logoMotion.Stop);
+            await Task.WhenAll(motion.To(), logoMotion.To(response: .46));
+        }
+        else await motion.To();
+        cancellation.ThrowIfCancellationRequested();
     }
     private static async Task Slide(Control body, double from, double to, double opacityFrom, double opacityTo, CancellationToken cancellation)
     {

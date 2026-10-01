@@ -1,10 +1,44 @@
 using IL.App.ViewModels;
 using IL.Core.Models;
+using IL.Core.Projects;
 using Xunit;
 
 namespace IL.App.Tests;
 public sealed class TeacherEditingTests
 {
+    [Fact]
+    public async Task ValidImportedSubtitlesAdvanceStaleStepAndCompletedProjectsRemainCompleted()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il2-review-step-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new CourseProjectStore(root); var vm = new TeacherWorkspaceViewModel(store);
+            var project = (await store.CreateAsync()) with { Transcript = "1\n00:00:00,000 --> 00:00:01,000\nHello.\n", Step = CourseProjectStep.Transcription };
+            await store.SaveAsync(project); await vm.OpenAsync(project.Id);
+            Assert.Equal(CourseProjectStep.Review, vm.Project!.Step); Assert.Single(vm.Cues);
+            Assert.Equal(CourseProjectStep.Review, (await store.LoadByIdAsync(project.Id))!.Step);
+            await store.SaveAsync(vm.Project with { Step = CourseProjectStep.Completed }); await vm.OpenAsync(project.Id);
+            Assert.Equal(CourseProjectStep.Completed, vm.Project!.Step);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    [Fact]
+    public async Task TitleSaveFromPendingViewPreservesBackgroundBoundSubtitles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il2-review-save-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new CourseProjectStore(root); var vm = new TeacherWorkspaceViewModel(store);
+            var pending = (await store.CreateAsync()) with { Step = CourseProjectStep.Transcription, TranscriptionJobId = "queued" };
+            await store.SaveAsync(pending); await vm.OpenAsync(pending.Id);
+            var completed = pending with { Transcript = "1\n00:00:00,000 --> 00:00:01,000\nHello.\n", TranscriptionJobId = null, Step = CourseProjectStep.Review };
+            await store.SaveAsync(completed); await vm.SaveAsync(pending with { Title = "Edited while transcribing" });
+            var saved = await store.LoadByIdAsync(pending.Id);
+            Assert.Equal("Edited while transcribing", saved!.Title); Assert.Equal(completed.Transcript, saved.Transcript);
+            Assert.Equal(CourseProjectStep.Review, saved.Step); Assert.Null(saved.TranscriptionJobId);
+        }
+        finally { Directory.Delete(root, true); }
+    }
     [Fact]
     public void CreatingMaterialsKeepsExistingAssignmentAndRejectsOccupiedSelection()
     {

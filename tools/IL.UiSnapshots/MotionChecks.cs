@@ -9,6 +9,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using IL.App.Views;
 using IL.App.Views.Dialogs;
+using IL.App.Services;
 using IL.Core.Infrastructure;
 using IL.Core.Settings;
 
@@ -59,6 +60,14 @@ internal static partial class Program
         for (var step = 1; step <= 5; step++) { SetField(wizard, "_step", step); Invoke(wizard, "Render"); await CaptureAsync(welcome, "windows-oobe-" + names[step - 1]); }
         SetField(wizard, "_step", 1); Invoke(wizard, "Render"); await Task.Delay(350);
         if (!ReferenceEquals(incoming, welcome.GetVisualDescendants().OfType<StackPanel>().Single(c => c.Name == "OobePage1")) || !next.IsEnabled) throw new InvalidOperationException("Back navigation discarded cached consent state.");
+        SetField(wizard, "_step", 0); Invoke(wizard, "Render"); await Task.Delay(100);
+        var logo = welcome.GetVisualDescendants().OfType<Border>().Single(c => c.Name == "OobeWelcomeLogo");
+        var logoScale = ((TransformGroup)logo.RenderTransform!).Children.OfType<ScaleTransform>().Single().ScaleX;
+        if (logoScale is <= .78 or >= 1 || logo.Opacity is <= 0 or >= 1) throw new InvalidOperationException("Welcome logo did not progress through its spring entrance.");
+        var buildInfo = welcome.GetVisualDescendants().OfType<TextBlock>().Single(c => c.Name == "OobeBuildInfo");
+        if (buildInfo.Text != AppBuildInfo.Display || AppBuildInfo.Commit.Length != 7 || !AppBuildInfo.Commit.All(Uri.IsHexDigit)) throw new InvalidOperationException("Welcome build identity must show the embedded Git short commit.");
+        SaveMotionFrame(welcome, "windows-oobe-logo-mid"); await Task.Delay(650);
+        if (logo.Opacity != 1 || ((TransformGroup)logo.RenderTransform!).Children.OfType<ScaleTransform>().Single().ScaleX != 1) throw new InvalidOperationException("Welcome logo did not settle.");
         SetField(wizard, "_step", 5); Invoke(wizard, "Render"); await Task.Delay(350); Invoke(wizard, "Next");
         var settings = await completed;
         if (settings?.EulaAcceptedVersion != "2026-09-22" || initial.EulaAcceptedVersion != "") throw new InvalidOperationException("OOBE completion or initial settings isolation failed.");
@@ -99,7 +108,7 @@ internal static partial class Program
         await CaptureAsync(crashWindow, "crash-report-window"); crashWindow.Close();
         if (!CrashReportStore.Load(crashStore.PathFor(crash.Id))!.Displayed) throw new InvalidOperationException("Crash window did not mark its report as displayed.");
         motion.SetValue(null, null); owner.Close();
-        await File.WriteAllTextAsync(Path.Combine(_output, "motion.json"), JsonSerializer.Serialize(new { NavigationMid = new { Opacity = opacity, Y = y }, WindowsWelcomeSize = new { welcome.Width, welcome.Height }, IntroScaleAt700ms = scale, OobeMid = new { Opacity = stepOpacity, X = x }, ConsentGate = "passed", CachedBackState = "passed", FinalOnlySettings = "passed", DisclosureMidHeight = disclosureMid, DisclosureReversal = "passed", SelectionScale = feedbackScale, DialogMidOpacity = dialogMid, CrashWindow = "offscreen rendered", ReducedMotion = "gentle spring fade passed", RapidNavigation = "12 reversals passed", PreAttachmentOpacity = "zero passed", Boundary = "Headless Skia animation progression and state checks; native interaction acceptance belongs to the user" }, Json));
+        await File.WriteAllTextAsync(Path.Combine(_output, "motion.json"), JsonSerializer.Serialize(new { NavigationMid = new { Opacity = opacity, Y = y }, WindowsWelcomeSize = new { welcome.Width, welcome.Height }, IntroScaleAt700ms = scale, OobeMid = new { Opacity = stepOpacity, X = x }, LogoMidScale = logoScale, BuildIdentity = AppBuildInfo.Display, ConsentGate = "passed", CachedBackState = "passed", FinalOnlySettings = "passed", DisclosureMidHeight = disclosureMid, DisclosureReversal = "passed", SelectionScale = feedbackScale, DialogMidOpacity = dialogMid, CrashWindow = "offscreen rendered", ReducedMotion = "gentle spring fade passed", RapidNavigation = "12 reversals passed", PreAttachmentOpacity = "zero passed", Boundary = "Headless Skia animation progression and state checks; native interaction acceptance belongs to the user" }, Json));
     }
     private static void SaveMotionFrame(Window window, string name)
     {

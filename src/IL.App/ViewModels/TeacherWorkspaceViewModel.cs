@@ -16,6 +16,8 @@ public sealed class TeacherWorkspaceViewModel(CourseProjectStore store) : Observ
     {
         Project = await store.LoadByIdAsync(id);
         ParseCues();
+        if (Project is { HasTranscript: true } && Cues.Count > 0 && Project.Step < CourseProjectStep.Review)
+            await SaveAsync(Project with { Step = CourseProjectStep.Review, ReviewPhase = ReviewPhase.Grouping });
         if (Project != null) UpdateProjects(Project);
         if (Project is { HasTranscript: true, AutomaticQuestionPlanApplied: false, AutoQuestionPlanDeferred: false } && Cues.Count > 0)
         {
@@ -25,6 +27,10 @@ public sealed class TeacherWorkspaceViewModel(CourseProjectStore store) : Observ
     }
     public async Task SaveAsync(CourseProject project)
     {
+        if (project.TranscriptionJobId is not null && Project?.TranscriptionJobId == project.TranscriptionJobId &&
+            await store.LoadByIdAsync(project.Id) is { HasTranscript: true, TranscriptionJobId: null } bound && bound.AudioPath == project.AudioPath)
+            project = project with { Transcript = bound.Transcript, Step = bound.Step, ReviewPhase = bound.ReviewPhase,
+                TranscriptionJobId = null, Exercises = bound.Exercises, AutomaticQuestionPlanApplied = bound.AutomaticQuestionPlanApplied, AutoQuestionPlanDeferred = bound.AutoQuestionPlanDeferred };
         project = project with { UpdatedAt = DateTimeOffset.Now };
         var parseCues = Project?.Id != project.Id || Project?.Transcript != project.Transcript || Project?.AudioDuration != project.AudioDuration;
         await store.SaveAsync(project);

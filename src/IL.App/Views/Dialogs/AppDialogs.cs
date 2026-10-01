@@ -26,16 +26,16 @@ public static class AppDialogs
     public static async Task<int> ChooseAsync(Window owner, string title, string message, params string[] choices)
     {
         var answer = -1;
-        var body = WorkspaceUi.Stack(WorkspaceUi.Text(message));
-        var dialog = Create(owner, title, body);
-        var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 20, 0, 0) };
-        for (var i = 0; i < choices.Length; i++)
+        var dialog = Create(owner, title, WorkspaceUi.Text(message));
+        // ContentDialog owns the footer so keyboard actions and pointer actions share one result.
+        if (choices.Length <= 3)
         {
-            var index = i;
-            var button = WorkspaceUi.Button(choices[i], () => { answer = index; dialog.Hide(); return Task.CompletedTask; }, i == choices.Length - 1);
-            button.Margin = new Thickness(8, 0, 0, 0); row.Children.Add(button);
+            if (choices.Length > 0) { dialog.PrimaryButtonText = choices[^1]; dialog.PrimaryButtonClick += (_, _) => answer = choices.Length - 1; dialog.DefaultButton = FAContentDialogButton.Primary; }
+            if (choices.Length > 1) { dialog.CloseButtonText = choices[0]; dialog.CloseButtonClick += (_, _) => answer = 0; }
+            if (choices.Length == 3) { dialog.SecondaryButtonText = choices[1]; dialog.SecondaryButtonClick += (_, _) => answer = 1; }
         }
-        body.Children.Add(row); await dialog.ShowAsync(owner); return answer;
+        else throw new ArgumentOutOfRangeException(nameof(choices), "对话框最多支持三个操作。");
+        await dialog.ShowAsync(owner); return answer;
     }
     public static async Task<bool> ConfirmAsync(Window owner, string title, string message, string accept = "确认") =>
         await ChooseAsync(owner, title, message, "取消", accept) == 1;

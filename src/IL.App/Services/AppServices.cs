@@ -20,6 +20,7 @@ public sealed class AppServices : IAsyncDisposable
     public CourseProjectStore Projects {get;}
     public StudentViewModel Student {get;}
     public TranscriptionQueue Queue {get;}
+    public ProjectTranscriptionBinding Transcriptions {get;}
     public AppPrivateApiService Api {get;}
     public AppPrivateApiServer Server {get;}
     public AppTelemetry Telemetry {get;} = new();
@@ -30,18 +31,19 @@ public sealed class AppServices : IAsyncDisposable
         Standalone=standalone;Projects=new(Path.Combine(DataDirectory,"projects"));
         Student=new(()=>new LibVlcAudioPlayer(),LibraryDirectory,new LessonProgressStore(Path.Combine(DataDirectory,"lesson_progress.json")),SettingsStore,dispatch);
         Queue=new(RunAsrAsync,FindDuplicateAsync,new QueueStore(Path.Combine(DataDirectory,"transcription_queue.json")),new SrtRecognitionCache(Path.Combine(DataDirectory,"cache","asr-srt")),()=>Settings.AsrCacheProfile);
+        Transcriptions=new(Projects,Queue);
         Api=new(Projects,LibraryDirectory);Server=new(Api.DispatchAsync,Path.Combine(DataDirectory,"mcp","server.json"));
         Api.ExportStandalone=ExportStandaloneAsync;
         Api.StartAsr=async project=>
         {
             if(!Settings.CloudReady)throw new AsrException("请先在设置中完成云端 ASR 配置");
             if(project.TranscriptionJobId is {} old){Queue.Cancel(old);Queue.MarkSrtConsumed(old);}
-            var job=Queue.Enqueue(project.Title,project.AudioPath!,project.AudioDuration,project.Id);var updated=project with{TranscriptionJobId=job,Step=CourseProjectStep.Transcription};await Projects.SaveAsync(updated);return updated;
+            return await Transcriptions.EnqueueAsync(project);
         };
         Api.TranscriptReplacing=project=>{if(project.TranscriptionJobId is {} id){Queue.Cancel(id);Queue.MarkSrtConsumed(id);}};
         Queue.Completed+=(job,cacheHit)=>{_ = Telemetry.AsrCompletedAsync(job.CacheProfile,job.StartedAt,job.FinishedAt,cacheHit);};
     }
-    public async Task InitializeAsync(){Settings=await SettingsStore.LoadAsync();AppLog.DebugEnabled=Settings.DebugLogging;await Queue.RestoreAsync();await Student.RefreshAsync();}
+    public async Task InitializeAsync(){Settings=await SettingsStore.LoadAsync();AppLog.DebugEnabled=Settings.DebugLogging;await Queue.RestoreAsync();await Transcriptions.RestorePendingAsync();await Student.RefreshAsync();}
     public async Task ApplySettingsAsync(AppSettings settings)
     {
         Settings=settings;AppLog.DebugEnabled=settings.DebugLogging;
@@ -71,5 +73,5 @@ public sealed class AppServices : IAsyncDisposable
         try{await new ProjectDelivery().CreateIlpAsync(project,temp);return await new StandaloneLessonExporter(AppContext.BaseDirectory,Path.Combine(AppContext.BaseDirectory,"tools","lesson_player_launcher.exe")).ExportAsync(temp,output);}
         finally{if(File.Exists(temp))File.Delete(temp);}
     }
-    public async ValueTask DisposeAsync(){await Server.DisposeAsync();await Queue.DisposeAsync();await Student.DisposeAsync();await Telemetry.ShutdownAsync();}
+    public async ValueTask DisposeAsync(){await Server.DisposeAsync();await Queue.DisposeAsync();await Transcriptions.DisposeAsync();await Student.DisposeAsync();await Telemetry.ShutdownAsync();}
 }

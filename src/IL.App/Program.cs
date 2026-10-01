@@ -36,5 +36,6 @@ internal static class Program
         }
         catch (Exception error) { CrashMonitor.Fatal(error); return 1; }
     }
-    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().LogToTrace();
+    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<App>().UsePlatformDetect()
+        .With(new Avalonia.Media.FontManagerOptions { DefaultFamilyName = Views.Dialogs.WorkspaceUi.BodyFont.ToString() }).LogToTrace();
 }

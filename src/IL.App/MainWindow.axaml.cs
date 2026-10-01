@@ -34,7 +34,7 @@ public partial class MainWindow : Window
         var standalone=Program.Arguments.Contains("--standalone");
         _services=new(action=>Dispatcher.UIThread.Post(action),standalone);
         _student=new(_services.Student);
-        _teacher=new(_services.Projects,_services.Queue,()=>_services.Settings,_services.LibraryDirectory,()=>Dispatcher.UIThread.Post(async()=>await _services.Student.RefreshAsync()),()=>ShowSettings());
+        _teacher=new(_services.Projects,_services.Queue,()=>_services.Settings,_services.LibraryDirectory,()=>Dispatcher.UIThread.Post(async()=>await _services.Student.RefreshAsync()),()=>ShowSettings(),_services.Transcriptions);
         _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);});
         _queue=new(_services.Queue,async job=>{_taskDialog?.Hide();await _teacher.LoadJobTranscriptAsync(job);Navigate(1);},async match=>{if(match.LessonId is {} id){_taskDialog?.Hide();Navigate(0);_services.Student.SelectedLesson=_services.Student.Lessons.FirstOrDefault(l=>l.Id==id);await _services.Student.CurrentLoad;}},()=>PickAudioForQueueAsync());
         _services.ConfirmForcedCuts=()=>OnUiAsync(()=>AppDialogs.ConfirmForcedCutsAsync(this));

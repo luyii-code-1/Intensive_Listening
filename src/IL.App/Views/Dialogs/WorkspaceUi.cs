@@ -9,7 +9,7 @@ namespace IL.App.Views.Dialogs;
 
 internal static class WorkspaceUi
 {
-    public static readonly FontFamily BodyFont = new("avares://IL.App/Assets/Fonts#Source Han Sans CN");
+    public static readonly FontFamily BodyFont = new("avares://IL.App/Assets/Fonts#HarmonyOS Sans SC");
     private static readonly FontFamily IconFont = new("avares://IL.App/Assets/Fonts#Fabric MDL2 Assets");
     public static readonly IBrush Accent = new SolidColorBrush(Color.Parse("#B80018"));
     public static TextBlock Icon(string name, double size = 16) => new()

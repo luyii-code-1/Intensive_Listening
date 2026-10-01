@@ -18,11 +18,12 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     public IReadOnlyList<TranscriptionJob> PendingDecisions=>Jobs.Where(j=>j.Status==TranscriptionJobStatus.AwaitingDecision).ToArray();
     public TranscriptionJob? LatestUnconsumedSrt=>Jobs.FirstOrDefault(j=>j.Status==TranscriptionJobStatus.Completed&&!j.SrtConsumed&&!string.IsNullOrEmpty(j.Srt));
     public TranscriptionJob? JobById(string id){lock(sync)return jobs.FirstOrDefault(j=>j.Id==id);}
-    public string Enqueue(string title,string audioPath,TimeSpan? audioDuration=null,string? projectId=null)
+    public string Enqueue(string title,string audioPath,TimeSpan? audioDuration=null,string? projectId=null,string? jobId=null)
     {
         string id;lock(sync)
         {
-            ObjectDisposedException.ThrowIf(disposed,this);id=$"{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{++sequence}";
+            ObjectDisposedException.ThrowIf(disposed,this);id=jobId??$"{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{++sequence}";
+            if(jobs.Any(j=>j.Id==id))throw new InvalidOperationException("任务 ID 已存在。");
             jobs.Insert(0,new(id,title,audioPath,TranscriptionJobStatus.Queued,TranscriptionStage.Queued,"等待前面的任务完成。",DateTimeOffset.Now,projectId,CacheProfile:resolveCacheProfile(),AudioDuration:audioDuration));PersistLocked();
         }
         Notify();Pump();return id;

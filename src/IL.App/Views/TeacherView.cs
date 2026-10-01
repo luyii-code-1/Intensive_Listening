@@ -27,6 +27,7 @@ public sealed class TeacherView : UserControl
     public Action? ProjectOpened { get; set; }
     private readonly CourseProjectStore _store;
     private readonly TranscriptionQueue _queue;
+    private readonly ProjectTranscriptionBinding _transcriptions;
     private readonly Func<AppSettings> _settings;
     private readonly string _libraryDirectory;
     private readonly Action _libraryChanged;
@@ -64,11 +65,17 @@ public sealed class TeacherView : UserControl
     private string? _renderedProjectId;
     private Window? _owner;
 
-    public TeacherView(CourseProjectStore store, TranscriptionQueue queue, Func<AppSettings> settings, string libraryDirectory, Action? libraryChanged = null, Action? openSettings = null)
+    public TeacherView(CourseProjectStore store, TranscriptionQueue queue, Func<AppSettings> settings, string libraryDirectory, Action? libraryChanged = null, Action? openSettings = null, ProjectTranscriptionBinding? transcriptions = null)
     {
-        _store = store; _queue = queue; _settings = settings; _libraryDirectory = libraryDirectory;
+        _store = store; _queue = queue; _transcriptions = transcriptions ?? new(store, queue); _settings = settings; _libraryDirectory = libraryDirectory;
         _libraryChanged = libraryChanged ?? (() => { }); _openSettings = openSettings ?? (() => { }); _vm = new(store);
         Build();
+        _transcriptions.TranscriptBound += project => Dispatcher.UIThread.Post(async () => await RunAsync(async () =>
+        {
+            if (_vm.Project?.Id == project.Id) { await SaveDraftAsync(); await _vm.OpenAsync(project.Id); RenderProject(); }
+            else { await _vm.ReloadAsync(); RefreshProjects(); }
+            WorkspaceToast.Show(this, "转写完成", $"“{project.Title}”的字幕已保存，可以进入审阅。", false);
+        }));
         _title.TextChanged += (_, _) => ScheduleSave(); _transcript.TextChanged += (_, _) => ScheduleSave();
         _autosave.Tick += async (_, _) => { _autosave.Stop(); await RunAsync(SaveDraftAsync); };
         _projectList.SelectionChanged += async (_, _) => { if (!_loading && _projectList.SelectedItem is ListBoxItem { Tag: string id }) await OpenProjectAsync(id); };
@@ -79,12 +86,12 @@ public sealed class TeacherView : UserControl
     public Task RefreshAsync() => RunAsync(RefreshProjectsFromStoreAsync);
     private async Task RefreshProjectsFromStoreAsync()
     {
-        await _vm.ReloadAsync(); RefreshProjects();
+        await _transcriptions.RestorePendingAsync(); await _vm.ReloadAsync(); RefreshProjects();
     }
     public Task ReturnToProjectsAsync() => RunAsync(CloseProjectAsync);
     public async Task OpenProjectAsync(string id) => await RunAsync(async () =>
     {
-        await SaveDraftAsync(); await _vm.OpenAsync(id); RenderProject();
+        await SaveDraftAsync(); await _transcriptions.RestorePendingAsync(); await _vm.OpenAsync(id); RenderProject();
     });
     public async Task PrepareAgentSessionAsync()
     {
@@ -115,11 +122,9 @@ public sealed class TeacherView : UserControl
     });
     public async Task LoadJobTranscriptAsync(TranscriptionJob job) => await RunAsync(async () =>
     {
-        if (job.ProjectId == null || string.IsNullOrWhiteSpace(job.Srt)) return;
-        var project = await _store.LoadByIdAsync(job.ProjectId); if (project == null) return;
-        if (job.SrtConsumed || project.TranscriptionJobId != job.Id) { await _vm.OpenAsync(project.Id); RenderProject(); return; }
-        await _vm.SaveAsync(project with { Transcript = job.Srt, TranscriptionJobId = null, Step = CourseProjectStep.Review, ReviewPhase = ReviewPhase.Grouping, AutomaticQuestionPlanApplied = false, AutoQuestionPlanDeferred = false });
-        _queue.MarkSrtConsumed(job.Id); await _vm.OpenAsync(project.Id); RenderProject(); WorkspaceToast.Show(this, "转写字幕已载入，请审阅题目与挖空。");
+        if (job.ProjectId == null) return;
+        await SaveDraftAsync(); await _transcriptions.BindAsync(job);
+        await _vm.OpenAsync(job.ProjectId); RenderProject();
     });
     private void Build()
     {
@@ -612,8 +617,10 @@ public sealed class TeacherView : UserControl
     {
         await SaveDraftAsync(); if (_vm.Project?.AudioPath == null) throw new InvalidOperationException("请先绑定音频。");
         if (!_settings().CloudReady) { _openSettings(); return; }
-        var id = _queue.Enqueue(_vm.Project.Title, _vm.Project.AudioPath, _vm.Project.AudioDuration, _vm.Project.Id);
-        await _vm.SaveAsync(_vm.Project with { TranscriptionJobId = id, Step = CourseProjectStep.Transcription, AutoQuestionPlanDeferred = false }); RenderProject(); WorkspaceToast.Show(this, "已加入转写队列\n可以继续使用应用，并从任务中心查看进度。");
+        var project = await _transcriptions.EnqueueAsync(_vm.Project);
+        await _transcriptions.FlushAsync(); await _vm.OpenAsync(project.Id); RenderProject();
+        if (_queue.JobById(project.TranscriptionJobId!)?.IsActive == true)
+            WorkspaceToast.Show(this, "已加入转写队列\n可以继续使用应用，并从任务中心查看进度。");
     }
     private async Task ImportArchiveAsync()
     {

@@ -10,6 +10,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
 using IL.App.Views.Dialogs;
+using IL.App.Services;
 using IL.Core.Infrastructure;
 using IL.Core.Settings;
 
@@ -177,11 +178,12 @@ public sealed class SettingsView : UserControl
     private async Task CopyAsync(string text) { var clipboard = TopLevel.GetTopLevel(this)?.Clipboard ?? throw new InvalidOperationException("剪贴板不可用。"); await clipboard.SetTextAsync(text); }
     private async Task ClearLogsAsync() { if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "清理日志？", "将删除日志目录中的现有日志文件。", "清理日志")) return; var bytes = await AppLog.ClearAsync(); WorkspaceToast.Show(this, $"日志已清理，已释放 {bytes / 1024d:0.0} KB。"); }
     private async Task ClearCacheAsync() { var bytes = await AppDirectories.ClearCacheAsync(); WorkspaceToast.Show(this, $"缓存已清理，已释放 {bytes / (1024d * 1024):0.0} MB。"); }
-    private async Task ShowLegalAsync(string filename, string title) => await AppDialogs.DocumentAsync(WorkspaceUi.Owner(this), title, await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "assets", "legal", filename)));
+    private async Task ShowLegalAsync(string filename, string title) => await AppDialogs.DocumentAsync(WorkspaceUi.Owner(this), title, (await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "assets", "legal", filename))).TrimEnd('\0'));
     private async Task AboutAsync()
     {
-        var choice = await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "关于 Intensive Listening", "版本 2.0.0-dev\n数据格式 1\nBy Luyii", "关闭", "用户协议");
-        if (choice == 1) await ShowLegalAsync("eula_zh_cn.txt", "用户协议");
+        var choice = await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "关于 Intensive Listening", AppBuildInfo.Display + "\n数据格式 1\nBy Luyii\n界面字体：HarmonyOS Sans SC\nCopyright 2021 Huawei Device Co., Ltd.", "关闭", "字体许可", "用户协议");
+        if (choice == 1) await ShowLegalAsync("HarmonyOS-Sans-LICENSE.txt", "HarmonyOS Sans 字体许可");
+        if (choice == 2) await ShowLegalAsync("eula_zh_cn.txt", "用户协议");
     }
     private async Task WithdrawAsync()
     {

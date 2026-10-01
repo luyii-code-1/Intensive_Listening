@@ -1,7 +1,8 @@
 <Application xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:fa="clr-namespace:FluentAvalonia.Styling;assembly=FluentAvalonia" x:Class="IL.App.App" RequestedThemeVariant="Default">
   <Application.Resources>
     <ResourceDictionary>
-      <FontFamily x:Key="WorkspaceFont">avares://IL.App/Assets/Fonts#Source Han Sans CN</FontFamily>
+      <FontFamily x:Key="WorkspaceFont">avares://IL.App/Assets/Fonts#HarmonyOS Sans SC</FontFamily>
+      <FontFamily x:Key="ContentControlThemeFontFamily">avares://IL.App/Assets/Fonts#HarmonyOS Sans SC</FontFamily>
       <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Light">
           <SolidColorBrush x:Key="WorkspaceBackgroundBrush">#FAF9F8</SolidColorBrush>
@@ -19,8 +20,9 @@
     </ResourceDictionary>
   </Application.Resources>
   <Application.Styles>
-    <fa:FluentAvaloniaTheme CustomAccentColor="#B90D1C" />
+    <fa:FluentAvaloniaTheme CustomAccentColor="#B90D1C" UseSystemFontOnWindows="False" />
     <Style Selector="Window"><Setter Property="FontFamily" Value="{StaticResource WorkspaceFont}" /><Setter Property="FontSize" Value="14" /><Setter Property="Background" Value="{DynamicResource WorkspaceBackgroundBrush}" /><Setter Property="Foreground" Value="{DynamicResource WorkspaceTextBrush}" /></Style>
+    <Style Selector="TextBlock"><Setter Property="FontFamily" Value="{StaticResource WorkspaceFont}" /></Style>
     <Style Selector="Button"><Setter Property="MinHeight" Value="32" /><Setter Property="Padding" Value="12,5" /><Setter Property="CornerRadius" Value="4" /></Style>
     <Style Selector="TextBox"><Setter Property="MinHeight" Value="32" /></Style>
     <Style Selector="Button.subtle"><Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" /></Style>

@@ -20,10 +20,10 @@ dotnet run --project tools/IL.UiSnapshots/IL.UiSnapshots.csproj -- \
 
 The screenshots cover the student home and loaded lesson; teacher empty,
 audio, transcription, grouping, question overview, cloze and completed states;
-settings; empty and loaded task dialogs; file information; success and error notifications; and all six first-run pages.
+settings; new-project actions; empty and loaded task dialogs; file information; success and error notifications; and all six first-run pages.
 
 The harness runs the dispatcher event loop and checks that dialog smoke layers
-cover the entire owner, content fits the inner surface, and notifications survive
+cover the entire owner, content fits the inner surface, new-project actions are below the message in the native footer, and notifications survive
 page changes while expiring after 5 seconds (success) and 15 seconds (error). The outer shell
 mirrors `MainWindow.axaml` and uses the production navigation-content method.
 The actual first-run control is accessed through reflection for each render.
@@ -34,10 +34,12 @@ The production `MainWindow` and `AppServices` are not instantiated. The
 headless platform creates in-memory windows and does not control a desktop
 application or browser.
 
-Font diagnostics require the embedded Source Han Sans CN regular, medium and
+Font diagnostics require the embedded HarmonyOS Sans SC regular, medium and
 bold faces, plus the original Fabric MDL2 Assets icon face, to resolve under
 their declared family names and supply representative Chinese, Latin and icon
 glyphs. Font resolution failures stop the run after writing `fonts.json`.
+Dialog title, message and action text are checked against the embedded text family.
+The motion mode also checks the welcome logo's spring entrance and the version / Git short commit shown on the first OOBE page.
 
 These images establish offscreen rendering and resource integration. They are
 review artifacts for comparison with `artifacts/ui-reference/dart`, rather

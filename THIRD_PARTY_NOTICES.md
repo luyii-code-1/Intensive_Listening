@@ -21,7 +21,7 @@ Flutter、Dart 以及 `pubspec.lock` 中列出的各个三方包保留其原有�
 
 C# 2.0 界面内嵌原 Dart 应用所用的 `fluent_ui` 4.16.1 `FluentIcons.ttf`，
 并保留同包的 BSD-3-Clause 声明于 `assets/legal/fluent_ui_license.txt`。
-思源黑体及图标字体用于维持原版页面的文字和图标尺寸。
+图标字体用于保持原版图标。C# 2.0 的界面文字使用 HarmonyOS Sans SC。
 
 ## 阿里云 ARMS RUM PC SDK
 
@@ -44,3 +44,11 @@ Avalonia 12.1.3、FluentAvalonia 3.0.1、CommunityToolkit.Mvvm 8.4.0 与 SharpZi
 1.4.2 使用 MIT 许可证；LibVLCSharp 3.10.1 与 LibVLC Windows 3.0.24 使用
 LGPL-2.1-or-later。版本、来源见 `assets/legal/csharp-third-party.txt`，
 LGPL 文本见 `assets/legal/LGPL-2.1.txt`。Windows 包保留各组件的动态库与来源声明。
+
+## HarmonyOS Sans
+
+C# 2.0 内嵌华为原始 HarmonyOS Sans SC Regular、Medium、Bold 字体，未修改字体文件。
+Copyright 2021 Huawei Device Co., Ltd.
+完整许可保留于 `assets/legal/HarmonyOS-Sans-LICENSE.txt`。
+官方来源：https://developer.huawei.com/images/download/general/HarmonyOS-Sans.zip
+字体包 SHA256：`fb02c86e358cd9aad8d4dfa957ee502381e7ee2e94499a9133add4324b6ce69a`。

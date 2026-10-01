@@ -51,7 +51,7 @@ public static class RuntimeVerification
         }
         catch(Exception ex){error=ex;}
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
-        await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{success=error is null,platform=System.Runtime.InteropServices.RuntimeInformation.OSDescription,architecture=System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),runtime=Environment.Version.ToString(),engine,stage,checks,error=error?.ToString(),dataDirectory=root},new JsonSerializerOptions{WriteIndented=true}));
+        await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{success=error is null,version=AppBuildInfo.Version,build=AppBuildInfo.Commit,platform=System.Runtime.InteropServices.RuntimeInformation.OSDescription,architecture=System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),runtime=Environment.Version.ToString(),engine,stage,checks,error=error?.ToString(),dataDirectory=root},new JsonSerializerOptions{WriteIndented=true}));
         return error is null?0:1;
     }
 }

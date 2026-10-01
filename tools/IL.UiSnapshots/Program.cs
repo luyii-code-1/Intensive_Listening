@@ -51,7 +51,8 @@ internal static partial class Program
             _width = options.Width; _height = options.Height; _dark = options.Dark;
             Directory.CreateDirectory(_output); Directory.CreateDirectory(isolated);
             AppLog.DirectoryOverride = Path.Combine(isolated, "logs");
-            AppBuilder.Configure<IL.App.App>().UseSkia().UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false }).SetupWithoutStarting();
+            AppBuilder.Configure<IL.App.App>().UseSkia().With(new FontManagerOptions { DefaultFamilyName = "avares://IL.App/Assets/Fonts#HarmonyOS Sans SC" })
+                .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false }).SetupWithoutStarting();
             AvaloniaSynchronizationContext.InstallIfNeeded();
             var renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
             renderTimer.Tick += (_, _) => AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
@@ -112,6 +113,7 @@ internal static partial class Program
         var queueView = new QueueView(queue, _ => Task.CompletedTask, pickAudio: () => Task.CompletedTask);
         var shell = CreateShell(student, 0); teacher.ProjectOpened = () => CollapsePane(shell, 1); shell.Show();
         await CaptureAsync(shell, "student-home");
+        await CheckChoiceFooterAsync(shell);
         var host = Find<ContentControl>(shell, "SnapshotPageHost");
         SetDestination(shell, host, teacher, 1); await teacher.RefreshAsync(); await CaptureAsync(shell, "teacher-empty");
         SetDestination(shell, host, settingsView, 2); await settingsView.ReloadAsync(); await CaptureAsync(shell, "settings");
@@ -161,6 +163,22 @@ internal static partial class Program
         var surface = dialog.GetVisualDescendants().OfType<Border>().Single(control => control.Name == "BackgroundElement");
         if (Math.Abs(smoke.Bounds.Width - owner.ClientSize.Width) > 1 || Math.Abs(smoke.Bounds.Height - owner.ClientSize.Height) > 1) throw new InvalidOperationException("The dialog smoke layer does not cover its owner.");
         if (dialog.Content is Control content && content.Bounds.Width > surface.Bounds.Width - 46) throw new InvalidOperationException("The dialog content exceeds its surface width.");
+    }
+    private static async Task CheckChoiceFooterAsync(Window owner)
+    {
+        var choice = AppDialogs.ChooseAsync(owner, "新建项目", "可以先创建空白项目，也可以选择音频并直接进入转写步骤。", "空白项目", "选择音频");
+        await CaptureAsync(owner, "new-project-dialog");
+        var dialog = owner.GetVisualDescendants().OfType<FAContentDialog>().Single(); CheckDialog(owner, dialog);
+        var body = (TextBlock)dialog.Content!;
+        var bodyTop = body.TranslatePoint(new Point(), dialog)!.Value.Y;
+        var buttons = dialog.GetVisualDescendants().OfType<Button>().Where(b => b.Content is string s && s is "空白项目" or "选择音频").ToArray();
+        if (buttons.Length != 2 || buttons.Any(b => b.TranslatePoint(new Point(), dialog)!.Value.Y < bodyTop + body.Bounds.Height))
+            throw new InvalidOperationException("New project actions must be in the dialog footer, below its body.");
+        var text = dialog.GetVisualDescendants().OfType<TextBlock>().Where(t => t.Text is "新建项目" or "空白项目" or "选择音频" || ReferenceEquals(t, body)).ToArray();
+        if (text.Any(t => !t.FontFamily.ToString().Contains("HarmonyOS Sans SC")))
+            throw new InvalidOperationException("Dialog title, message and actions must inherit HarmonyOS Sans SC: " + string.Join("; ", text.Select(t => t.Text + ": " + t.FontFamily)));
+        buttons.Single(b => b.Content as string == "选择音频").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        if (await choice != 1) throw new InvalidOperationException("Native footer action returned the wrong result.");
     }
     private static async Task CheckNotificationsAsync(Window owner, ContentControl host, TeacherView teacher, StudentView student)
     {
@@ -226,7 +244,7 @@ internal static partial class Program
     private static FontReport DiagnoseFonts()
     {
         var assets = AssetLoader.GetAssets(new Uri("avares://IL.App/Assets/Fonts/"), null).Select(u => u.ToString()).Order().ToArray(); var fonts = new List<FontResult>();
-        foreach (var (family, weight, samples) in new[] { ("Source Han Sans CN", FontWeight.Normal, new[] { 0x8BFE, 0x7CBE, 0x41 }), ("Source Han Sans CN", FontWeight.Medium, new[] { 0x8BFE, 0x41 }), ("Source Han Sans CN", FontWeight.Bold, new[] { 0x8BFE, 0x41 }), ("Fabric MDL2 Assets", FontWeight.Normal, new[] { 0xE768, 0xE713, 0xED25, 0xE74D }) })
+        foreach (var (family, weight, samples) in new[] { ("HarmonyOS Sans SC", FontWeight.Normal, new[] { 0x8BFE, 0x7CBE, 0x41 }), ("HarmonyOS Sans SC", FontWeight.Medium, new[] { 0x8BFE, 0x41 }), ("HarmonyOS Sans SC", FontWeight.Bold, new[] { 0x8BFE, 0x41 }), ("Fabric MDL2 Assets", FontWeight.Normal, new[] { 0xE768, 0xE713, 0xED25, 0xE74D }) })
         {
             var typeface = new Typeface(new FontFamily("avares://IL.App/Assets/Fonts#" + family), FontStyle.Normal, weight);
             var resolved = FontManager.Current.TryGetGlyphTypeface(typeface, out var glyphs);

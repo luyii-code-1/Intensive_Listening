@@ -80,4 +80,6 @@ TestResults/
 !tests/fixtures/*.zip
 !scripts/validate-csharp-windows.ps1
 !scripts/package-csharp-windows.ps1
+!scripts/publish-csharp-macos.sh
+!scripts/bundle-csharp-macos.py
 !.github/workflows/csharp-windows-build.yml

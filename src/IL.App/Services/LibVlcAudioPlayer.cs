@@ -7,6 +7,8 @@ public sealed class LibVlcAudioPlayer : IAudioPlayer
 {
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int ParseWithOptions(nint media,MediaParseOptions options,int timeout);
+    [DllImport("libSystem.B.dylib", EntryPoint="setenv")]
+    private static extern int SetNativeEnvironment([MarshalAs(UnmanagedType.LPUTF8Str)] string name,[MarshalAs(UnmanagedType.LPUTF8Str)] string value,int overwrite);
     private readonly nint _nativeLibrary;
     private readonly ParseWithOptions? _parseNative;
     private readonly Action<string>? _trace;
@@ -27,11 +29,18 @@ public sealed class LibVlcAudioPlayer : IAudioPlayer
         _trace=trace;
         var native = Environment.GetEnvironmentVariable("ILP_LIBVLC_PATH");
         if (string.IsNullOrWhiteSpace(native) && OperatingSystem.IsWindows()) native = Path.Combine(AppContext.BaseDirectory, "libvlc", "win-x64");
+        if (string.IsNullOrWhiteSpace(native) && OperatingSystem.IsMacOS()) native = Path.Combine(AppContext.BaseDirectory, "libvlc", "lib");
+        if (OperatingSystem.IsMacOS() && native is not null)
+        {
+            var plugins=Path.GetFullPath(Path.Combine(native, "..", "plugins"));
+            // .NET's environment updates do not update getenv() for native libraries on macOS.
+            if(SetNativeEnvironment("VLC_PLUGIN_PATH",plugins,1)!=0)throw new IOException("无法设置播放引擎插件目录");
+        }
         if (native is not null) LibVLCSharp.Shared.Core.Initialize(native);
         else LibVLCSharp.Shared.Core.Initialize();
-        if(OperatingSystem.IsWindows())
+        if(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
         {
-            _nativeLibrary=NativeLibrary.Load(Path.Combine(native!,"libvlc.dll"));
+            _nativeLibrary=NativeLibrary.Load(Path.Combine(native!,OperatingSystem.IsWindows()?"libvlc.dll":"libvlc.dylib"));
             _parseNative=Marshal.GetDelegateForFunctionPointer<ParseWithOptions>(NativeLibrary.GetExport(_nativeLibrary,"libvlc_media_parse_with_options"));
         }
         _lib = new LibVLC("--no-video", "--no-media-library", "--audio-time-stretch");
@@ -156,7 +165,7 @@ public sealed class LibVlcAudioPlayer : IAudioPlayer
         ct.ThrowIfCancellationRequested(); EnsureMedia();
         var target = TimeSpan.FromMilliseconds(Math.Clamp(position.TotalMilliseconds, 0, Duration.TotalMilliseconds));
         lock (_state) { _pendingSeek = target; _position = target; _ended = false; }
-        if (_player.IsSeekable)
+        if ((!OperatingSystem.IsMacOS() || _player.IsPlaying) && _player.IsSeekable)
         {
             _player.SeekTo(target);
             lock (_state) _pendingSeek = null;
@@ -197,7 +206,7 @@ public sealed class LibVlcAudioPlayer : IAudioPlayer
             if (pending is not null)
             {
                 sampled = pending.Value;
-                if (_player.IsSeekable)
+                if ((!OperatingSystem.IsMacOS() || nativePlaying) && _player.IsSeekable)
                 {
                     _player.SeekTo(sampled);
                     lock (_state) { if (_pendingSeek == pending) _pendingSeek = null; }
@@ -208,6 +217,7 @@ public sealed class LibVlcAudioPlayer : IAudioPlayer
                 _player.SeekTo(start.Value); sampled = start.Value;
             }
             bool changed;
+            _trace?.Invoke($"poll: native={_player.Time} sampled={sampled.TotalMilliseconds} playing={nativePlaying} pending={pending?.TotalMilliseconds} ended={_ended} loop={start?.TotalMilliseconds}-{end?.TotalMilliseconds}");
             lock (_state)
             {
                 if (_ended) sampled = _duration;

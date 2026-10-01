@@ -30,16 +30,19 @@ public static class RuntimeVerification
             stage="ILP";File.WriteAllText(output+".stage",stage);var srt=Path.Combine(root,"transcript.srt");await File.WriteAllTextAsync(srt,"1\n00:00:00,000 --> 00:00:04,000\nRuntime check.\n\n2\n00:00:04,000 --> 00:00:08,000\nAudio playback.\n");
             var package=Path.Combine(root,"lesson.ilp");await new IlpCreator().CreateAsync("Runtime verification",audio,srt,package,Guid.NewGuid().ToString(),1);var lesson=await new IlpImporter(Path.Combine(root,"library")).ImportFileAsync(package);Check(lesson.Cues.Count==2,"ILP create import checksums");
             stage="project delivery";File.WriteAllText(output+".stage",stage);var projects=new CourseProjectStore(Path.Combine(root,"projects"));var project=await projects.CreateAsync(audio);project=project with{Transcript=await File.ReadAllTextAsync(srt),AudioDuration=TimeSpan.FromSeconds(8)};await projects.SaveAsync(project);var zip=await projects.ExportZipToFileAsync(project,Path.Combine(root,"project.zip"));var restored=await projects.ImportZipAsync(zip);Check(restored.HasAudio&&restored.HasTranscript,"project ZIP transfer");
+            if(OperatingSystem.IsWindows())
+            {
             stage="telemetry native library";File.WriteAllText(output+".stage",stage);
             var telemetry=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(AppContext.BaseDirectory,"alibabacloud_rum.dll"));
             try{foreach(var name in new[]{"options_new","options_free","init","close","custom_event_new","custom_event_add_extra","custom_event_report","custom_log_new","custom_log_set_log","custom_log_report"})Check(System.Runtime.InteropServices.NativeLibrary.TryGetExport(telemetry,"alibabacloud_rum_"+name,out _),"ARMS export: "+name);}
             finally{System.Runtime.InteropServices.NativeLibrary.Free(telemetry);}
+            }
             if(Program.Arguments.Contains("--standalone"))
             {
                 stage="embedded lesson";File.WriteAllText(output+".stage",stage);var index=Array.IndexOf(Program.Arguments,"--standalone");
                 var embedded=await new IlpImporter(Path.Combine(root,"embedded-library")).ImportFileAsync(Program.Arguments[index+1]);Check(embedded.Cues.Count>0,"embedded standalone lesson imported");
             }
-            if(!Program.Arguments.Contains("--standalone"))
+            if(OperatingSystem.IsWindows() && !Program.Arguments.Contains("--standalone"))
             {
                 stage="standalone export";File.WriteAllText(output+".stage",stage);var exe=await new StandaloneLessonExporter(AppContext.BaseDirectory,Path.Combine(AppContext.BaseDirectory,"tools","lesson_player_launcher.exe")).ExportAsync(package,Path.Combine(root,"lesson.exe"));
                 Check(new FileInfo(exe).Length>new FileInfo(package).Length,"standalone executable packaged");

@@ -3,9 +3,9 @@
   <h1>Intensive Listening</h1>
   <p>面向英语听力教学的材料制作与逐句训练工具</p>
   <p>
-    <img src="https://img.shields.io/badge/Release-v1.0.1%20Prelude-B71C1C" alt="v1.0.1 Prelude" />
+    <img src="https://img.shields.io/badge/Release-v2.0.0%20Pre--Release-B71C1C" alt="v2.0.0 Pre-Release" />
     <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4?logo=windows" alt="Windows 10/11" />
-    <img src="https://img.shields.io/badge/Framework-Flutter-02569B?logo=flutter" alt="Flutter" />
+    <img src="https://img.shields.io/badge/Framework-Avalonia-8B44AC" alt="Avalonia" />
     <img src="https://img.shields.io/badge/Status-Early%20Development-E7A33E" alt="Early Development" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-blue" alt="GPL-3.0-only" /></a>
   </p>
@@ -127,55 +127,53 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 ### 开发环境
 
 - Windows 10 或 Windows 11 x64
-- Flutter stable，并启用 Windows Desktop
-- Visual Studio 2022，安装“使用 C++ 的桌面开发”工作负载
-- FFmpeg 9.0.1 essentials x64
+- .NET 10 SDK，版本以 `global.json` 为准
+- Inno Setup 6，用于生成 Windows 安装包
 
-### 获取源码
+### 获取源码与运行
 
 ```powershell
 git clone https://github.com/luyii-code-1/Intensive_Listening.git
 cd Intensive_Listening
-git switch dev
-flutter pub get
+git switch 2.0-dev
+dotnet run --project src/IL.App
 ```
 
-从 [GyanD/codexffmpeg 9.0.1](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.1) 获取 Windows x64 essentials 构建，将 `ffmpeg.exe` 放入：
-
-```text
-windows/third_party/ffmpeg/ffmpeg.exe
-```
-
-依赖版本与校验值记录在 [windows/third_party/ffmpeg/README.md](windows/third_party/ffmpeg/README.md)。
-
-### 运行与构建
+### 测试与打包
 
 ```powershell
-flutter run -d windows
+dotnet test IL2.slnx -c Release
+```
+
+使用 Bash 运行标准 Windows 自包含构建，再在 Windows 上编译安装包：
+
+```bash
+bash scripts/publish-csharp-windows.sh
 ```
 
 ```powershell
-flutter analyze
-flutter test
-flutter build windows --release
+Expand-Archive artifacts/IL2-win-x64.zip artifacts/runtime
+./scripts/package-csharp-windows.ps1 -RuntimeDirectory (Resolve-Path artifacts/runtime).Path -OutputDirectory "$PWD/artifacts/installer" -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 ```
+
+运行包包含 VLC、FFmpeg、ARMS SDK 与独立播放器启动器；构建脚本校验依赖摘要。兼容性与验证说明见 [CSHARP_MIGRATION.md](CSHARP_MIGRATION.md)。
 
 ### 自动构建
 
-`dev` 用于日常开发，`main` 用于发布并保留为 GitHub 默认分支。日常改动提交到 `dev`，PR 的目标分支选择 `dev`。发布时，手动运行 **Publish dev snapshot to main** 工作流；它以触发时远端 `dev` 的完整文件树创建一个以旧 `main` 为父提交的发布提交。工作流验证两个分支的文件树一致；如远端 `main` 在发布期间改变，推送会失败。
+`2.0-dev` 用于日常开发，`main` 用于发布并保留为 GitHub 默认分支。PR 的目标分支选择 `2.0-dev`。发布时，手动运行 **Publish 2.0-dev snapshot to main** 工作流；它以触发时远端 `2.0-dev` 的完整文件树创建一个以旧 `main` 为父提交的发布提交。工作流验证两个分支的文件树一致；如远端 `main` 在发布期间改变，推送会失败。
 
-该工作流需要 `GITHUB_TOKEN` 对 `main` 有直接推送权限。若 `main` 的 Branch Protection 或 Ruleset 要求 PR、状态检查或其他限制而拒绝该推送，应在 GitHub Settings 中为发布所用的 GitHub App 配置适用的 bypass，或调整阻止直接推送的规则。工作流不会更改保护设置。
+该工作流需要 `GITHUB_TOKEN` 对 `main` 有直接推送权限，仓库分支保护仍然适用。
 
-首次使用前，需先将该工作流文件提交到默认分支 `main`；GitHub 仅为默认分支上已有的 `workflow_dispatch` 工作流提供手动运行入口。
+**C# Windows build** 在 `2.0-dev`、`main` 的提交、对应 PR 以及 `v2.*` Release 发布时运行。流程包含标准测试、Windows 自包含构建、Windows 原生运行与独立播放器检查，以及 Inno Setup 安装包生成。安装包与校验文件可在 Artifacts 下载；`v2.*` Release 会自动附加安装包和 `SHA256SUMS.txt`。
 
-GitHub Actions 在 `dev` 或 `main` 分支提交、面向 `dev` 的 PR，以及 Release 发布时构建 Windows 安装包。每次成功构建的安装包可在对应工作流的 Artifacts 中下载。正式版 Release 发布时，工作流依次完成构建、附加 Release 资产，并将安装包传到 `il.luyii.cn`，供网站下载。分发使用仓库 Secrets `IL_DEPLOY_SSH_KEY`、`IL_DEPLOY_HOST` 和 `IL_DEPLOY_KNOWN_HOSTS`；部署地址和主机验证信息由 Secrets 提供，并在 CI 日志中遮蔽。
+`dev` 保留 1.x 的 Flutter 构建流程。1.x 正式版 Release 的服务器分发使用仓库 Secrets `IL_DEPLOY_SSH_KEY`、`IL_DEPLOY_HOST` 和 `IL_DEPLOY_KNOWN_HOSTS`。
 
 ## 技术组成
 
 | 领域 | 实现 |
 | --- | --- |
-| 桌面界面 | Flutter、fluent_ui |
-| 音频播放 | media_kit、Windows 原生播放器集成 |
+| 桌面界面 | C#、.NET 10、Avalonia、FluentAvalonia、CommunityToolkit.Mvvm |
+| 音频播放 | LibVLCSharp、VLC |
 | 音频处理 | FFmpeg、VAD 语音活动切分、可配置 ASR 转写 |
 | 项目与课程 | 本地工程文件、ZIP 容器、`.ilp` 精听课程包（支持系统文件关联） |
 | 智能体接口 | 标准 HTTP MCP Server、HTTP Tool Call、内置 `MCP.md` / `SKILL.md` 引导协议 |

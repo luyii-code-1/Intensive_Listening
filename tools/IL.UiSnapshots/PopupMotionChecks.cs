@@ -33,6 +33,15 @@ internal static partial class Program
         SaveMotionFrame(owner, "pointer-popup-mid"); await Task.Delay(600);
         flyout.Hide();
         await CheckExitAsync(owner, () => flyout.IsOpen);
+        var playButton = (Button)((StackPanel)flyout.Content!).Children[0]; playButton.Click += (_, _) => flyout.Hide();
+        flyout.ShowAt(row, true); await Task.Delay(550);
+        var playRoot = TopLevel.GetTopLevel(owner.OpenedPopups.Single().Child!)!;
+        var playHit = playButton.TranslatePoint(new Point(12, 12), playRoot)!.Value;
+        playRoot.MouseMove(playHit); playRoot.MouseDown(playHit, Avalonia.Input.MouseButton.Left); await Task.Delay(60); playRoot.MouseUp(playHit, Avalonia.Input.MouseButton.Left);
+        await CheckExitAsync(owner, () => flyout.IsOpen);
+        flyout.ShowAt(row, true); await Task.Delay(550);
+        if (playButton.Opacity != 1) throw new InvalidOperationException("Reopened cue action retained its pressed state.");
+        flyout.Hide(); await Task.Delay(550);
         flyout.ShowAt(row, false); await Task.Delay(550);
         if (owner.OpenedPopups.Single().Placement != PlacementMode.Bottom) throw new InvalidOperationException("Keyboard flyout did not retain its row anchor.");
         flyout.Hide(); await Task.Delay(550);

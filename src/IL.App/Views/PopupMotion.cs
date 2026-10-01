@@ -62,6 +62,7 @@ internal sealed class PopupMotion
         if (reopening != null) _motion?.Set(opacity, y: y, scale: scale);
         _open = true; _owner = _popup.PlacementTarget is { } target ? target.GetLogicalAncestors().OfType<Window>().FirstOrDefault() ?? TopLevel.GetTopLevel(target) : null;
         if (_surface == null) return;
+        foreach (var button in _surface.GetVisualDescendants().OfType<Button>()) if (!button.IsPressed) SpringMotion.ResetFeedback(button);
         _surface.RenderTransformOrigin = new RelativePoint(0, 0, RelativeUnit.Relative);
         RememberPosition();
         // The host has already arranged the surface when Opened fires.

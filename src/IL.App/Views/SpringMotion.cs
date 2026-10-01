@@ -86,6 +86,7 @@ public sealed class SpringMotion
     }
     private static readonly ConditionalWeakTable<Control, SpringMotion> Motions = new();
     public static SpringMotion For(Control control) => Motions.GetValue(control, c => new SpringMotion(c));
+    internal static void ResetFeedback(Control control) { if (Motions.TryGetValue(control, out var motion)) motion.Set(); }
     private static bool _installed;
     public static void InstallFeedback()
     {

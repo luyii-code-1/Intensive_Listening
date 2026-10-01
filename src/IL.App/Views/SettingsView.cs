@@ -102,7 +102,7 @@ public sealed class SettingsView : UserControl
         var cards = new StackPanel { Spacing = 8 };
         cards.Children.Add(Card("color", "外观主题", "控制应用界面的明暗外观。", _theme));
         cards.Children.Add(Card("open_file", "关联文件格式", "双击 .ilp 精听包直接进入播放界面。", _association));
-        cards.Children.Add(Card("robot", "MCP", "允许本机智能体连接课程制作工具；连接后需要在应用内断开。", _mcp));
+        cards.Children.Add(Card("robot", "MCP", "接管需在应用内批准；关闭主窗口后服务继续运行，可从托盘退出。", _mcp));
         cards.Children.Add(Card("forward", "跳过题前提示", "首次打开课程时定位到第一题前并暂停，保留已有播放进度。", _skip));
         var font = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, VerticalAlignment = VerticalAlignment.Center };
         _fontValue.VerticalAlignment = VerticalAlignment.Center; font.Children.Add(_font); font.Children.Add(_fontValue);

@@ -187,7 +187,7 @@ internal sealed class FirstRunWizard : Border
             case 2:
                 body = Page("基本设置", "选择文件打开方式、制作接口和播放习惯。");
                 body.Children.Add(Card("open_file", "关联 .ilp 文件", "双击精听包即可在应用中打开。", Toggle(_association, value => _association = value)));
-                body.Children.Add(Card("robot", "MCP 制作接口", "允许本机智能体连接；接管仍需在应用内批准。", Toggle(_mcp, value => _mcp = value)));
+                body.Children.Add(Card("robot", "MCP 制作接口", "接管需在应用内批准；关闭主窗口后服务在托盘继续运行。", Toggle(_mcp, value => _mcp = value)));
                 body.Children.Add(Card("forward", "跳过题前提示", "首次打开课程时直接定位到第一题前并暂停。", Toggle(_skip, value => _skip = value)));
                 var telemetry = new ToggleSwitch { IsChecked = _telemetry, OnContent = "", OffContent = "", MinWidth = 40 };
                 var settingTelemetry = false;

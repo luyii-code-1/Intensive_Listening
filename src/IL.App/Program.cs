@@ -6,10 +6,15 @@ namespace IL.App;
 internal static class Program
 {
     public static string[] Arguments {get;private set;} = [];
+    public static SingleInstanceSession? Instance { get; private set; }
     [STAThread]
     public static int Main(string[] args)
     {
         Arguments=args;
+        var instanceVerification = Array.IndexOf(args, "--verify-instance");
+        if (instanceVerification >= 0) return InstanceVerification.Run(args[instanceVerification + 1]);
+        var instanceProbe = Array.IndexOf(args, "--instance-probe");
+        if (instanceProbe >= 0) return InstanceVerification.Probe(args[instanceProbe + 1], args[instanceProbe + 2]);
         var verification=Array.IndexOf(args,"--verify-runtime");
         if(verification>=0)return RuntimeVerification.RunAsync(verification+1<args.Length?args[verification+1]:"verification.json").GetAwaiter().GetResult();
         var crashVerification = Array.IndexOf(args, "--verify-crash");
@@ -28,6 +33,10 @@ internal static class Program
         if (watch >= 0) return CrashMonitor.WatchAsync(args[watch + 1]).GetAwaiter().GetResult();
         var report = Array.IndexOf(args, "--crash-report");
         if (report >= 0) { CrashMonitor.SetReportPath(args[report + 1]); return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args); }
+        using var instance = OperatingSystem.IsWindows() && !args.Contains("--standalone") ? SingleInstanceSession.Acquire(SingleInstanceSession.ApplicationName) : null;
+        if (OperatingSystem.IsWindows() && !args.Contains("--standalone") && instance == null)
+            return SingleInstanceSession.NotifyAsync(SingleInstanceSession.ApplicationName, args).GetAwaiter().GetResult() ? 0 : 1;
+        Instance = instance;
         CrashMonitor.Start();
         try
         {

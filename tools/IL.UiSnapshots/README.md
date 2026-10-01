@@ -68,3 +68,14 @@ factory on the headless platform. It checks intermediate opacity and translation
 intro progress, completion, consent gating, cached back-navigation state and reduced
 motion. `motion.json` records the results. A 16 ms headless render tick drives the
 animation clock while the dispatcher event loop runs.
+
+Resident-service lifecycle check:
+
+```sh
+dotnet run --project tools/IL.UiSnapshots -- --residence --output artifacts/residence/headless
+```
+
+This uses the production residence controller with an in-memory window and an
+isolated real localhost MCP server. It checks close-to-background, MCP responses
+and transcription completion while hidden, restoration, and explicit shutdown.
+The native tray itself remains part of user interaction acceptance.

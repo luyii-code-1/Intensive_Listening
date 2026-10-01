@@ -58,7 +58,7 @@ internal static partial class Program
             renderTimer.Tick += (_, _) => AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
             renderTimer.Start();
             Application.Current!.RequestedThemeVariant = _dark ? ThemeVariant.Dark : ThemeVariant.Light;
-            var task = args.Contains("--performance") ? ProbeAsync(isolated) : args.Contains("--motion") ? CheckMotionAsync() : RenderAsync(isolated);
+            var task = args.Contains("--residence") ? CheckResidenceAsync(isolated) : args.Contains("--performance") ? ProbeAsync(isolated) : args.Contains("--motion") ? CheckMotionAsync() : RenderAsync(isolated);
             using var loop = new CancellationTokenSource(TimeSpan.FromMinutes(2));
             _ = task.ContinueWith(_ => loop.Cancel(), TaskScheduler.Default);
             Dispatcher.UIThread.MainLoop(loop.Token);
@@ -89,6 +89,7 @@ internal static partial class Program
                 case "--dark": dark = true; break;
                 case "--performance": break;
                 case "--motion": break;
+                case "--residence": break;
                 default: throw new ArgumentException("Unknown option: " + args[i]);
             }
         if (width < 720 || height < 560) throw new ArgumentException("Use a supported desktop size of at least 720 × 560.");

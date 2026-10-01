@@ -84,6 +84,7 @@ public sealed class TeacherView : UserControl
         DetachedFromVisualTree += async (_, _) => { _queue.Changed -= QueueChanged; _autosave.Stop(); await RunAsync(SaveDraftAsync); };
     }
     public Task RefreshAsync() => RunAsync(RefreshProjectsFromStoreAsync);
+    public Task FlushDraftAsync() => RunAsync(SaveDraftAsync);
     private async Task RefreshProjectsFromStoreAsync()
     {
         await _transcriptions.RestorePendingAsync(); await _vm.ReloadAsync(); RefreshProjects();

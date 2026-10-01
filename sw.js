@@ -1,7 +1,7 @@
 // Intensive Listening Web Player - Service Worker
 // Version: 1.0.0 (Offline PWA)
 
-const CACHE_NAME = 'il-pwa-v1.0.6';
+const CACHE_NAME = 'il-pwa-v1.0.7';
 
 const PRECACHE_RESOURCES = [
   './',
@@ -60,8 +60,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 1. External telemetry / RUM requests: Bypass Service Worker so ad-blocker detection works accurately
-  if (url.origin.includes('aliyuncs.com')) {
+  // 1. External telemetry / RUM / Analytics requests: Bypass Service Worker so ad-blocker detection works accurately
+  if (url.origin.includes('aliyuncs.com') || url.origin.includes('51.la')) {
     return;
   }
 

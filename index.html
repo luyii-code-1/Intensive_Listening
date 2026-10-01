@@ -55,6 +55,10 @@
 })(window, document, "https://sdk.rum.aliyuncs.com/v2/browser-sdk.js", "__rum");
   </script>
 
+  <!-- 51.la 网站统计 -->
+  <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+  <script>LA.init({id:"LKvATKXPjg1HJl6i",ck:"LKvATKXPjg1HJl6i",autoTrack:true,hashMode:true,screenRecord:true})</script>
+
   <div id="app">
     <!-- Header / Command Bar -->
     <header class="app-header">
@@ -68,12 +72,11 @@
         <img src="icons/icon.svg" class="app-logo-mark" alt="Logo" width="22" height="22">
         <div id="app-title" class="app-title">Intensive Listening</div>
         <button id="file-info-btn" class="fluent-btn sm" style="display: none;">文件信息</button>
-        <button id="btn-show-legal" class="fluent-btn sm" title="查看用户协议与隐私政策">用户协议与隐私</button>
       </div>
       <div class="header-right">
-        <a href="https://github.com/luyii-code-1/Intensive_Listening/tree/web-edition" target="_blank" rel="noopener" class="app-version-badge" id="app-version-badge" title="版本: v1.0.6 | 提交: 19af14a (点击查看源码)">
-          <span class="version-text">v1.0.6</span>
-          <span class="commit-text">19af14a</span>
+        <a href="https://github.com/luyii-code-1/Intensive_Listening/tree/web-edition" target="_blank" rel="noopener" class="app-version-badge" id="app-version-badge" title="版本: v1.0.7 (点击查看源码)">
+          <span class="version-text">v1.0.7</span>
+          <span class="commit-text">51.la</span>
         </a>
         <button id="btn-install-pwa" class="fluent-btn sm" style="display: none;" title="安装为本地离线客户端">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -126,23 +129,36 @@
     <main id="main-workspace" class="main-workspace">
       <!-- 1. Home / Library View -->
       <div id="home-view" class="home-view">
-        <!-- Empty State -->
-        <div id="empty-state" class="empty-state-box">
-          <img src="icons/icon.svg" class="empty-logo-mark" alt="Intensive Listening Logo" width="64" height="64">
-          <h2 class="empty-title">打开音频或精听包</h2>
-          <p class="empty-desc">直接播放常见音频，或导入带有题目与挖空练习的 .ilp 精听包。<br>您也可以直接将 .ilp 文件拖拽至此窗口。</p>
-          <div class="empty-actions">
-            <button id="btn-empty-open-audio" class="fluent-btn">打开音频</button>
-            <button id="btn-empty-import" class="fluent-btn filled">导入精听包</button>
-            <button id="btn-empty-load-sample" class="fluent-btn">加载示例课程</button>
+        <div class="home-content">
+          <!-- Empty State -->
+          <div id="empty-state" class="empty-state-box">
+            <img src="icons/icon.svg" class="empty-logo-mark" alt="Intensive Listening Logo" width="64" height="64">
+            <h2 class="empty-title">打开音频或精听包</h2>
+            <p class="empty-desc">直接播放常见音频，或导入带有题目与挖空练习的 .ilp 精听包。<br>您也可以直接将 .ilp 文件拖拽至此窗口。</p>
+            <div class="empty-actions">
+              <button id="btn-empty-open-audio" class="fluent-btn">打开音频</button>
+              <button id="btn-empty-import" class="fluent-btn filled">导入精听包</button>
+              <button id="btn-empty-load-sample" class="fluent-btn">加载示例课程</button>
+            </div>
+          </div>
+
+          <!-- Recent Lessons List -->
+          <div id="recent-lessons-section" class="recent-section" style="display: none;">
+            <h3 class="recent-title">最近课程</h3>
+            <div id="lesson-list" class="lesson-list"></div>
           </div>
         </div>
 
-        <!-- Recent Lessons List -->
-        <div id="recent-lessons-section" class="recent-section" style="display: none;">
-          <h3 class="recent-title">最近课程</h3>
-          <div id="lesson-list" class="lesson-list"></div>
-        </div>
+        <!-- Bottom Footer: User Agreement & Privacy Policy Links -->
+        <footer class="home-footer">
+          <div class="footer-links">
+            <a href="javascript:void(0)" class="footer-legal-link" data-legal="agreement">用户协议</a>
+            <span class="footer-sep">·</span>
+            <a href="javascript:void(0)" class="footer-legal-link" data-legal="privacy">隐私政策</a>
+            <span class="footer-sep">·</span>
+            <a href="javascript:void(0)" class="footer-legal-link" data-legal="audio">发声权限</a>
+          </div>
+        </footer>
       </div>
 
       <!-- 2. Player View -->
@@ -329,7 +345,8 @@
             </tbody>
           </table>
         </div>
-        <div class="dialog-footer">
+        <div class="dialog-footer" style="justify-content: space-between;">
+          <a href="javascript:void(0)" class="footer-legal-link" data-legal="agreement" style="font-size: 13px;">用户协议与隐私</a>
           <button id="btn-close-info-modal" class="fluent-btn filled">关闭</button>
         </div>
       </div>

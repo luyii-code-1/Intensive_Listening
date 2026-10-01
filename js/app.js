@@ -326,7 +326,15 @@ class IntensiveListeningApp {
       this.dom.alertModal.style.display = 'none';
     });
 
-    // Header Review Legal Modal bindings
+    // Header Review & Footer Legal Modal bindings
+    document.querySelectorAll('.footer-legal-link, .legal-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const tab = link.getAttribute('data-legal') || 'agreement';
+        this.showLegalModal(tab);
+      });
+    });
+
     if (this.dom.btnShowLegal) {
       this.dom.btnShowLegal.addEventListener('click', () => this.showLegalModal());
     }
@@ -1647,6 +1655,7 @@ class IntensiveListeningApp {
   }
 
   reportTelemetryEvent(name, properties = {}) {
+    // 1. 阿里云 ARMS RUM
     try {
       const rumInstance = window.RumSDK?.default;
       if (rumInstance && typeof rumInstance.sendCustom === 'function') {
@@ -1662,6 +1671,15 @@ class IntensiveListeningApp {
     } catch (e) {
       // Silently ignore telemetry failure in offline mode
     }
+
+    // 2. 51.la 网站统计自定义事件
+    try {
+      if (window.LA && typeof window.LA.track === 'function') {
+        window.LA.track(name, properties);
+      }
+    } catch (e) {
+      // Silently ignore
+    }
   }
 
   // --- Ad Blocker Detection & Fullscreen Warning ---
@@ -1676,6 +1694,7 @@ class IntensiveListeningApp {
 
     // 1. 检查 SDK 变量与探针全局对象
     const hasRumSDK = Boolean(window.RumSDK?.default);
+    const hasLaSDK = Boolean(window.LA && typeof window.LA.init === 'function');
 
     // 2. 发起探测请求测试 RUM 遥测通道 (OPTIONS 跨域预检)
     const controller = new AbortController();
@@ -1705,6 +1724,25 @@ class IntensiveListeningApp {
           clearTimeout(sdkTimeout);
           if (typeof navigator === 'undefined' || navigator.onLine) {
             return true; // 探针脚本被拦截
+          }
+        }
+      }
+
+      // 3. 探测 51.la 统计探针是否被拦截
+      if (!hasLaSDK) {
+        const laController = new AbortController();
+        const laTimeout = setTimeout(() => laController.abort(), 1800);
+        try {
+          await fetch('https://sdk.51.la/js-sdk-pro.min.js', {
+            method: 'GET',
+            cache: 'no-store',
+            signal: laController.signal
+          });
+          clearTimeout(laTimeout);
+        } catch (laErr) {
+          clearTimeout(laTimeout);
+          if (typeof navigator === 'undefined' || navigator.onLine) {
+            return true; // 51.la 脚本被拦截
           }
         }
       }

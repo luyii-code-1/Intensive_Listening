@@ -598,7 +598,7 @@ class IntensiveListeningApp {
     this.dom.homeView.style.display = 'flex';
     this.dom.backBtn.style.display = 'none';
     this.dom.fileInfoBtn.style.display = 'none';
-    this.dom.appTitle.textContent = '学生端';
+    this.dom.appTitle.textContent = 'Intensive Listening';
     this.refreshRecentLessons();
   }
 

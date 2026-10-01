@@ -1,7 +1,7 @@
 // Intensive Listening Web Player - Service Worker
 // Version: 1.0.0 (Offline PWA)
 
-const CACHE_NAME = 'il-pwa-v1.0.5';
+const CACHE_NAME = 'il-pwa-v1.0.6';
 
 const PRECACHE_RESOURCES = [
   './',

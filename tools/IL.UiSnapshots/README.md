@@ -45,3 +45,24 @@ than an assertion of Windows interaction or visual acceptance.
 
 Rendering follows Avalonia's documented
 [headless Skia capture workflow](https://docs.avaloniaui.net/docs/testing/setting-up-the-headless-platform#visual-regression-testing).
+
+
+Performance and motion probes:
+
+```sh
+dotnet run --project tools/IL.UiSnapshots -- --performance --output artifacts/motion/after
+dotnet run --project tools/IL.UiSnapshots -- --motion --output artifacts/motion/animation
+dotnet run --project tools/IL.UiSnapshots -- --motion --dark --output artifacts/motion/animation-dark
+```
+
+The performance fixture contains 250 cues and 50 library entries. It measures
+synchronous UI construction and allocations, checks bounded transcript realization
+after scrolling, and checks realization after following a distant cue. The library
+batch timing measures collection-change callbacks; deferred list construction runs
+after that measurement. Results are written to `performance.json`.
+
+The motion probe renders the production page transition and Windows welcome-window
+factory on the headless platform. It checks intermediate opacity and translation,
+intro progress, completion, consent gating, cached back-navigation state and reduced
+motion. `motion.json` records the results. A 16 ms headless render tick drives the
+animation clock while the dispatcher event loop runs.

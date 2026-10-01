@@ -7,6 +7,10 @@ using Avalonia.Media;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Input;
 using Avalonia.Threading;
+using Avalonia.Controls.Presenters;
+using Avalonia.Controls.Templates;
+using Avalonia.Styling;
+using Avalonia.VisualTree;
 using IL.App.ViewModels;
 using IL.App.Views.Dialogs;
 using IL.Core.Ilp;
@@ -46,6 +50,9 @@ public sealed class TeacherView : UserControl
     private IReadOnlyList<SrtCue> _editingCues = [];
     private readonly Dictionary<int, Control> _cueRows = [];
     private ScrollViewer? _reviewScroll;
+    private ListBox? _reviewList;
+    private readonly Dictionary<int, int> _cueItemIndexes = [];
+    private SrtTranscriptStructure? _reviewStructure;
     private Button? _createQuestion;
     private bool _loading, _saving, _agentMode, _overview, _manual, _compact;
     private bool _exporting, _addingToLibrary;
@@ -65,10 +72,11 @@ public sealed class TeacherView : UserControl
         _autosave.Tick += async (_, _) => { _autosave.Stop(); await RunAsync(SaveDraftAsync); };
         _projectList.SelectionChanged += async (_, _) => { if (!_loading && _projectList.SelectedItem is ListBoxItem { Tag: string id }) await OpenProjectAsync(id); };
         SizeChanged += (_, _) => { var compact = (TopLevel.GetTopLevel(this)?.ClientSize.Width ?? Bounds.Width) < 1220; if (_compact != compact) { _compact = compact; _content.ColumnDefinitions[0].Width = new GridLength(compact ? 240 : 300); BuildCommands(); } };
-        AttachedToVisualTree += async (_, _) => { _owner = TopLevel.GetTopLevel(this) as Window; _queue.Changed += QueueChanged; await RunAsync(RefreshAsync); };
+        AttachedToVisualTree += (_, _) => { _owner = TopLevel.GetTopLevel(this) as Window; _queue.Changed += QueueChanged; };
         DetachedFromVisualTree += async (_, _) => { _queue.Changed -= QueueChanged; _autosave.Stop(); await RunAsync(SaveDraftAsync); };
     }
-    public async Task RefreshAsync()
+    public Task RefreshAsync() => RunAsync(RefreshProjectsFromStoreAsync);
+    private async Task RefreshProjectsFromStoreAsync()
     {
         await _vm.ReloadAsync(); RefreshProjects();
     }
@@ -102,7 +110,7 @@ public sealed class TeacherView : UserControl
             }
             _agentDraft = null;
         }
-        await RefreshAsync(); if (id != null) { await _vm.OpenAsync(id); RenderProject(); }
+        await RefreshProjectsFromStoreAsync(); if (id != null) { await _vm.OpenAsync(id); RenderProject(); }
     });
     public async Task LoadJobTranscriptAsync(TranscriptionJob job) => await RunAsync(async () =>
     {
@@ -199,7 +207,7 @@ public sealed class TeacherView : UserControl
     }
     private void RenderProject()
     {
-        if (_renderedProjectId != _vm.Project?.Id) { _questionEdits.Clear(); _selected.Clear(); _expandedRepeats.Clear(); _overview = _manual = false; _renderedProjectId = _vm.Project?.Id; if (_vm.Project != null) ProjectOpened?.Invoke(); }
+        if (_renderedProjectId != _vm.Project?.Id) { _questionEdits.Clear(); _selected.Clear(); _expandedRepeats.Clear(); _reviewList = null; _reviewScroll = null; _overview = _manual = false; _renderedProjectId = _vm.Project?.Id; if (_vm.Project != null) ProjectOpened?.Invoke(); }
         _loading = true; _title.Text = _vm.Project?.Title ?? ""; _transcript.Text = _vm.Project?.Transcript ?? ""; _editingCues = _vm.Cues.ToArray(); _loading = false;
         foreach (var child in _editor.Children) if (Grid.GetRow(child) == 0) child.IsVisible = _vm.Project != null;
         _editor.IsEnabled = !_agentMode; _back.IsVisible = _vm.Project != null; _steps.Value = (int)(_vm.Project?.Step ?? CourseProjectStep.Audio);
@@ -303,52 +311,103 @@ public sealed class TeacherView : UserControl
         var index = p.Exercises.EffectiveMaterials.ToList().FindIndex(m => m.Id == material.Id); return MaterialColors[Math.Max(0, index) % MaterialColors.Length];
     }
     private static string MaterialLabel(LessonExercises exercises, LessonMaterial? material) => material == null ? "未归题" : exercises.QuestionsForMaterial(material) is var questions && questions.Count > 0 ? "第 " + string.Join('、', questions.Select(q => q.Number)) + " 题" : "听力材料";
+    private sealed record TranscriptRow(Func<Control> Build, int? CueIndex = null);
+    private static readonly ControlTheme TranscriptItemTheme = new(typeof(ListBoxItem))
+    {
+        Setters =
+        {
+            new Setter(ContentControl.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch),
+            new Setter(TemplatedControl.TemplateProperty, new FuncControlTemplate<ListBoxItem>((item, _) => new ContentPresenter
+            {
+                Name = "PART_ContentPresenter",
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Margin = new Thickness(0, 0, 0, 4),
+                [!ContentPresenter.ContentProperty] = item[!ContentControl.ContentProperty],
+                [!ContentPresenter.ContentTemplateProperty] = item[!ContentControl.ContentTemplateProperty]
+            })),
+            new Setter(TemplatedControl.FocusableProperty, false)
+        }
+    };
     private Control BuildTranscript(CourseProject p, SrtTranscriptStructure structure, bool grouping)
     {
         var previousOffset = _reviewScroll?.Offset ?? default;
-        _cueRows.Clear(); var rows = new StackPanel { Spacing = 4 };
+        _cueRows.Clear(); _cueItemIndexes.Clear(); _reviewStructure = structure;
+        var rows = new List<TranscriptRow>();
+        var materials = p.Exercises.EffectiveMaterials;
+        var materialByCue = new Dictionary<int, LessonMaterial>();
+        foreach (var material in materials)
+            foreach (var cue in material.CueIndexes) materialByCue.TryAdd(cue, material);
+        void AddCue(int cue)
+        {
+            _cueItemIndexes[cue] = rows.Count;
+            rows.Add(new TranscriptRow(() => BuildCueRow(p, cue, grouping), cue));
+        }
         for (var sectionIndex = 0; sectionIndex < structure.Sections.Count; sectionIndex++)
         {
             var section = structure.Sections[sectionIndex];
-            var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), Margin = new Thickness(2, 10, 2, 7) };
-            var label = WorkspaceUi.Text(section.Label, 14, true); label.VerticalAlignment = VerticalAlignment.Center; header.Children.Add(label);
-            var count = WorkspaceUi.Text($"{section.CueIndexes.Count} 句", 12); count.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(count, 1); header.Children.Add(count);
-            if (grouping)
+            rows.Add(new TranscriptRow(() =>
             {
-                var choose = WorkspaceUi.Button("选择整段", () => { SelectSection(section); BuildStage(); return Task.CompletedTask; }); choose.Margin = new Thickness(8, 0, 0, 0); Grid.SetColumn(choose, 2); header.Children.Add(choose);
-            }
-            rows.Children.Add(header);
+                var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), Margin = new Thickness(2, 10, 2, 7) };
+                var label = WorkspaceUi.Text(section.Label, 14, true); label.VerticalAlignment = VerticalAlignment.Center; header.Children.Add(label);
+                var count = WorkspaceUi.Text($"{section.CueIndexes.Count} 句", 12); count.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(count, 1); header.Children.Add(count);
+                if (grouping)
+                {
+                    var choose = WorkspaceUi.Button("选择整段", () => { SelectSection(section); BuildStage(); return Task.CompletedTask; }); choose.Margin = new Thickness(8, 0, 0, 0); Grid.SetColumn(choose, 2); header.Children.Add(choose);
+                }
+                return header;
+            }));
             var indexes = section.CueIndexes.ToArray(); var start = 0;
             while (start < indexes.Length)
             {
-                var material = p.Exercises.EffectiveMaterials.FirstOrDefault(m => m.CueIndexes.Contains(indexes[start])); var end = start + 1;
-                while (end < indexes.Length && p.Exercises.EffectiveMaterials.FirstOrDefault(m => m.CueIndexes.Contains(indexes[end]))?.Id == material?.Id) end++;
+                var material = materialByCue.GetValueOrDefault(indexes[start]); var end = start + 1;
+                while (end < indexes.Length && materialByCue.GetValueOrDefault(indexes[end])?.Id == material?.Id) end++;
                 var run = indexes[start..end];
                 if (grouping)
                 {
-                    var color = FrameColor(p, material); var draft = material == null && _selected.Contains(run[0]); if (draft) color = Color.Parse("#B80018");
-                    var group = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-                    group.Children.Add(WorkspaceUi.Text(draft ? "待新建题目" : MaterialLabel(p.Exercises, material), 14, true)); var size = WorkspaceUi.Text($"{run.Length} 句", 12); Grid.SetColumn(size, 1); group.Children.Add(size);
-                    rows.Children.Add(new Border { Child = group, Padding = new Thickness(12, 8), Margin = new Thickness(0, 8, 0, 0), BorderThickness = new Thickness(4, 0, 0, 0), BorderBrush = new SolidColorBrush(color), Background = new SolidColorBrush(Color.FromArgb(26, color.R, color.G, color.B)) });
+                    rows.Add(new TranscriptRow(() =>
+                    {
+                        var color = FrameColor(p, material); var draft = material == null && _selected.Contains(run[0]); if (draft) color = Color.Parse("#B80018");
+                        var group = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+                        group.Children.Add(WorkspaceUi.Text(draft ? "待新建题目" : MaterialLabel(p.Exercises, material), 14, true)); var size = WorkspaceUi.Text($"{run.Length} 句", 12); Grid.SetColumn(size, 1); group.Children.Add(size);
+                        return new Border { Child = group, Padding = new Thickness(12, 8), Margin = new Thickness(0, 8, 0, 0), BorderThickness = new Thickness(4, 0, 0, 0), BorderBrush = new SolidColorBrush(color), Background = new SolidColorBrush(Color.FromArgb(26, color.R, color.G, color.B)) };
+                    }));
                 }
                 var repeated = !_manual && material != null ? run.Where(material.RepeatedCueIndexes.Contains).ToArray() : [];
-                foreach (var cue in run.Except(repeated)) rows.Children.Add(BuildCueRow(p, cue, grouping));
+                foreach (var cue in run.Except(repeated)) AddCue(cue);
                 if (repeated.Length > 0)
                 {
                     var repeatId = $"{sectionIndex}-{material!.Id}-{start}"; var expanded = _expandedRepeats.Contains(repeatId);
-                    var repeat = WorkspaceUi.Button("重复朗读", () => { if (!_expandedRepeats.Add(repeatId)) _expandedRepeats.Remove(repeatId); BuildStage(); return Task.CompletedTask; });
-                    var repeatLabel = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,8,*,Auto") }; repeatLabel.Children.Add(WorkspaceUi.Icon(expanded ? "chevron_down" : "chevron_right", 14)); var repeatTitle = WorkspaceUi.Text("重复朗读"); Grid.SetColumn(repeatTitle, 2); repeatLabel.Children.Add(repeatTitle); var repeatCount = WorkspaceUi.Text($"{repeated.Length} 句"); Grid.SetColumn(repeatCount, 3); repeatLabel.Children.Add(repeatCount); repeat.Content = repeatLabel;
-                    repeat.HorizontalAlignment = HorizontalAlignment.Stretch; repeat.HorizontalContentAlignment = HorizontalAlignment.Stretch; rows.Children.Add(repeat);
-                    if (expanded) foreach (var cue in repeated) rows.Children.Add(BuildCueRow(p, cue, grouping));
+                    rows.Add(new TranscriptRow(() =>
+                    {
+                        var repeat = WorkspaceUi.Button("重复朗读", () => { if (!_expandedRepeats.Add(repeatId)) _expandedRepeats.Remove(repeatId); BuildStage(); return Task.CompletedTask; });
+                        var repeatLabel = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,8,*,Auto") }; repeatLabel.Children.Add(WorkspaceUi.Icon(expanded ? "chevron_down" : "chevron_right", 14)); var repeatTitle = WorkspaceUi.Text("重复朗读"); Grid.SetColumn(repeatTitle, 2); repeatLabel.Children.Add(repeatTitle); var repeatCount = WorkspaceUi.Text($"{repeated.Length} 句"); Grid.SetColumn(repeatCount, 3); repeatLabel.Children.Add(repeatCount); repeat.Content = repeatLabel;
+                        repeat.HorizontalAlignment = HorizontalAlignment.Stretch; repeat.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                        return repeat;
+                    }));
+                    if (expanded) foreach (var cue in repeated) AddCue(cue);
                 }
                 start = end;
             }
         }
-        _reviewScroll = new ScrollViewer { Content = rows, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        var scroll = _reviewScroll;
-        Dispatcher.UIThread.Post(() => scroll.Offset = previousOffset, DispatcherPriority.Loaded);
-        _reviewScroll.AddHandler(PointerReleasedEvent, (_, _) => { if (_dragSelection != null) { _dragSelection = null; _dragAnchor = _dragSection = null; BuildStage(); } }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
-        return _reviewScroll;
+        // Keep the viewport bounded: only realized rows create editors and cloze buttons.
+        var list = new ListBox
+        {
+            Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0),
+            ItemContainerTheme = TranscriptItemTheme,
+            ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel()),
+            ItemTemplate = new FuncDataTemplate<TranscriptRow>((entry, _) => entry!.Build(), supportsRecycling: false),
+            ItemsSource = rows
+        };
+        ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Disabled);
+        _reviewList = list; _reviewScroll = null;
+        list.AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(() =>
+        {
+            if (_reviewList != list) return;
+            _reviewScroll = list.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+            if (_reviewScroll != null) _reviewScroll.Offset = previousOffset;
+        }, DispatcherPriority.Loaded);
+        list.AddHandler(PointerReleasedEvent, (_, _) => { if (_dragSelection != null) { _dragSelection = null; _dragAnchor = _dragSection = null; BuildStage(); } }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+        return list;
     }
     private Control BuildCueRow(CourseProject p, int index, bool grouping)
     {
@@ -360,7 +419,7 @@ public sealed class TeacherView : UserControl
             var handle = new Border { Width = 30, Height = 34, VerticalAlignment = VerticalAlignment.Center,
                 Child = material != null ? WorkspaceUi.Icon("lock", 14) : new CheckBox { IsChecked = _selected.Contains(index), IsHitTestVisible = false, MinWidth = 20, MinHeight = 20, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
             ToolTip.SetTip(handle, material != null ? "已归入题目" : "选择字幕");
-            handle.PointerPressed += (_, e) => { if (material == null) { _dragAnchor = index; _dragSection = SrtTranscriptStructure.FromCues(_editingCues, !_manual).SectionIndexForCue(index); _dragSelection = !_selected.Contains(index); ApplyDragSelection(index); e.Handled = true; } };
+            handle.PointerPressed += (_, e) => { if (material == null) { _dragAnchor = index; _dragSection = _reviewStructure?.SectionIndexForCue(index); _dragSelection = !_selected.Contains(index); ApplyDragSelection(index); e.Handled = true; } };
             row.PointerEntered += (_, _) => { if (_dragSelection != null && material == null) ApplyDragSelection(index); };
             Grid.SetColumn(handle, 1); row.Children.Add(handle);
             var text = WorkspaceUi.Input(cue.Text, multiline: true); text.MinHeight = 32; text.MaxHeight = 84; text.VerticalAlignment = VerticalAlignment.Center;
@@ -382,7 +441,9 @@ public sealed class TeacherView : UserControl
         }
         var color = FrameColor(p, material); var frame = new Border { Child = row, BorderBrush = new SolidColorBrush(color), BorderThickness = grouping ? new Thickness(2, 0, 0, 0) : new Thickness(0), Background = grouping ? new SolidColorBrush(Color.FromArgb(6, color.R, color.G, color.B)) : null, CornerRadius = grouping ? new CornerRadius(0) : new CornerRadius(4) };
         if (!grouping) frame.Bind(Border.BackgroundProperty, new DynamicResourceExtension("CardBackgroundFillColorDefaultBrush"));
-        _cueRows[index] = frame; return frame;
+        frame.AttachedToVisualTree += (_, _) => _cueRows[index] = frame;
+        frame.DetachedFromVisualTree += (_, _) => { if (_cueRows.GetValueOrDefault(index) == frame) _cueRows.Remove(index); };
+        return frame;
     }
     private void SelectSection(SrtTranscriptSection section)
     {
@@ -392,8 +453,8 @@ public sealed class TeacherView : UserControl
     private void ApplyDragSelection(int index)
     {
         if (_dragAnchor is not int anchor || _dragSelection is not bool value || _vm.Project is not { } p) return;
-        var structure = SrtTranscriptStructure.FromCues(_editingCues, !_manual);
-        if (structure.SectionIndexForCue(index) != _dragSection) return;
+        var structure = _reviewStructure;
+        if (structure == null || structure.SectionIndexForCue(index) != _dragSection) return;
         foreach (var cue in Enumerable.Range(Math.Min(anchor, index), Math.Abs(index - anchor) + 1))
         {
             if (structure.SectionIndexForCue(cue) != _dragSection || p.Exercises.MaterialForCue(cue) != null) continue;
@@ -485,7 +546,8 @@ public sealed class TeacherView : UserControl
     private Task LocateMaterialAsync(LessonMaterial material)
     {
         _overview = false; BuildStage();
-        if (material.CueIndexes.Count > 0 && _cueRows.TryGetValue(material.CueIndexes[0], out var row)) Dispatcher.UIThread.Post(() => row.BringIntoView());
+        if (material.CueIndexes.Count > 0 && _cueItemIndexes.TryGetValue(material.CueIndexes[0], out var index) && _reviewList is {} list)
+            Dispatcher.UIThread.Post(() => { if (_reviewList == list) list.ScrollIntoView(index); }, DispatcherPriority.Loaded);
         return Task.CompletedTask;
     }
     private void ScheduleSave() { if (_loading || _agentMode || _vm.Project == null) return; _autosave.Stop(); _autosave.Start(); }
@@ -575,7 +637,7 @@ public sealed class TeacherView : UserControl
     private async Task DeleteProjectAsync(CourseProject project)
     {
         if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "删除项目", $"确认删除“{project.Title}”？项目音频、字幕与制作数据将一起删除。", "删除")) return;
-        RetireTranscription(project); await _store.DeleteAsync(project.Id); if (_vm.Project?.Id == project.Id) await _vm.OpenAsync(""); await RefreshAsync(); RenderProject();
+        RetireTranscription(project); await _store.DeleteAsync(project.Id); if (_vm.Project?.Id == project.Id) await _vm.OpenAsync(""); await RefreshProjectsFromStoreAsync(); RenderProject();
     }
     private async Task WithBusyAsync(string message, Func<Task> action)
     {

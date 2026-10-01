@@ -29,7 +29,7 @@ using IL.Core.Transcription;
 
 namespace IL.UiSnapshots;
 
-internal static class Program
+internal static partial class Program
 {
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
     private static readonly Assembly AppAssembly = typeof(IL.App.App).Assembly;
@@ -53,11 +53,15 @@ internal static class Program
             AppLog.DirectoryOverride = Path.Combine(isolated, "logs");
             AppBuilder.Configure<IL.App.App>().UseSkia().UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false }).SetupWithoutStarting();
             AvaloniaSynchronizationContext.InstallIfNeeded();
+            var renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+            renderTimer.Tick += (_, _) => AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
+            renderTimer.Start();
             Application.Current!.RequestedThemeVariant = _dark ? ThemeVariant.Dark : ThemeVariant.Light;
-            var task = RenderAsync(isolated);
+            var task = args.Contains("--performance") ? ProbeAsync(isolated) : args.Contains("--motion") ? CheckMotionAsync() : RenderAsync(isolated);
             using var loop = new CancellationTokenSource(TimeSpan.FromMinutes(2));
             _ = task.ContinueWith(_ => loop.Cancel(), TaskScheduler.Default);
             Dispatcher.UIThread.MainLoop(loop.Token);
+            renderTimer.Stop();
             if (!task.IsCompleted) throw new TimeoutException("Offscreen snapshots did not complete within two minutes.");
             task.GetAwaiter().GetResult();
             Console.WriteLine($"Rendered {Captures.Count} snapshots to {_output}");
@@ -82,6 +86,8 @@ internal static class Program
                 case "--width": width = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
                 case "--height": height = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
                 case "--dark": dark = true; break;
+                case "--performance": break;
+                case "--motion": break;
                 default: throw new ArgumentException("Unknown option: " + args[i]);
             }
         if (width < 720 || height < 560) throw new ArgumentException("Use a supported desktop size of at least 720 × 560.");

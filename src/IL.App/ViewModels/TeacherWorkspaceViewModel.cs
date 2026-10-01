@@ -16,6 +16,7 @@ public sealed class TeacherWorkspaceViewModel(CourseProjectStore store) : Observ
     {
         Project = await store.LoadByIdAsync(id);
         ParseCues();
+        if (Project != null) UpdateProjects(Project);
         if (Project is { HasTranscript: true, AutomaticQuestionPlanApplied: false, AutoQuestionPlanDeferred: false } && Cues.Count > 0)
         {
             var exercises = Project.Exercises.Questions.Count == 0 ? SrtQuestionPlanner.Plan(Cues, Project.Exercises.ClozeWordIndexes) : Project.Exercises;
@@ -25,7 +26,16 @@ public sealed class TeacherWorkspaceViewModel(CourseProjectStore store) : Observ
     public async Task SaveAsync(CourseProject project)
     {
         project = project with { UpdatedAt = DateTimeOffset.Now };
-        await store.SaveAsync(project); Project = project; ParseCues(); await ReloadAsync();
+        var parseCues = Project?.Id != project.Id || Project?.Transcript != project.Transcript || Project?.AudioDuration != project.AudioDuration;
+        await store.SaveAsync(project);
+        Project = project;
+        if (parseCues) ParseCues();
+        UpdateProjects(project);
+    }
+    private void UpdateProjects(CourseProject project)
+    {
+        Projects = Projects.Where(p => p.Id != project.Id).Append(project).OrderByDescending(p => p.UpdatedAt).ToArray();
+        OnPropertyChanged(nameof(Projects));
     }
     private void ParseCues()
     {

@@ -9,6 +9,8 @@ using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
+using System.Diagnostics;
 using FluentAvalonia.UI.Controls;
 using IL.App.ViewModels;
 using IL.App.Views.Dialogs;
@@ -30,6 +32,9 @@ public sealed class StudentView : UserControl
     private readonly StackPanel _index = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly Dictionary<int, List<(Control Control, LessonTextPart Part)>> _words = [];
     private readonly Dictionary<int, Border> _cueRows = [];
+    private readonly Dictionary<int, Border> _cueSlots = [];
+    private bool _homePending, _realizationPending;
+    private int _highlightedCue = -1;
     private readonly List<(Border Header, LessonMaterial Material)> _materialHeaders = [];
     private readonly List<(Expander Expander, IReadOnlyList<int> Cues)> _expanders = [];
     private readonly Dictionary<string, int> _selectedAnswers = [];
@@ -56,6 +61,8 @@ public sealed class StudentView : UserControl
         _hideSubtitles.IsCheckedChanged += (_, _) => _vm.ShowSubtitles = _hideSubtitles.IsChecked != true;
         _play.Bind(IsEnabledProperty, new Binding(nameof(vm.CanPlay)));
         _transcript.Content = _transcriptContent;
+        _transcript.ScrollChanged += (_, _) => ScheduleRealization();
+        _transcript.SizeChanged += (_, _) => ScheduleRealization();
         _transcript.PointerWheelChanged += (_, _) =>
         {
             _followPausedUntil = vm.IsPlaying ? DateTimeOffset.UtcNow.AddSeconds(5) : DateTimeOffset.MaxValue;
@@ -83,10 +90,15 @@ public sealed class StudentView : UserControl
         }, RoutingStrategies.Tunnel);
         vm.PropertyChanged += VmChanged;
         vm.PresentationChanged += UpdatePresentation;
-        vm.Lessons.CollectionChanged += (_, _) => { if (!vm.HasMedia) BuildHome(); };
+        vm.Lessons.CollectionChanged += (_, _) =>
+        {
+            if (_homePending || vm.HasMedia) return;
+            _homePending = true;
+            Dispatcher.UIThread.Post(() => { _homePending = false; if (!vm.HasMedia) BuildHome(); }, DispatcherPriority.Background);
+        };
         _followTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _followTimer.Tick += (_, _) => FollowActiveCue();
-        AttachedToVisualTree += (_, _) => _followTimer.Start();
+        AttachedToVisualTree += (_, _) => { _followTimer.Start(); ScheduleRealization(); };
         DetachedFromVisualTree += (_, _) => { _followTimer.Stop(); _pausedBrowseTimer.Stop(); };
         KeyDown += async (_, e) =>
         {
@@ -127,13 +139,13 @@ public sealed class StudentView : UserControl
     }
     private void ShowPage()
     {
-        BuildHeader();
         if (!_vm.HasMedia)
         {
             _displayingMedia = false; _displayedLessonId = null; _questionMaterialId = null;
             BuildHome(); return;
         }
         if (_displayingMedia && _displayingTranscript == _vm.HasTranscript && _displayedLessonId == _vm.CurrentLesson?.Id) return;
+        BuildHeader();
         _displayingMedia = true; _displayingTranscript = _vm.HasTranscript; _displayedLessonId = _vm.CurrentLesson?.Id;
         _selectedAnswers.Clear(); _revealedAnswers.Clear(); _questionMaterialId = null;
         foreach (var control in new Control[] { _questions, _index, _materialCloze, _allCloze, _return, _play, _transcript, _hideSubtitles }) DetachControl(control);
@@ -314,7 +326,7 @@ public sealed class StudentView : UserControl
     }
     private void BuildTranscript()
     {
-        _transcriptContent.Children.Clear(); _words.Clear(); _cueRows.Clear(); _materialHeaders.Clear(); _expanders.Clear();
+        _transcriptContent.Children.Clear(); _words.Clear(); _cueRows.Clear(); _cueSlots.Clear(); _highlightedCue = -1; _materialHeaders.Clear(); _expanders.Clear();
         if (_vm.CurrentLesson is not { } lesson) return;
         var exercises = lesson.Manifest.Exercises;
         var groups = new List<(LessonMaterial? Material, List<int> Cues)>();
@@ -369,9 +381,41 @@ public sealed class StudentView : UserControl
         for (var i = 0; i < indexes.Count; i++)
         {
             if (i > 0) panel.Children.Add(Divider());
-            panel.Children.Add(CueTemplate(_vm.Cues[indexes[i]]));
+            var slot = new Border { MinHeight = 76 };
+            _cueSlots[indexes[i]] = slot; panel.Children.Add(slot);
         }
         return panel;
+    }
+    private void ScheduleRealization()
+    {
+        if (_realizationPending || !_vm.HasTranscript || TopLevel.GetTopLevel(this) is null) return;
+        _realizationPending = true;
+        Dispatcher.UIThread.Post(() => { _realizationPending = false; RealizeViewport(); }, DispatcherPriority.Background);
+    }
+    private void RealizeViewport()
+    {
+        if (TopLevel.GetTopLevel(this) is null || _transcript.Viewport.Height <= 0) return;
+        var top = _transcript.Offset.Y - _transcript.Viewport.Height;
+        var bottom = _transcript.Offset.Y + _transcript.Viewport.Height * 2;
+        var clock = Stopwatch.StartNew(); var pending = false;
+        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() as Visual;
+        foreach (var (index, slot) in _cueSlots)
+        {
+            var point = slot.TranslatePoint(default, _transcriptContent);
+            var needed = slot.IsEffectivelyVisible && point is { } position && position.Y + slot.Bounds.Height >= top && position.Y <= bottom;
+            if (needed && slot.Child is null)
+            {
+                if (clock.Elapsed.TotalMilliseconds >= 6) { pending = true; continue; }
+                slot.Child = CueTemplate(_vm.Cues[index]); UpdateCuePresentation(index); HighlightCue(index);
+            }
+            else if (!needed && slot.Child is Control row && index != _vm.ActiveCue?.Index
+                && (focused is null || !focused.GetVisualAncestors().Contains(row) && focused != row))
+            {
+                // Retain measured height so recycling cannot move the viewport.
+                slot.MinHeight = Math.Max(76, slot.Bounds.Height); slot.Child = null; _words.Remove(index); _cueRows.Remove(index);
+            }
+        }
+        if (pending) ScheduleRealization();
     }
     private Control CueTemplate(CueRow row)
     {
@@ -427,8 +471,14 @@ public sealed class StudentView : UserControl
     {
         _hideSubtitles.IsChecked = !_vm.ShowSubtitles;
         _transcriptContent.Effect = !_vm.ShowSubtitles ? new BlurEffect { Radius = 8 } : null;
-        foreach (var (cue, words) in _words)
-            foreach (var (control, part) in words)
+        foreach (var cue in _words.Keys) UpdateCuePresentation(cue);
+        UpdatePresentationButtons();
+        ScheduleRealization();
+    }
+    private void UpdateCuePresentation(int cue)
+    {
+        if (!_words.TryGetValue(cue, out var words)) return;
+        foreach (var (control, part) in words)
             {
                 if (control is Border { Child: TextBlock label } word)
                 {
@@ -442,6 +492,9 @@ public sealed class StudentView : UserControl
                 }
                 else if (control is TextBlock text) { text.FontSize = _vm.TranscriptFontSize; text.LineHeight = _vm.TranscriptFontSize * 1.4; }
             }
+    }
+    private void UpdatePresentationButtons()
+    {
         _materialCloze.Content = _vm.MaterialClozeVisible ? "隐藏本段挖空" : "显示本段挖空";
         _allCloze.Content = _vm.ShowAllCloze ? "隐藏全部挖空" : "显示全部挖空";
         _materialCloze.IsVisible = _vm.ActiveMaterial is not null;
@@ -449,12 +502,7 @@ public sealed class StudentView : UserControl
     private void UpdateActiveCue()
     {
         var active = _vm.ActiveCue?.Index ?? -1;
-        foreach (var (index, row) in _cueRows)
-        {
-            if (index == active) row.Bind(Border.BackgroundProperty, new DynamicResourceExtension("SubtleFillColorSecondaryBrush"));
-            else row.Background = Brushes.Transparent;
-            if (row.Child is Grid grid && grid.Children[1] is Border marker) marker.IsVisible = index == active;
-        }
+        HighlightCue(_highlightedCue); HighlightCue(active); _highlightedCue = active;
         foreach (var (header, material) in _materialHeaders)
         {
             var selected = material.CueIndexes.Contains(active) || material.LeadInCueIndexes.Contains(active);
@@ -464,12 +512,20 @@ public sealed class StudentView : UserControl
         foreach (var (expander, cues) in _expanders) expander.IsExpanded = cues.Contains(active);
         foreach (var (id, button) in _indexButtons)
         { if (id == _vm.ActiveMaterial?.Id) { button.Classes.Add("accent"); button.BringIntoView(); } else button.Classes.Remove("accent"); }
-        UpdateQuestions(); UpdatePresentation();
+        UpdateQuestions(); UpdatePresentationButtons(); ScheduleRealization();
         DispatcherTimer.RunOnce(FollowActiveCue, TimeSpan.FromMilliseconds(420));
+    }
+    private void HighlightCue(int index)
+    {
+        if (!_cueRows.TryGetValue(index, out var row)) return;
+        var active = index == _vm.ActiveCue?.Index;
+        if (active) row.Bind(Border.BackgroundProperty, new DynamicResourceExtension("SubtleFillColorSecondaryBrush"));
+        else row.Background = Brushes.Transparent;
+        if (row.Child is Grid grid && grid.Children[1] is Border marker) marker.IsVisible = active;
     }
     private void FollowActiveCue()
     {
-        if (!_vm.FollowTranscript || DateTimeOffset.UtcNow < _followPausedUntil || _vm.ActiveCue is not { } cue || !_cueRows.TryGetValue(cue.Index, out var row)) return;
+        if (!_vm.FollowTranscript || DateTimeOffset.UtcNow < _followPausedUntil || _vm.ActiveCue is not { } cue || !_cueSlots.TryGetValue(cue.Index, out var row)) return;
         var position = row.TranslatePoint(new Point(0, row.Bounds.Height / 2), _transcriptContent);
         if (position is { } point)
             _transcript.Offset = new Vector(0, Math.Clamp(point.Y - _transcript.Viewport.Height / 2, 0, Math.Max(0, _transcript.Extent.Height - _transcript.Viewport.Height)));

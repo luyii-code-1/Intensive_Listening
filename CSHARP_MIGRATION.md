@@ -144,3 +144,34 @@ Windows SSH 会话启动探针记录到应用初始化完成，但该会话的 A
 `artifacts/ui-fixes/macos-runtime.json`，标准脚本同时更新
 `artifacts/verification/macos-arm64.json`。Windows 更新安装包位于
 `10.0.0.3` 的 `F:\dev\il2-ui-fixes-20261001\dist`。
+
+
+### 切页性能与 Windows 欢迎向导（2026-10-01）
+
+主导航复用页面，先呈现目的页面，再等待播放暂停及工程保存；制作页的
+工程列表由初始化和数据变更通知刷新。课库集合变更合并为一次视图更新。
+播放页按视口创建和回收字幕单词控件；制作页的字幕使用虚拟化列表。
+工程保存更新当前项目缓存，仅在字幕或音频时长改变时重新解析字幕。
+
+主导航使用 250 ms 的淡入和 18 px 垂直移动。Windows 首次设置参照
+[ClassIsland 2 欢迎窗口](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Views/WelcomeWindow.axaml)
+及其欢迎页，采用 800×600 独立 Mica 窗口、品牌开场、48 px 圆形导航按钮、
+链接式许可勾选、缓存步骤和 300 ms 水平转场。精听的设置项保持原有含义，
+完成时返回设置；关闭向导返回空结果。Mac 向导在附加到视觉树后启动动画。
+主导航和向导遵循系统减少动态效果设置。
+
+250 句离屏样本的播放页同步构建由 801 ms / 116 MB 分配降到
+67 ms / 5 MB 分配，首次实现 20 行字幕，滚动后实现 31 行；制作页实现 9 行。
+该比较衡量主线程控件构建，并不代表 Windows 或 Mac 的实际帧率。
+课库 50 项集合通知由每次重建改为一次排队更新，集合通知计时不包含后续构建。
+
+`artifacts/motion/after/performance.json` 保存测量；
+`artifacts/motion/animation` 和 `animation-dark` 保存中间帧与动画状态检查，
+包含许可门控、返回步骤保留设置、最终完成以及减少动态效果。
+`artifacts/motion/light` 保存 20 张页面、弹窗及 Mac 向导离屏图，
+并通过遮罩、内容宽度和 5 秒／15 秒通知期限检查。
+
+标准发布通过 52 项测试；Windows 23 项、Mac 12 项原生运行检查通过，
+报告为 `artifacts/motion/windows-runtime.json`、`artifacts/motion/macos-runtime.json`。
+本轮 Windows 安装包目录为 `10.0.0.3` 的
+`F:\dev\il2-motion-20261001\dist`。界面流畅度与视觉验收由用户在实机完成。

@@ -20,7 +20,8 @@ public partial class MainWindow : Window
     private readonly TeacherView _teacher;
     private readonly QueueView _queue;
     private readonly SettingsView _settings;
-    private bool _closing, _paneExpanded = true;
+    private bool _closing, _paneExpanded = true, _teacherLoaded;
+    private bool _openingTeacher;
     private int _destination, _settingsBack;
     private string? _openedAudioPath;
     private FAContentDialog? _taskDialog;
@@ -41,7 +42,7 @@ public partial class MainWindow : Window
         _services.Api.LibraryChanged=()=>Dispatcher.UIThread.Post(async()=>await _services.Student.RefreshAsync());
         _teacher.StandaloneExporter=async project=>{if(await WorkspaceUi.Save(this,"导出独立播放器",project.Title+".exe","exe") is {} file)return await _services.ExportStandaloneAsync(project,file);return null;};
         StudentButton.Click+=(_,_)=>Navigate(0);
-        TeacherButton.Click+=async(_,_)=>{await _services.Student.PauseAsync();if(_destination==0)await _teacher.ReturnToProjectsAsync();Navigate(1);await _teacher.RefreshAsync();};
+        TeacherButton.Click+=async(_,_)=>await ShowTeacherAsync();
         QueueButton.Click+=async(_,_)=>await ShowTasksAsync();SettingsButton.Click+=(_,_)=>ShowSettings();
         AgentButton.Click+=(_,_)=>_services.Server.DisconnectAgent();
         PaneToggle.Content=WorkspaceUi.Icon("global_nav_button");
@@ -68,6 +69,23 @@ public partial class MainWindow : Window
     {
         _destination=destination;PageHost.Content=destination switch{1=>_teacher,2=>_settings,_=>_student};
         UpdatePane();
+    }
+    private async Task ShowTeacherAsync()
+    {
+        if (_openingTeacher || _destination == 1) return;
+        var fromStudent = _destination == 0;
+        _openingTeacher = true; NavigationBusy.IsVisible = true; _teacher.IsHitTestVisible = false;
+        Navigate(1);
+        try
+        {
+            // Present the cached page before waiting for media and disk operations.
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            await _services.Student.PauseAsync();
+            if (fromStudent) await _teacher.ReturnToProjectsAsync();
+            if (!_teacherLoaded) { await _teacher.RefreshAsync(); _teacherLoaded = true; }
+        }
+        catch (Exception ex) { AppLog.Warning("打开制作页面失败", ex); WorkspaceToast.Show(this, "无法打开制作页面", ex.Message, true); }
+        finally { _openingTeacher = false; NavigationBusy.IsVisible = false; _teacher.IsHitTestVisible = true; }
     }
     private void CollapsePane(){_paneExpanded=false;UpdatePane();}
     private void UpdatePane()
@@ -110,7 +128,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            await _services.InitializeAsync();ApplyTheme(_services.Settings);await _teacher.RefreshAsync();_settings.Populate(_services.Settings);
+            await _services.InitializeAsync();ApplyTheme(_services.Settings);await _teacher.RefreshAsync();_teacherLoaded=true;_settings.Populate(_services.Settings);
             if(!_services.Standalone&&_services.Settings.EulaAcceptedVersion.Length==0)
             {
                 var legal=Path.Combine(AppContext.BaseDirectory,"assets","legal");

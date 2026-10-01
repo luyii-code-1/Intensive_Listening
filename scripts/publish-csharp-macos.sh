@@ -21,6 +21,9 @@ dotnet test IL2.slnx -c Release --nologo
 if [[ -e "$output" ]]; then mv "$output" "$output.previous-$(date +%s)"; fi
 mkdir -p "$output/Contents/MacOS"
 dotnet publish src/IL.App/IL.App.csproj -c Release -r osx-arm64 --self-contained true -o "$output/Contents/MacOS" --nologo
+if [[ ! -f artifacts/native/AlibabaCloud_RUM_macOS.zip ]]; then
+  curl -fL --retry 2 https://rum-sdk.oss-cn-hangzhou.aliyuncs.com/native/AlibabaCloud_RUM_macOS.zip -o artifacts/native/AlibabaCloud_RUM_macOS.zip
+fi
 python3 scripts/bundle-csharp-macos.py "$output" "$mount/VLC.app" "$ffmpeg"
 "$output/Contents/MacOS/IL.App" --verify-runtime "$PWD/artifacts/verification/macos-arm64.json"
 zip=artifacts/IL2-osx-arm64.zip

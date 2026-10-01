@@ -34,7 +34,7 @@ cp windows/third_party/ffmpeg/*LICENSE* "$output/licenses/" 2>/dev/null || true
 cp windows/third_party/ffmpeg/README.md "$output/licenses/FFmpeg-README.md"
 cp THIRD_PARTY_NOTICES.md "$output/licenses/THIRD_PARTY_NOTICES.md"
 python3 - "$output" <<'PY'
-import hashlib,sys,zipfile,pathlib
+import hashlib,sys,zipfile,pathlib,uuid
 archive=pathlib.Path('artifacts/native/AlibabaCloud_RUM_Windows.zip').read_bytes()
 assert hashlib.sha256(archive).hexdigest()=='bfa05c0718a57eb7e94c9494499bd3c84305a3cc39b76d6a9096667553928994','ARMS archive checksum mismatch'
 with zipfile.ZipFile('artifacts/native/AlibabaCloud_RUM_Windows.zip') as z:
@@ -43,6 +43,7 @@ with zipfile.ZipFile('artifacts/native/AlibabaCloud_RUM_Windows.zip') as z:
     assert hashlib.sha256(data).hexdigest()=='33cec949309f8025be35ff19d7ae7f7bfc0f59a9ff0bef3e05c40460f0bf6e8d','ARMS DLL checksum mismatch'
     pathlib.Path(sys.argv[1],'alibabacloud_rum.dll').write_bytes(data)
 root=pathlib.Path(sys.argv[1])
+(root/'installation-id.txt').write_text(str(uuid.uuid4()))
 for relative in ['IL.App.exe','libvlc/win-x64/libvlc.dll','libvlc/win-x64/libvlccore.dll','tools/lesson_player_launcher.exe','ffmpeg.exe','assets/legal/eula_zh_cn.txt','assets/legal/privacy_zh_cn.txt']:
     assert (root/relative).is_file(),f'Missing runtime dependency: {relative}'
 assert (root/'libvlc/win-x64/plugins').is_dir(),'Missing VLC plugins'

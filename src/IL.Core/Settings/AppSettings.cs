@@ -29,6 +29,7 @@ public sealed record AppSettings
     public bool TelemetryEnabled { get; init; }
     public bool TelemetryPrompted { get; init; }
     public string EulaAcceptedVersion { get; init; } = "";
+    public string CompletedInstallationId { get; init; } = "";
     public IL.Core.Asr.AsrConfig CloudAsrConfig => new(CloudBaseUrl,CloudEndpoint,CloudModel,CloudApiKey,CloudLanguage);
     public bool CloudReady => new[] { CloudBaseUrl, CloudEndpoint, CloudModel, CloudApiKey }.All(x => !string.IsNullOrWhiteSpace(x));
     public bool LocalReady => !string.IsNullOrWhiteSpace(LocalModelsDirectory) && !string.IsNullOrWhiteSpace(SelectedLocalModel);
@@ -36,8 +37,10 @@ public sealed record AppSettings
     internal static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
     public static AppSettings Defaults() => new() { CloudBaseUrl = Environment.GetEnvironmentVariable("ILP_ASR_BASE_URL") ?? "https://dashscope.aliyuncs.com", CloudEndpoint = Environment.GetEnvironmentVariable("ILP_ASR_ENDPOINT") ?? "/api/v1/services/aigc/multimodal-generation/generation", CloudModel = Environment.GetEnvironmentVariable("ILP_ASR_MODEL") ?? "qwen-audio-3.0-asr-flash", CloudApiKey = Environment.GetEnvironmentVariable("ILP_ASR_API_KEY") ?? "" };
     public JsonObject ToJson() { var json = JsonSerializer.SerializeToNode(this, JsonOptions)!.AsObject(); foreach (var key in new[] { "cloudReady", "localReady", "asrCacheProfile", "cloudAsrConfig" }) json.Remove(key); return json; }
+    public bool NeedsOnboarding(string installationId) => EulaAcceptedVersion.Length == 0 || (!string.IsNullOrWhiteSpace(installationId) && CompletedInstallationId != installationId);
     public static AppSettings FromJson(JsonObject j) => new()
     {
+        CompletedInstallationId = String(j, "completedInstallationId", ""),
         // The released loader always normalizes recognition to the cloud English profile.
         CloudBaseUrl = String(j, "cloudBaseUrl", "https://dashscope.aliyuncs.com"), CloudEndpoint = String(j, "cloudEndpoint", "/api/v1/services/aigc/multimodal-generation/generation"), CloudModel = String(j, "cloudModel", "qwen-audio-3.0-asr-flash"), CloudApiKey = String(j, "cloudApiKey", ""),
         CloudTimeoutSeconds = Integer(j, "cloudTimeoutSeconds", 180), CloudConcurrency = Math.Clamp(Integer(j, "cloudConcurrency", 10), 1, 10), TranslateChineseToEnglish = Bool(j, "translateChineseToEnglish", true), FileAssociationEnabled = Bool(j, "fileAssociationEnabled"), FileAssociationPrompted = Bool(j, "fileAssociationPrompted"), McpEnabled = Bool(j, "mcpEnabled"), LocalModelsDirectory = String(j, "localModelsDirectory", ""), SelectedLocalModel = String(j, "selectedLocalModel", ""), DetectedLocalModels = Strings(j["detectedLocalModels"]), ThemeMode = String(j, "themeMode", "system"), SkipOpeningPrompts = Bool(j, "skipOpeningPrompts", true), TranscriptFontSize = Math.Clamp(Integer(j, "transcriptFontSize", 18), 14, 28), DebugLogging = Bool(j, "debugLogging"), TelemetryEnabled = Bool(j, "telemetryEnabled"), TelemetryPrompted = Bool(j, "telemetryPrompted"), EulaAcceptedVersion = String(j, "eulaAcceptedVersion", "")

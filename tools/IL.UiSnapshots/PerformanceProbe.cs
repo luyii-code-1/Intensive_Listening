@@ -58,7 +58,24 @@ internal static partial class Program
         await CaptureAsync(shell, "performance-teacher");
         var list = (ListBox?)GetField(teacher, "_reviewList"); var teacherRows = list?.GetRealizedContainers().Count();
         if (teacherRows is null or <= 0 or >= 80) throw new InvalidOperationException("Teacher transcript realization is not bounded by its viewport.");
-        var report = new { FixtureCues = cues.Length, LibraryItems = 50, HomeBatchMilliseconds = homeMs, HomeBatchAllocatedBytes = homeBytes, StudentBuildMilliseconds = openMs, StudentBuildAllocatedBytes = openBytes, StudentRealizedCues = renderedRows, StudentVisualCount = controls, StudentRealizedAfterScroll = scrolledRows, TeacherOpenMilliseconds = teacherMs, TeacherRealizedRows = teacherRows, Boundary = "Offscreen Skia UI construction and realization, not native platform FPS" };
+        var teacherScroll = list!.GetVisualDescendants().OfType<ScrollViewer>().First();
+        for (var cycle = 0; cycle < 3; cycle++)
+            foreach (var fraction in new[] { .25, .6, 1, .4, 0 })
+            {
+                teacherScroll.Offset = new Avalonia.Vector(0, Math.Max(0, teacherScroll.Extent.Height - teacherScroll.Viewport.Height) * fraction);
+                await Task.Delay(65); Dispatcher.UIThread.RunJobs();
+                if (list!.GetRealizedContainers().Count() is <= 0 or >= 80) throw new InvalidOperationException("Teacher recycling lost its bounded viewport.");
+            }
+        SetField(teacher, "_overview", true); Invoke(teacher, "BuildStage"); await Task.Delay(650);
+        SetField(teacher, "_overview", false); Invoke(teacher, "BuildStage"); await Task.Delay(650);
+        await InvokeAsync(teacher, "ChangePhaseAsync", ReviewPhase.Cloze); await Task.Delay(650);
+        var clozeList = (ListBox)GetField(teacher, "_reviewList")!;
+        var clozeScroll = clozeList.GetVisualDescendants().OfType<ScrollViewer>().First();
+        foreach (var fraction in new[] { 1d, 0d, .7, .1, 1, 0 })
+        { clozeScroll.Offset = new Avalonia.Vector(0, Math.Max(0, clozeScroll.Extent.Height - clozeScroll.Viewport.Height) * fraction); await Task.Delay(80); Dispatcher.UIThread.RunJobs(); }
+        await teacher.ReturnToProjectsAsync(); await Task.Delay(650);
+        if (GetField(teacher, "_reviewList") != null) throw new InvalidOperationException("Review was retained after leaving the project.");
+        var report = new { TeacherScrollRecycles = 15, TeacherClozeRecycles = 6, TeacherOverviewReturnAndClose = "passed", FixtureCues = cues.Length, LibraryItems = 50, HomeBatchMilliseconds = homeMs, HomeBatchAllocatedBytes = homeBytes, StudentBuildMilliseconds = openMs, StudentBuildAllocatedBytes = openBytes, StudentRealizedCues = renderedRows, StudentVisualCount = controls, StudentRealizedAfterScroll = scrolledRows, TeacherOpenMilliseconds = teacherMs, TeacherRealizedRows = teacherRows, Boundary = "Offscreen Skia UI construction and realization, not native platform FPS" };
         await File.WriteAllTextAsync(Path.Combine(_output, "performance.json"), JsonSerializer.Serialize(report, Json)); Console.WriteLine(JsonSerializer.Serialize(report, Json));
         host.Content = null; shell.Close();
     }

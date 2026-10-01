@@ -25,9 +25,12 @@ public partial class MainWindow : Window
     private int _destination, _settingsBack;
     private string? _openedAudioPath;
     private FAContentDialog? _taskDialog;
+    private readonly SpringScalar _paneMotion;
     public MainWindow()
     {
         InitializeComponent();
+        _paneMotion = new(320, width => ShellGrid.ColumnDefinitions[0].Width = new GridLength(width));
+        Closed += (_, _) => _paneMotion.Stop();
         var standalone=Program.Arguments.Contains("--standalone");
         _services=new(action=>Dispatcher.UIThread.Post(action),standalone);
         _student=new(_services.Student);
@@ -61,10 +64,18 @@ public partial class MainWindow : Window
         _services.Queue.Changed+=(_,_)=>Dispatcher.UIThread.Post(UpdatePane);
         Navigate(0);
         if(standalone){NavigationPane.IsVisible=false;ShellGrid.ColumnDefinitions[0].Width=new GridLength(0);Width=1120;}
+        void BackgroundFault(CrashReport report) => Dispatcher.UIThread.Post(async () =>
+        {
+            await new CrashReportStore(_services.DataDirectory).FlushAsync(_services.Settings.TelemetryEnabled, _services.Telemetry.ReportCrashAsync);
+            var reportWindow = new CrashReportWindow(new CrashReportStore(_services.DataDirectory).PathFor(report.Id), submit: false);
+            reportWindow.Show(this);
+        });
+        CrashMonitor.BackgroundFault += BackgroundFault;
+        Closed += (_, _) => CrashMonitor.BackgroundFault -= BackgroundFault;
         Opened+=async(_,_)=>await InitializeAsync();
         Closing+=async(_,e)=>{if(_closing)return;e.Cancel=true;_closing=true;try{await _services.DisposeAsync();}catch(Exception ex){AppLog.Warning("关闭时保存失败",ex);}Close();};
     }
-    private void ShowSettings(){if(_destination!=2)_settingsBack=_destination;_settings.Populate(_services.Settings);Navigate(2);}
+    private void ShowSettings(){if(_destination==2)return;if(_destination!=2)_settingsBack=_destination;_settings.Populate(_services.Settings);Navigate(2);}
     private void Navigate(int destination)
     {
         _destination=destination;PageHost.Content=destination switch{1=>_teacher,2=>_settings,_=>_student};
@@ -75,14 +86,13 @@ public partial class MainWindow : Window
         if (_openingTeacher || _destination == 1) return;
         var fromStudent = _destination == 0;
         _openingTeacher = true; NavigationBusy.IsVisible = true; _teacher.IsHitTestVisible = false;
-        Navigate(1);
+        var source = _destination;
         try
         {
-            // Present the cached page before waiting for media and disk operations.
-            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
             await _services.Student.PauseAsync();
             if (fromStudent) await _teacher.ReturnToProjectsAsync();
             if (!_teacherLoaded) { await _teacher.RefreshAsync(); _teacherLoaded = true; }
+            if (_destination == source) Navigate(1);
         }
         catch (Exception ex) { AppLog.Warning("打开制作页面失败", ex); WorkspaceToast.Show(this, "无法打开制作页面", ex.Message, true); }
         finally { _openingTeacher = false; NavigationBusy.IsVisible = false; _teacher.IsHitTestVisible = true; }
@@ -92,7 +102,9 @@ public partial class MainWindow : Window
     {
         if(_services.Standalone)return;
         var expanded=_paneExpanded&&ClientSize.Width>=1200;
-        ShellGrid.ColumnDefinitions[0].Width=new GridLength(expanded?320:48);
+        var paneWidth = expanded ? 320 : 48;
+        if (IsVisible) _ = _paneMotion.To(paneWidth, FirstRunWizard.MotionReduced() ? .2 : .32);
+        else _paneMotion.Set(paneWidth);
         NavigationContent(StudentButton,"play","播放",expanded,_destination==0);
         NavigationContent(TeacherButton,"education","制作",expanded,_destination==1);
         NavigationContent(SettingsButton,"settings","设置",expanded,_destination==2);
@@ -102,7 +114,11 @@ public partial class MainWindow : Window
     {
         button.Classes.Set("selected",selected); ToolTip.SetTip(button,label);
         var content=new Grid{ColumnDefinitions=new ColumnDefinitions("4,36,*,Auto")};
-        if(selected)content.Children.Add(new Border{Width=3,Height=20,Background=WorkspaceUi.Accent,CornerRadius=new CornerRadius(2),VerticalAlignment=VerticalAlignment.Center});
+        if(selected)
+        {
+            var indicator = new Border { Width = 3, Height = 20, Background = WorkspaceUi.Accent, CornerRadius = new CornerRadius(2), VerticalAlignment = VerticalAlignment.Center };
+            SpringMotion.Entrance(indicator, 0, .8); content.Children.Add(indicator);
+        }
         var glyph=WorkspaceUi.Icon(icon);Grid.SetColumn(glyph,1);content.Children.Add(glyph);
         if(expanded){var text=WorkspaceUi.Text(label);text.VerticalAlignment=VerticalAlignment.Center;Grid.SetColumn(text,2);content.Children.Add(text);}
         if(count>0&&expanded){var badge=WorkspaceUi.Text(count.ToString(),12);badge.Foreground=Brushes.White;var border=new Border{Background=WorkspaceUi.Accent,CornerRadius=new CornerRadius(10),Padding=new Thickness(6,1),Margin=new Thickness(8,0,12,0),VerticalAlignment=VerticalAlignment.Center,Child=badge};Grid.SetColumn(border,3);content.Children.Add(border);}
@@ -129,11 +145,13 @@ public partial class MainWindow : Window
         try
         {
             await _services.InitializeAsync();ApplyTheme(_services.Settings);await _teacher.RefreshAsync();_teacherLoaded=true;_settings.Populate(_services.Settings);
-            if(!_services.Standalone&&_services.Settings.EulaAcceptedVersion.Length==0)
+            var installationPath=Path.Combine(AppContext.BaseDirectory,"installation-id.txt");
+            var installationId=File.Exists(installationPath)?(await File.ReadAllTextAsync(installationPath)).Trim():"";
+            if(!_services.Standalone&&_services.Settings.NeedsOnboarding(installationId))
             {
                 var legal=Path.Combine(AppContext.BaseDirectory,"assets","legal");
                 var settings=await AppDialogs.FirstRunAsync(this,_services.Settings,await File.ReadAllTextAsync(Path.Combine(legal,"eula_zh_cn.txt")),await File.ReadAllTextAsync(Path.Combine(legal,"privacy_zh_cn.txt")));
-                if(settings is null){Close();return;}await _services.SettingsStore.SaveAsync(settings);_settings.Populate(settings);ApplyTheme(settings);await _services.ApplySettingsAsync(settings);
+                if(settings is null){Close();return;}settings=settings with { CompletedInstallationId=installationId };await _services.SettingsStore.SaveAsync(settings);_settings.Populate(settings);ApplyTheme(settings);await _services.ApplySettingsAsync(settings);
             }
             else await _services.ApplySettingsAsync(_services.Settings);
             for(var i=0;i<Program.Arguments.Length;i++)
@@ -141,6 +159,8 @@ public partial class MainWindow : Window
                 var file=Program.Arguments[i];if(file.EndsWith(".ilp",StringComparison.OrdinalIgnoreCase)&&File.Exists(file)){await _student.ImportFileAsync(file,_services.Standalone);break;}
             }
             await AppLog.WriteAsync("INFO","应用初始化完成");
+            foreach (var report in new CrashReportStore(_services.DataDirectory).Reports().Where(r => !r.Displayed))
+                new CrashReportWindow(new CrashReportStore(_services.DataDirectory).PathFor(report.Id), submit: false).Show(this);
             if(_services.Queue.InterruptedCount>0&&await AppDialogs.ConfirmAsync(this,"恢复转写任务",$"发现 {_services.Queue.InterruptedCount} 个未完成的任务，继续处理？","恢复"))_services.Queue.ResumeInterrupted();
         }
         catch(Exception ex){AppLog.Warning("初始化失败",ex);_services.Student.Status=$"初始化失败：{ex.Message}";}

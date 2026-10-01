@@ -1,6 +1,8 @@
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
+using System.Text.Json.Nodes;
+using IL.Core.Infrastructure;
 namespace IL.Core.Telemetry;
 public interface ITelemetryTransport
 {
@@ -8,10 +10,12 @@ public interface ITelemetryTransport
     Task<bool> EventAsync(string name,IReadOnlyDictionary<string,string> fields); Task<bool> ErrorLogAsync(string text);
     Task<string?> InstallCycleAsync(); Task<string?> InstallUuidAsync(); Task<IReadOnlyDictionary<string,string>> SystemProfileAsync(); Task<bool> CanReachCollectorAsync();
 }
-public sealed class WindowsTelemetryTransport : ITelemetryTransport, IDisposable
+public sealed class NativeTelemetryTransport : ITelemetryTransport, IDisposable
 {
     private readonly object _gate = new();
     private nint _library,_options; private bool _running;
+    private FileStream? _cacheLease;
+    private string _collectorHost = "hm3xyft6jd-default-cn.rum.aliyuncs.com";
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate nint New();
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void Free(nint value);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void SetString(nint value,[MarshalAs(UnmanagedType.LPUTF8Str)]string text);
@@ -26,18 +30,29 @@ public sealed class WindowsTelemetryTransport : ITelemetryTransport, IDisposable
     {
         lock(_gate)
         {
-        if(_running)return Task.FromResult(true); if(!OperatingSystem.IsWindows())return Task.FromResult(false);
+        if(_running)return Task.FromResult(true); if(!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS())return Task.FromResult(false);
         try
         {
-            _library=NativeLibrary.Load(Path.Combine(AppContext.BaseDirectory,"alibabacloud_rum.dll"));
+            var platform = OperatingSystem.IsWindows() ? "windows" : "macOS";
+            var settings = Path.Combine(AppContext.BaseDirectory, "assets", "telemetry", "native-rum.json");
+            var config = File.Exists(settings) ? JsonNode.Parse(File.ReadAllText(settings))?[platform] : null;
+            var appId = config?["appId"]?.ToString() ?? (OperatingSystem.IsWindows() ? "hm3xyft6jd@76922d8db672517" : "");
+            var address = config?["configAddress"]?.ToString() ?? (OperatingSystem.IsWindows() ? "https://hm3xyft6jd-default-cn.rum.aliyuncs.com" : "");
+            if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(address))
+            { AppLog.Warning("当前平台的遥测应用尚未配置，崩溃报告保存在本机，配置后可补报"); return Task.FromResult(false); }
+            _collectorHost = new Uri(address).Host;
+            // A stable cache lets the native SDK retry its persisted queue after a crash.
+            // Only its current owner may remove it when consent is revoked.
+            _cacheLease = new FileStream(cachePath + ".owner.lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            _library=NativeLibrary.Load(OperatingSystem.IsWindows() ? Path.Combine(AppContext.BaseDirectory,"alibabacloud_rum.dll") : Path.Combine(AppContext.BaseDirectory,"arms","libalibabacloud_rum.dylib"));
             _ = Function<Free>("options_free"); _ = Function<Close>("close"); _ = Function<NewNamed>("custom_event_new"); _ = Function<Extra>("custom_event_add_extra"); _ = Function<Free>("custom_event_report"); _ = Function<NewNamed>("custom_log_new"); _ = Function<Log>("custom_log_set_log"); _ = Function<Free>("custom_log_report");
             _options=Function<New>("options_new")(); if(_options==0)throw new InvalidOperationException("ARMS options initialization failed");
-            Function<SetString>("options_set_config_address")(_options,"https://hm3xyft6jd-default-cn.rum.aliyuncs.com"); Function<SetString>("options_set_app_id")(_options,"hm3xyft6jd@76922d8db672517"); Function<SetString>("options_set_app_name")(_options,"Intensive Listening"); Function<SetString>("options_set_app_version")(_options,version); Function<SetString>("options_set_cache_path")(_options,cachePath);
+            Function<SetString>("options_set_config_address")(_options,address); Function<SetString>("options_set_app_id")(_options,appId); Function<SetString>("options_set_app_name")(_options,"Intensive Listening"); Function<SetString>("options_set_app_version")(_options,version); Function<SetString>("options_set_cache_path")(_options,cachePath);
             Function<SetInt>("options_set_auto_curl_tracking")(_options,1); Function<SetInt>("options_set_auto_cef_tracking")(_options,0); Function<SetInt>("options_set_auto_crash_tracking")(_options,1); _running=Function<Init>("init")(_options)==0; if(!_running)Dispose();return Task.FromResult(_running);
-        }catch(Exception e)when(e is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException or InvalidOperationException){Dispose();return Task.FromResult(false);}
+        }catch(Exception e)when(e is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException or InvalidOperationException or IOException or System.Text.Json.JsonException){Dispose();return Task.FromResult(false);}
         }
     }
-    public Task StopAsync(string cachePath) { lock(_gate) { if(_running && Function<Close>("close")()!=0) { _running=false; throw new InvalidOperationException("ARMS telemetry close failed"); } _running=false; Dispose(); if(Directory.Exists(cachePath))Directory.Delete(cachePath,true); return Task.CompletedTask; } }
+    public Task StopAsync(string cachePath) { lock(_gate) { var ownsCache = _cacheLease is not null; if(_running && Function<Close>("close")()!=0) { _running=false; throw new InvalidOperationException("ARMS telemetry close failed"); } _running=false; Dispose(); if(ownsCache && !string.IsNullOrEmpty(cachePath) && Directory.Exists(cachePath)) { try { Directory.Delete(cachePath,true); } catch(IOException e) { IL.Core.Infrastructure.AppLog.Warning("遥测缓存仍被占用，稍后可通过缓存清理移除",e); } } return Task.CompletedTask; } }
     public Task<bool> EventAsync(string name,IReadOnlyDictionary<string,string> fields) { lock(_gate) { if(!_running)return Task.FromResult(false); var ev=Function<NewNamed>("custom_event_new")("intensive_listening",name);if(ev==0)return Task.FromResult(false); foreach(var field in fields)Function<Extra>("custom_event_add_extra")(ev,field.Key,field.Value);Function<Free>("custom_event_report")(ev);return Task.FromResult(true); } }
     public Task<bool> ErrorLogAsync(string text) { lock(_gate) { if(!_running)return Task.FromResult(false);var log=Function<NewNamed>("custom_log_new")("app_error","error_notice");if(log==0)return Task.FromResult(false);Function<Log>("custom_log_set_log")(log,4,text);Function<Free>("custom_log_report")(log);return Task.FromResult(true); } }
     private static string? RegistryValue(string key,string name) { if(!OperatingSystem.IsWindows())return null;using var registry=Registry.LocalMachine.OpenSubKey(key);return registry?.GetValue(name) as string; }
@@ -53,6 +68,21 @@ public sealed class WindowsTelemetryTransport : ITelemetryTransport, IDisposable
         if(OperatingSystem.IsWindows()){for(uint i=0;;i++){var d=new DisplayDevice{Size=Marshal.SizeOf<DisplayDevice>()};if(!EnumDisplayDevices(null,i,ref d,0))break;if((d.StateFlags&4)!=0){fields["gpu_model"]=d.DeviceString;break;}}var m=new MemoryStatus{Length=(uint)Marshal.SizeOf<MemoryStatus>()};if(GlobalMemoryStatusEx(ref m))fields["memory_mib"]=(m.TotalPhysical/1024/1024).ToString();}
         return Task.FromResult<IReadOnlyDictionary<string,string>>(fields);
     }
-    public async Task<bool> CanReachCollectorAsync() {try{using var socket=new TcpClient();using var cancellation=new CancellationTokenSource(TimeSpan.FromSeconds(3));await socket.ConnectAsync("hm3xyft6jd-default-cn.rum.aliyuncs.com",443,cancellation.Token);return true;}catch(Exception e)when(e is SocketException or OperationCanceledException){return false;}}
-    public void Dispose() {lock(_gate) {if(_library==0)return; try{if(_running)Function<Close>("close")();if(_options!=0)Function<Free>("options_free")(_options);}finally{_options=0;_running=false;NativeLibrary.Free(_library);_library=0;}}}
+    public async Task<bool> CanReachCollectorAsync() {try{using var socket=new TcpClient();using var cancellation=new CancellationTokenSource(TimeSpan.FromSeconds(3));await socket.ConnectAsync(_collectorHost,443,cancellation.Token);return true;}catch(Exception e)when(e is SocketException or OperationCanceledException){return false;}}
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            try
+            {
+                if (_library != 0)
+                {
+                    if (_running) Function<Close>("close")();
+                    if (_options != 0) Function<Free>("options_free")(_options);
+                    NativeLibrary.Free(_library);
+                }
+            }
+            finally { _options = 0; _running = false; _library = 0; _cacheLease?.Dispose(); _cacheLease = null; }
+        }
+    }
 }

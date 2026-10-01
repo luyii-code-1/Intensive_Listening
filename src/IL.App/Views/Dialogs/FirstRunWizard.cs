@@ -223,7 +223,7 @@ internal sealed class FirstRunWizard : Border
         _visibleStep = _step;
         _fraction.Text = $"{(_initial.CloudReady && _step == 5 ? 5 : _step + 1)} / {(_initial.CloudReady ? 5 : 6)}";
         _fraction.IsVisible = _step != 0;
-        if (!_attached || MotionReduced())
+        if (!_attached)
         {
             _page.Children.Clear(); _page.Children.Add(body); Normalize(body); return;
         }
@@ -233,8 +233,7 @@ internal sealed class FirstRunWizard : Border
     {
         CancelTransition();
         var body = _pages[_step];
-        if (MotionReduced()) { Normalize(body); return; }
-        var cancellation = _transition = new CancellationTokenSource();
+                var cancellation = _transition = new CancellationTokenSource();
         try
         {
             if (_windows && _step == 0 && !_introduced)
@@ -277,34 +276,20 @@ internal sealed class FirstRunWizard : Border
             }
         }
     }
-    private static Task Entrance(Control body, double x, double y, CancellationToken cancellation)
+    private static async Task Entrance(Control body, double x, double y, CancellationToken cancellation)
     {
-        body.Opacity = 0; body.RenderTransform = new TranslateTransform(x, y);
-        var animation = new Animation
-        {
-            Duration = TimeSpan.FromMilliseconds(300), Easing = new CubicEaseOut(), FillMode = FillMode.None,
-            Children =
-            {
-                new KeyFrame { Cue = new Cue(0), Setters = { new Setter(OpacityProperty, 0d), new Setter(TranslateTransform.XProperty, x), new Setter(TranslateTransform.YProperty, y) } },
-                new KeyFrame { Cue = new Cue(1), Setters = { new Setter(OpacityProperty, 1d), new Setter(TranslateTransform.XProperty, 0d), new Setter(TranslateTransform.YProperty, 0d) } },
-            }
-        };
-        return animation.RunAsync(body, cancellationToken: cancellation);
+        var motion = SpringMotion.For(body);
+        motion.Set(0, x: MotionReduced() ? 0 : x, y: MotionReduced() ? 0 : y);
+        using var registration = cancellation.Register(motion.Stop);
+        await motion.To(); cancellation.ThrowIfCancellationRequested();
     }
-    private static Task Slide(Control body, double from, double to, double opacityFrom, double opacityTo, CancellationToken cancellation)
+    private static async Task Slide(Control body, double from, double to, double opacityFrom, double opacityTo, CancellationToken cancellation)
     {
-        body.RenderTransform = new TranslateTransform(from, 0);
-        return new Animation
-        {
-            Duration = TimeSpan.FromMilliseconds(300), Easing = new CubicEaseOut(), FillMode = FillMode.None,
-            Children =
-            {
-                new KeyFrame { Cue = new Cue(0), Setters = { new Setter(OpacityProperty, opacityFrom), new Setter(TranslateTransform.XProperty, from) } },
-                new KeyFrame { Cue = new Cue(1), Setters = { new Setter(OpacityProperty, opacityTo), new Setter(TranslateTransform.XProperty, to) } },
-            }
-        }.RunAsync(body, cancellationToken: cancellation);
+        var motion = SpringMotion.For(body);
+        using var registration = cancellation.Register(motion.Stop);
+        await motion.To(opacityTo, x: to); cancellation.ThrowIfCancellationRequested();
     }
-    private static void Normalize(Control body) { body.Opacity = 1; body.RenderTransform = new TranslateTransform(); body.IsHitTestVisible = true; }
+    private static void Normalize(Control body) { SpringMotion.For(body).Set(); body.IsHitTestVisible = true; }
     private void CancelTransition()
     {
         _transition?.Cancel(); _transition?.Dispose(); _transition = null;

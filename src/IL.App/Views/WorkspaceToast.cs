@@ -70,19 +70,20 @@ public sealed class WorkspaceToast : UserControl
             Severity = error ? FAInfoBarSeverity.Error : FAInfoBarSeverity.Success,
             HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 400
         };
-        var container = new Border { Child = bar, Opacity = 0, RenderTransform = TransformOperations.Parse("translateY(-25px)") };
-        container.Transitions = new Transitions
-        {
-            new DoubleTransition { Property = OpacityProperty, Duration = TimeSpan.FromMilliseconds(300) },
-            new TransformOperationsTransition { Property = RenderTransformProperty, Duration = TimeSpan.FromMilliseconds(300), Easing = new SplineEasing { X1 = 0, Y1 = .5, X2 = 0, Y2 = 1 } }
-        };
+        var container = new Border { Child = bar };
+        var motion = SpringMotion.Entrance(container, 12, .99);
         var closing = false;
         IDisposable? deadline = null;
         void Close()
         {
             if (closing) return; closing = true; deadline?.Dispose(); if (deadline != null) _timers.Remove(deadline);
-            bar.IsEnabled = false; container.Opacity = 0;
-            Schedule(() => _messages.Children.Remove(container), TimeSpan.FromMilliseconds(300));
+            bar.IsEnabled = false;
+            _ = RemoveAsync();
+        }
+        async Task RemoveAsync()
+        {
+            await motion.To(0, y: 12, scale: .99, response: .22);
+            _messages.Children.Remove(container);
         }
         bar.CloseButtonClick += (_, _) => Close();
         // Keep the bar visible while the outer container plays its fade-out.
@@ -95,7 +96,6 @@ public sealed class WorkspaceToast : UserControl
             });
         }
         _messages.Children.Insert(0, container);
-        Dispatcher.UIThread.Post(() => { container.Opacity = 1; container.RenderTransform = TransformOperations.Parse("translateY(0px)"); }, DispatcherPriority.Loaded);
         deadline = Schedule(Close, error ? ErrorDuration : SuccessDuration);
     }
 

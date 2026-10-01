@@ -42,7 +42,8 @@ public sealed class TeacherView : UserControl
     private readonly Button _back = new();
     private readonly ProgressBar _steps = new() { Minimum = 0, Maximum = 3, Height = 4 };
     private readonly Grid _stepLabels = new() { ColumnDefinitions = new ColumnDefinitions("*,*,*,*") };
-    private readonly ContentControl _stage = new();
+    private readonly WorkspaceContentHost _stage = new();
+    private string? _stageKey;
     private readonly TextBlock _emptyProjects = WorkspaceUi.Text("暂无项目", 12);
     private readonly DispatcherTimer _autosave = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private readonly HashSet<int> _selected = [];
@@ -221,8 +222,11 @@ public sealed class TeacherView : UserControl
     }
     private void BuildStage()
     {
+        var key = $"{_vm.Project?.Id}|{_vm.Project?.Step}|{_vm.Project?.ReviewPhase}|{_overview}|{_manual}";
+        _stage.AnimateChanges = key != _stageKey; _stageKey = key;
         if (_vm.Project is not { } p)
         {
+            _reviewList = null; _reviewScroll = null; _reviewStructure = null; _cueItemIndexes.Clear();
             var empty = WorkspaceUi.Stack(WorkspaceUi.Icon("open_folder_horizontal", 40), WorkspaceUi.Text("还没有课程项目", 17, true), WorkspaceUi.Text("创建项目后即可绑定音频、转写字幕并导出精听包。"));
             empty.Children[0].Margin = new Thickness(0, 0, 0, 10);
             foreach (var text in empty.Children.OfType<TextBlock>()) text.TextAlignment = TextAlignment.Center;
@@ -333,6 +337,7 @@ public sealed class TeacherView : UserControl
         var previousOffset = _reviewScroll?.Offset ?? default;
         _cueRows.Clear(); _cueItemIndexes.Clear(); _reviewStructure = structure;
         var rows = new List<TranscriptRow>();
+        var transcriptSnapshot = _editingCues;
         var materials = p.Exercises.EffectiveMaterials;
         var materialByCue = new Dictionary<int, LessonMaterial>();
         foreach (var material in materials)
@@ -340,7 +345,7 @@ public sealed class TeacherView : UserControl
         void AddCue(int cue)
         {
             _cueItemIndexes[cue] = rows.Count;
-            rows.Add(new TranscriptRow(() => BuildCueRow(p, cue, grouping), cue));
+            rows.Add(new TranscriptRow(() => BuildCueRow(p, cue, grouping, transcriptSnapshot[cue]), cue));
         }
         for (var sectionIndex = 0; sectionIndex < structure.Sections.Count; sectionIndex++)
         {
@@ -395,7 +400,7 @@ public sealed class TeacherView : UserControl
             Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0),
             ItemContainerTheme = TranscriptItemTheme,
             ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel()),
-            ItemTemplate = new FuncDataTemplate<TranscriptRow>((entry, _) => entry!.Build(), supportsRecycling: false),
+            ItemTemplate = new FuncDataTemplate<TranscriptRow>((entry, _) => entry?.Build(), supportsRecycling: false),
             ItemsSource = rows
         };
         ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Disabled);
@@ -409,9 +414,9 @@ public sealed class TeacherView : UserControl
         list.AddHandler(PointerReleasedEvent, (_, _) => { if (_dragSelection != null) { _dragSelection = null; _dragAnchor = _dragSection = null; BuildStage(); } }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
         return list;
     }
-    private Control BuildCueRow(CourseProject p, int index, bool grouping)
+    private Control BuildCueRow(CourseProject p, int index, bool grouping, SrtCue cue)
     {
-        var cue = _editingCues[index]; var material = p.Exercises.MaterialForCue(index);
+        var material = p.Exercises.MaterialForCue(index);
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions(grouping ? "72,38,*" : "72,*"), MinHeight = 54, Margin = new Thickness(10, 8) };
         var metadata = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center }; metadata.Children.Add(WorkspaceUi.Text(Clock(cue.Start), 12)); metadata.Children.Add(WorkspaceUi.Text(MaterialLabel(p.Exercises, material), 12)); row.Children.Add(metadata);
         if (grouping)
@@ -423,7 +428,7 @@ public sealed class TeacherView : UserControl
             row.PointerEntered += (_, _) => { if (_dragSelection != null && material == null) ApplyDragSelection(index); };
             Grid.SetColumn(handle, 1); row.Children.Add(handle);
             var text = WorkspaceUi.Input(cue.Text, multiline: true); text.MinHeight = 32; text.MaxHeight = 84; text.VerticalAlignment = VerticalAlignment.Center;
-            text.TextChanged += (_, _) => { if (!_loading && text.Text != _editingCues[index].Text) { var cues = _editingCues.ToArray(); cues[index] = cues[index] with { Text = text.Text ?? "" }; _editingCues = cues; _transcript.Text = SrtParser.Serialize(cues); } };
+            text.TextChanged += (_, _) => { if (!_loading && _vm.Project?.Id == p.Id && index < _editingCues.Count && text.Text != _editingCues[index].Text) { var cues = _editingCues.ToArray(); cues[index] = cues[index] with { Text = text.Text ?? "" }; _editingCues = cues; _transcript.Text = SrtParser.Serialize(cues); } };
             Grid.SetColumn(text, 2); row.Children.Add(text);
         }
         else

@@ -47,7 +47,7 @@ internal sealed class WelcomeIntro : Grid
         var animations = new List<Task>();
         animations.Add(new Animation
         {
-            Duration = TimeSpan.FromSeconds(3), Easing = new CubicEaseOut(), FillMode = FillMode.Forward,
+            Duration = TimeSpan.FromSeconds(3), Easing = new SpringEasing(), FillMode = FillMode.Forward,
             Children =
             {
                 Frame(0, new Setter(ScaleTransform.ScaleXProperty, 1.25), new Setter(ScaleTransform.ScaleYProperty, 1.25)),
@@ -62,7 +62,7 @@ internal sealed class WelcomeIntro : Grid
             var end = rise * 2 + 750;
             animations.Add(new Animation
             {
-                Duration = TimeSpan.FromMilliseconds(end), FillMode = FillMode.Forward, Easing = new CubicEaseOut(),
+                Duration = TimeSpan.FromMilliseconds(end), FillMode = FillMode.Forward, Easing = new SpringEasing(),
                 Children =
                 {
                     At(0, new Setter(OpacityProperty, 0d), new Setter(TranslateTransform.YProperty, 50d), new Setter(Rotate3DTransform.AngleXProperty, 0d)),
@@ -73,7 +73,7 @@ internal sealed class WelcomeIntro : Grid
             }.RunAsync(_pulses[i], cancellationToken: cancellation));
             animations.Add(new Animation
             {
-                Duration = TimeSpan.FromMilliseconds(end), FillMode = FillMode.Forward, Easing = new CubicEaseOut(),
+                Duration = TimeSpan.FromMilliseconds(end), FillMode = FillMode.Forward, Easing = new SpringEasing(),
                 Children =
                 {
                     At(0, new Setter(OpacityProperty, 0d), new Setter(Rotate3DTransform.AngleXProperty, -90d)),
@@ -89,14 +89,14 @@ internal sealed class WelcomeIntro : Grid
         {
             new Animation
             {
-                Duration = TimeSpan.FromMilliseconds(700), FillMode = FillMode.Forward, Easing = new CubicEaseOut(),
+                Duration = TimeSpan.FromMilliseconds(700), FillMode = FillMode.Forward, Easing = new SpringEasing(),
                 Children = { Frame(0, new Setter(StackPanel.SpacingProperty, 4d)), Frame(1, new Setter(StackPanel.SpacingProperty, 0d)) }
             }.RunAsync(_wordmark, cancellationToken: cancellation)
         };
         foreach (var letter in _letters)
             settle.Add(new Animation
             {
-                Duration = TimeSpan.FromMilliseconds(700), FillMode = FillMode.Forward, Easing = new CubicEaseOut(),
+                Duration = TimeSpan.FromMilliseconds(700), FillMode = FillMode.Forward, Easing = new SpringEasing(),
                 Children = { Frame(0, new Setter(MinWidthProperty, 24d)), Frame(1, new Setter(MinWidthProperty, 0d)) }
             }.RunAsync(letter, cancellationToken: cancellation));
         await Task.WhenAll(settle);

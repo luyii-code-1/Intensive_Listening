@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Bundle locally installed FFmpeg and official VLC with relocatable Mach-O dependencies."""
-import hashlib, json, os, pathlib, plistlib, re, shutil, subprocess, sys
+import hashlib, json, os, pathlib, plistlib, re, shutil, subprocess, sys, zipfile, uuid
 
 app, vlc, ffmpeg = map(pathlib.Path, sys.argv[1:4])
 mac = app / 'Contents/MacOS'
+(mac / 'installation-id.txt').write_text(str(uuid.uuid4()))
 resources = app / 'Contents/Resources'
 resources.mkdir(parents=True, exist_ok=True)
 licenses = resources / 'licenses'
@@ -18,6 +19,18 @@ shutil.copytree(vlc / 'Contents/MacOS/plugins', mac / 'libvlc/plugins', symlinks
 shutil.copy(vlc / 'Contents/Resources/README', licenses / 'VLC-README.txt')
 for source in ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'assets/legal/LGPL-2.1.txt']:
     shutil.copy(source, licenses / pathlib.Path(source).name)
+
+# Official ARMS C SDK, pinned independently of the Windows package.
+arms_archive = pathlib.Path('artifacts/native/AlibabaCloud_RUM_macOS.zip')
+assert hashlib.sha256(arms_archive.read_bytes()).hexdigest() == 'b837d135b16eb1ec087cfba8796be2425765cb39e16b161d663364135e59085e', 'ARMS macOS checksum mismatch'
+arms = mac / 'arms'
+arms.mkdir(exist_ok=True)
+with zipfile.ZipFile(arms_archive) as sdk:
+    for name in ['libalibabacloud_rum.dylib', 'libcurl.dylib']:
+        (arms / name).write_bytes(sdk.read('AlibabaCloud_RUM_macOS_0.4.4/lib/arm64/Release/' + name))
+        (arms / name).chmod(0o755)
+shutil.copy('windows/third_party/arms/README.md', licenses / 'ARMS.md')
+(licenses / 'ARMS-macOS.json').write_text(json.dumps({'version': '0.4.4', 'source': 'https://rum-sdk.oss-cn-hangzhou.aliyuncs.com/native/AlibabaCloud_RUM_macOS.zip', 'sha256': 'b837d135b16eb1ec087cfba8796be2425765cb39e16b161d663364135e59085e'}, indent=2))
 
 # Homebrew dependencies are absolute. Copy their closure and rewrite each load command.
 ffmpeg = ffmpeg.resolve()

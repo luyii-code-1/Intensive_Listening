@@ -33,7 +33,7 @@ License: Proprietary / Alibaba Cloud Terms
 
 Usage: Real User Monitoring / Crash & telemetry reporting
 
-Windows 版内置官方 RUM PC SDK 0.4.4 的 x64 DLL。下载来源及 SHA-256 记录在
+Windows 版内置官方 RUM PC SDK 0.4.4 的 x64 DLL，macOS 构建准备了同版本的 ARM64 动态库。macOS 遥测当前暂未启用。下载来源及 SHA-256 记录在
 `windows/third_party/arms/README.md`。应用仅在用户明确授权后加载 SDK，
 使用 SDK 默认采集配置：开启 libcurl 网络请求与原生崩溃采集，CEF 采集保持默认关闭。
 用户关闭匿名数据分析后，应用关闭 SDK 并清理待发送缓存。

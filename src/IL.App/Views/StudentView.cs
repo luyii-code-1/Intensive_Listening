@@ -25,7 +25,8 @@ public sealed class StudentView : UserControl
     private readonly StudentViewModel _vm;
     private readonly Grid _page = new() { RowDefinitions = new RowDefinitions("auto,*") };
     private readonly ContentControl _header = new();
-    private readonly ContentControl _body = new() { [Grid.RowProperty] = 1 };
+    private readonly WorkspaceContentHost _body = new() { [Grid.RowProperty] = 1 };
+    private string? _bodyKey;
     private readonly StackPanel _transcriptContent = new() { Spacing = 10 };
     private readonly ScrollViewer _transcript = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
     private readonly ContentControl _questions = new();
@@ -150,7 +151,7 @@ public sealed class StudentView : UserControl
         _selectedAnswers.Clear(); _revealedAnswers.Clear(); _questionMaterialId = null;
         foreach (var control in new Control[] { _questions, _index, _materialCloze, _allCloze, _return, _play, _transcript, _hideSubtitles }) DetachControl(control);
         var player = BuildPlayer();
-        if (!_vm.HasTranscript) _body.Content = player;
+        if (!_vm.HasTranscript) PresentBody(player, "audio:" + _vm.Title);
         else
         {
             BuildTranscript();
@@ -159,9 +160,13 @@ public sealed class StudentView : UserControl
             var returnCard = Card(_return, new Thickness(6)); returnCard.HorizontalAlignment = HorizontalAlignment.Right; returnCard.VerticalAlignment = VerticalAlignment.Top; returnCard.Margin = new Thickness(8);
             returnCard.Bind(IsVisibleProperty, new Binding(nameof(_vm.CanReturn)));
             transcriptPane.Children.Add(returnCard);
-            _body.Content = new StudentSplitPanel(player, transcriptPane);
+            PresentBody(new StudentSplitPanel(player, transcriptPane), "lesson:" + _vm.CurrentLesson?.Id);
         }
         UpdatePresentation(); UpdateActiveCue();
+    }
+    private void PresentBody(Control content, string key)
+    {
+        _body.AnimateChanges = _bodyKey != key; _bodyKey = key; _body.Content = content;
     }
     private void BuildHeader()
     {
@@ -197,14 +202,14 @@ public sealed class StudentView : UserControl
             var icon = WorkspaceUi.Icon("open_file", 40); icon.HorizontalAlignment = HorizontalAlignment.Center; icon.Margin = new Thickness(0, 0, 0, 18);
             empty.Children.Add(icon); empty.Children.Add(new TextBlock { Text = "打开音频或精听包", FontSize = 17, FontWeight = FontWeight.Medium, TextAlignment = TextAlignment.Center });
             empty.Children.Add(new TextBlock { Text = "直接播放常见音频，或导入带有题目与挖空练习的 .ilp 精听包。", TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 8, 0, 18) }); empty.Children.Add(actions);
-            _body.Content = empty; return;
+            PresentBody(empty, "home"); return;
         }
         var lessons = new StackPanel { Spacing = 8 };
         foreach (var lesson in _vm.Lessons.OrderByDescending(item => _vm.ProgressFor(item.Id)?.LastOpenedAt ?? DateTimeOffset.MinValue)) lessons.Children.Add(LessonRow(lesson));
         var content = new Grid { RowDefinitions = new RowDefinitions("auto,*"), MaxWidth = 1200, HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(24, 4, 24, 24) };
         var title = Text("最近课程", 17, true); title.Margin = new Thickness(0, 0, 0, 12); content.Children.Add(title);
         content.Children.Add(new ScrollViewer { Content = lessons, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, [Grid.RowProperty] = 1 });
-        _body.Content = content;
+        PresentBody(content, "home");
     }
     private Control LessonRow(LessonListItem lesson)
     {

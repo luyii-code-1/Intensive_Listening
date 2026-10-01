@@ -16,9 +16,7 @@
         </Grid>
       </Border>
       <Border Grid.Column="1" Background="{DynamicResource WorkspaceBackgroundBrush}" BorderBrush="{DynamicResource WorkspaceCardBorderBrush}" BorderThickness="1,1,0,0" CornerRadius="8,0,0,0">
-        <TransitioningContentControl Name="PageHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-          <TransitioningContentControl.PageTransition><views:WorkspacePageTransition /></TransitioningContentControl.PageTransition>
-        </TransitioningContentControl>
+        <views:WorkspaceContentHost Name="PageHost" />
       </Border>
     </Grid>
     <fa:FAProgressRing Name="NavigationBusy" IsVisible="False" IsActive="True" Width="24" Height="24" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,12,0" IsHitTestVisible="False" />

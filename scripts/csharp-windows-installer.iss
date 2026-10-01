@@ -30,3 +30,11 @@ Name: "{autoprograms}\Intensive Listening 2.0"; Filename: "{app}\IL.App.exe"
 Name: "{autodesktop}\Intensive Listening 2.0"; Filename: "{app}\IL.App.exe"; Tasks: desktopicon
 [Run]
 Filename: "{app}\IL.App.exe"; Description: "启动 Intensive Listening 2.0"; Flags: nowait postinstall skipifsilent
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    if not SaveStringToFile(ExpandConstant('{app}\installation-id.txt'),
+      GetSHA256OfUnicodeString(GetDateTimeString('yyyymmddhhnnss', '-', ':') + ExpandConstant('{tmp}')), False) then
+      RaiseException('Unable to record installation for first-run setup.');
+end;

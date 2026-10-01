@@ -11,7 +11,7 @@ public static class AppDialogs
 {
     public static FAContentDialog Create(Window owner, string title, object content, double maxWidth = 560, double maxHeight = 756)
     {
-        var dialog = new FAContentDialog { Title = title, Content = content };
+        var dialog = new SpringContentDialog { Title = title, Content = content };
         // The control includes the smoke layer; only the inner surface is constrained.
         void Resize()
         {

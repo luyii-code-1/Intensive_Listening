@@ -45,9 +45,11 @@ public sealed class AppServices : IAsyncDisposable
     public async Task ApplySettingsAsync(AppSettings settings)
     {
         Settings=settings;AppLog.DebugEnabled=settings.DebugLogging;
+        CrashMonitor.SetConsent(settings.TelemetryEnabled && !Standalone);
         Student.TranscriptFontSize=settings.TranscriptFontSize;
         if(!Standalone){if(settings.FileAssociationPrompted)await new IlpFileAssociation().ApplyAsync(settings.FileAssociationEnabled);if(settings.McpEnabled)await Server.StartAsync();else await Server.StopAsync();}
         await Telemetry.ApplyConsentAsync(settings.TelemetryEnabled,!Standalone);
+        if (!Standalone) await new CrashReportStore(DataDirectory).FlushAsync(settings.TelemetryEnabled, Telemetry.ReportCrashAsync);
     }
     private async Task<string> RunAsrAsync(string audio,IProgress<AsrProgress>? progress,CancellationToken ct,TimeSpan? estimated)
     {
@@ -69,5 +71,5 @@ public sealed class AppServices : IAsyncDisposable
         try{await new ProjectDelivery().CreateIlpAsync(project,temp);return await new StandaloneLessonExporter(AppContext.BaseDirectory,Path.Combine(AppContext.BaseDirectory,"tools","lesson_player_launcher.exe")).ExportAsync(temp,output);}
         finally{if(File.Exists(temp))File.Delete(temp);}
     }
-    public async ValueTask DisposeAsync(){await Server.DisposeAsync();await Queue.DisposeAsync();await Student.DisposeAsync();await Telemetry.ApplyConsentAsync(false,!Standalone);}
+    public async ValueTask DisposeAsync(){await Server.DisposeAsync();await Queue.DisposeAsync();await Student.DisposeAsync();await Telemetry.ShutdownAsync();}
 }

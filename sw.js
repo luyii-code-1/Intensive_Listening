@@ -1,7 +1,7 @@
 // Intensive Listening Web Player - Service Worker
 // Version: 1.0.0 (Offline PWA)
 
-const CACHE_NAME = 'il-pwa-v1.0.2';
+const CACHE_NAME = 'il-pwa-v1.0.3';
 
 const PRECACHE_RESOURCES = [
   './',
@@ -18,7 +18,9 @@ const PRECACHE_RESOURCES = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable.png',
-  './icons/icon.svg'
+  './icons/icon.svg',
+  './icons/favicon-32x32.png',
+  './icons/favicon-16x16.png'
 ];
 
 // Install: Cache all core assets immediately
@@ -66,19 +68,27 @@ self.addEventListener('fetch', (event) => {
   // 2. Navigation requests (HTML documents)
   if (request.mode === 'navigate') {
     event.respondWith(
-      caches.match('./index.html')
+      caches.match(request)
         .then((cachedResponse) => {
           if (cachedResponse) {
-            // Fetch in background to update cache (stale-while-revalidate for index.html)
+            // Fetch in background to update cache (stale-while-revalidate for HTML)
             fetch(request).then((networkResponse) => {
               if (networkResponse && networkResponse.status === 200) {
-                caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', networkResponse));
+                caches.open(CACHE_NAME).then((cache) => cache.put(request, networkResponse));
               }
             }).catch(() => {/* offline, keep cached */});
             return cachedResponse;
           }
-          return fetch(request).catch(() => caches.match('./index.html'));
+          // Fallback to cached index.html or root
+          return caches.match('./index.html').then((indexCached) => {
+            if (indexCached) return indexCached;
+            return caches.match('./').then((rootCached) => {
+              if (rootCached) return rootCached;
+              return fetch(request);
+            });
+          });
         })
+        .catch(() => caches.match('./index.html'))
     );
     return;
   }

@@ -1779,7 +1779,7 @@ class IntensiveListeningApp {
   initPwaServiceWorker() {
     // 1. Register Service Worker for Offline PWA
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
+      const registerSW = () => {
         navigator.serviceWorker.register('./sw.js')
           .then((reg) => {
             console.log('[PWA] Service Worker registered:', reg.scope);
@@ -1795,7 +1795,13 @@ class IntensiveListeningApp {
           .catch((err) => {
             console.warn('[PWA] SW register error:', err);
           });
-      });
+      };
+
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        registerSW();
+      } else {
+        window.addEventListener('load', registerSW);
+      }
     }
 
     // 2. PWA Install Prompt (Add to Home Screen / Desktop Client)

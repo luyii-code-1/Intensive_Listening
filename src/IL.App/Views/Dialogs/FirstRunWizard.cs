@@ -135,7 +135,7 @@ internal sealed class FirstRunWizard : Border
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, _windows ? 12 : 16, 0, 0) };
         Button RoundButton(string icon, string tooltip, bool accent)
         {
-            var button = new Button { Content = WorkspaceUi.Icon(icon, 18), Width = 48, Height = 48, CornerRadius = new CornerRadius(24), Padding = new Thickness(0) };
+            var button = new Button { Content = icon is "chevron_left" or "chevron_right" ? new RoundedArrowGlyph(icon == "chevron_left") : WorkspaceUi.Icon(icon, 18), Width = 48, Height = 48, CornerRadius = new CornerRadius(24), Padding = new Thickness(0) };
             if (accent) button.Classes.Add("accent");
             ToolTip.SetTip(button, tooltip); return button;
         }
@@ -166,7 +166,7 @@ internal sealed class FirstRunWizard : Border
                 body = new StackPanel { Spacing = 8 };
                 var brand = Brand(_windows ? 80 : 76); brand.Name = "OobeWelcomeLogo"; brand.Margin = new Thickness(0, 0, 0, 8); body.Children.Add(brand);
                 var brandTitle = CenterText("Intensive Listening", _windows ? 32 : 22, true);
-                if (_windows) brandTitle.FontWeight = FontWeight.Medium;
+                if (_windows) brandTitle.FontWeight = FontWeight.Bold;
                 body.Children.Add(brandTitle); body.Children.Add(CenterText("欢迎使用精听课程制作与播放"));
                 var build = CenterText(AppBuildInfo.Display, 12); build.Name = "OobeBuildInfo"; build.Opacity = .65; build.Margin = new Thickness(0, 4, 0, 0); body.Children.Add(build); break;
             case 1:

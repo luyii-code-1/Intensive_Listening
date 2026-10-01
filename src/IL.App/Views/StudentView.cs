@@ -29,7 +29,10 @@ public sealed class StudentView : UserControl
     private string? _bodyKey;
     private readonly StackPanel _transcriptContent = new() { Spacing = 10 };
     private readonly ScrollViewer _transcript = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-    private readonly ContentControl _questions = new();
+    private readonly WorkspaceContentHost _questions = new();
+    private readonly StackPanel _lessons = new() { Spacing = 8 };
+    private readonly SpringListCollection<Control> _lessonMotion;
+    private Grid? _homeContent;
     private readonly StackPanel _index = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly Dictionary<int, List<(Control Control, LessonTextPart Part)>> _words = [];
     private readonly Dictionary<int, Border> _cueRows = [];
@@ -53,6 +56,7 @@ public sealed class StudentView : UserControl
     public StudentView(StudentViewModel vm)
     {
         _vm = vm; DataContext = vm;
+        _lessonMotion = new(_lessons, _lessons.Children, frame => frame, _lessons.Children.Move);
         _materialCloze = WorkspaceUi.Button("显示本段挖空", () => { vm.ToggleMaterialCloze(); return Task.CompletedTask; });
         _allCloze = WorkspaceUi.Button("显示全部挖空", () => { vm.ShowAllCloze = !vm.ShowAllCloze; return Task.CompletedTask; });
         _return = WorkspaceUi.Button("返回", async () => { _followPausedUntil = DateTimeOffset.MinValue; _pausedBrowseTimer.Stop(); await vm.ReturnCueCommand.ExecuteAsync(null); FollowActiveCue(); });
@@ -203,16 +207,18 @@ public sealed class StudentView : UserControl
             var actions = Row(WorkspaceUi.Button("打开音频", OpenAudioAsync, true), WorkspaceUi.Button("导入精听包", ImportAsync)); actions.HorizontalAlignment = HorizontalAlignment.Center;
             var empty = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 360 };
             var icon = WorkspaceUi.Icon("open_file", 40); icon.HorizontalAlignment = HorizontalAlignment.Center; icon.Margin = new Thickness(0, 0, 0, 18);
-            empty.Children.Add(icon); empty.Children.Add(new TextBlock { Text = "打开音频或精听包", FontSize = 17, FontWeight = FontWeight.Medium, TextAlignment = TextAlignment.Center });
+            empty.Children.Add(icon); empty.Children.Add(new TextBlock { Text = "打开音频或精听包", FontSize = 17, FontWeight = FontWeight.Bold, TextAlignment = TextAlignment.Center });
             empty.Children.Add(new TextBlock { Text = "直接播放常见音频，或导入带有题目与挖空练习的 .ilp 精听包。", TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 8, 0, 18) }); empty.Children.Add(actions);
-            PresentBody(empty, "home"); return;
+            _lessonMotion.Update([]); PresentBody(empty, "home:empty"); return;
         }
-        var lessons = new StackPanel { Spacing = 8 };
-        foreach (var lesson in _vm.Lessons.OrderByDescending(item => _vm.ProgressFor(item.Id)?.LastOpenedAt ?? DateTimeOffset.MinValue)) lessons.Children.Add(LessonRow(lesson));
-        var content = new Grid { RowDefinitions = new RowDefinitions("auto,*"), MaxWidth = 1200, HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(24, 4, 24, 24) };
-        var title = Text("最近课程", 17, true); title.Margin = new Thickness(0, 0, 0, 12); content.Children.Add(title);
-        content.Children.Add(new ScrollViewer { Content = lessons, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, [Grid.RowProperty] = 1 });
-        PresentBody(content, "home");
+        _lessonMotion.Update(_vm.Lessons.OrderByDescending(item => _vm.ProgressFor(item.Id)?.LastOpenedAt ?? DateTimeOffset.MinValue).Select(lesson => (lesson.Id, LessonRow(lesson))));
+        if (_homeContent == null)
+        {
+            _homeContent = new Grid { RowDefinitions = new RowDefinitions("auto,*"), MaxWidth = 1200, HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(24, 4, 24, 24) };
+            var title = Text("最近课程", 17, true); title.Margin = new Thickness(0, 0, 0, 12); _homeContent.Children.Add(title);
+            _homeContent.Children.Add(new ScrollViewer { Content = _lessons, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, [Grid.RowProperty] = 1 });
+        }
+        PresentBody(_homeContent, "home:list");
     }
     private Control LessonRow(LessonListItem lesson)
     {
@@ -220,7 +226,7 @@ public sealed class StudentView : UserControl
         var position = TimeSpan.FromMilliseconds(progress?.PositionMs ?? 0);
         var fraction = lesson.Lesson.Manifest.Duration.TotalMilliseconds > 0 ? Math.Clamp(position.TotalMilliseconds / lesson.Lesson.Manifest.Duration.TotalMilliseconds, 0, 1) : 0;
         var info = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
-        info.Children.Add(new TextBlock { Text = lesson.Title, FontWeight = FontWeight.Medium, TextTrimming = TextTrimming.CharacterEllipsis });
+        info.Children.Add(new TextBlock { Text = lesson.Title, FontWeight = FontWeight.Bold, TextTrimming = TextTrimming.CharacterEllipsis });
         info.Children.Add(Text($"{FormatTime(position)} / {FormatTime(lesson.Lesson.Manifest.Duration)} · 版本 {lesson.Lesson.Manifest.PackageVersion}", 12));
         var content = new Grid { ColumnDefinitions = new ColumnDefinitions("auto,*,auto"), Margin = new Thickness(18, 0) };
         Control icon = _openingLessonId == lesson.Id ? new FAProgressRing { IsActive = true, Width = 22, Height = 22 } : WorkspaceUi.Icon("music_note", 22); icon.Margin = new Thickness(0, 0, 18, 0); content.Children.Add(icon);

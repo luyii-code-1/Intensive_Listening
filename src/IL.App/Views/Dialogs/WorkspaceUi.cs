@@ -15,7 +15,7 @@ internal static class WorkspaceUi
     public static TextBlock Icon(string name, double size = 16) => new()
     {
         Text = char.ConvertFromUtf32(DartIcons.Glyphs.TryGetValue(name, out var code) ? code : DartIcons.Glyphs["info"]),
-        FontFamily = IconFont, FontSize = size, VerticalAlignment = VerticalAlignment.Center,
+        FontFamily = IconFont, FontWeight = FontWeight.Normal, FontSize = size, VerticalAlignment = VerticalAlignment.Center,
         HorizontalAlignment = HorizontalAlignment.Center
     };
     public static Button IconButton(string name, string tooltip, Func<Task> action, bool primary = false)
@@ -43,7 +43,7 @@ internal static class WorkspaceUi
         border.BorderThickness = new Thickness(1); border.Bind(Border.BorderBrushProperty, new DynamicResourceExtension("WorkspaceCardBorderBrush")); return border;
     }
     public static TextBlock Text(string text, double size = 14, bool strong = false) => new()
-    { Text = text, FontSize = size, FontWeight = strong ? (size >= 22 ? FontWeight.Bold : FontWeight.Medium) : FontWeight.Normal, TextWrapping = TextWrapping.Wrap };
+    { Text = text, FontSize = size, FontWeight = strong ? FontWeight.Bold : FontWeight.Medium, TextWrapping = TextWrapping.Wrap };
     public static StackPanel Stack(params Control[] controls) { var panel = new StackPanel { Spacing = 8 }; foreach (var c in controls) panel.Children.Add(c); return panel; }
     public static WrapPanel Row(params Control[] controls) { var panel = new WrapPanel { Orientation = Orientation.Horizontal }; foreach (var c in controls) { c.Margin = new Thickness(0, 0, 8, 6); panel.Children.Add(c); } return panel; }
     public static Button Button(string title, Func<Task> action, bool primary = false)
@@ -51,6 +51,12 @@ internal static class WorkspaceUi
         var button = new Button { Content = title };
         if (primary) button.Classes.Add("accent");
         button.Click += async (_, _) => { button.IsEnabled = false; try { await action(); } finally { button.IsEnabled = true; } };
+        return button;
+    }
+    public static Button NextButton(string title, Func<Task> action)
+    {
+        var button = Button(title, action, true);
+        button.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { Text(title), new RoundedArrowGlyph() } };
         return button;
     }
     public static Control Field(string label, Control input) => Stack(Text(label, 12, true), input);

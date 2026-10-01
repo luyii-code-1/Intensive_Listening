@@ -21,8 +21,10 @@
   </Application.Resources>
   <Application.Styles>
     <fa:FluentAvaloniaTheme CustomAccentColor="#B90D1C" UseSystemFontOnWindows="False" />
-    <Style Selector="Window"><Setter Property="FontFamily" Value="{StaticResource WorkspaceFont}" /><Setter Property="FontSize" Value="14" /><Setter Property="Background" Value="{DynamicResource WorkspaceBackgroundBrush}" /><Setter Property="Foreground" Value="{DynamicResource WorkspaceTextBrush}" /></Style>
-    <Style Selector="TextBlock"><Setter Property="FontFamily" Value="{StaticResource WorkspaceFont}" /></Style>
+    <Style Selector="Window"><Setter Property="FontFamily" Value="{StaticResource WorkspaceFont}" /><Setter Property="FontSize" Value="14" /><Setter Property="FontWeight" Value="Medium" /><Setter Property="Background" Value="{DynamicResource WorkspaceBackgroundBrush}" /><Setter Property="Foreground" Value="{DynamicResource WorkspaceTextBrush}" /></Style>
+    <Style Selector=":is(TemplatedControl)"><Setter Property="FontWeight" Value="Medium" /></Style>
+    <Style Selector="TextBlock"><Setter Property="FontFamily" Value="{StaticResource WorkspaceFont}" /><Setter Property="FontWeight" Value="Medium" /></Style>
+    <Style Selector="SelectableTextBlock"><Setter Property="FontWeight" Value="Medium" /></Style>
     <Style Selector="Button"><Setter Property="MinHeight" Value="32" /><Setter Property="Padding" Value="12,5" /><Setter Property="CornerRadius" Value="4" /></Style>
     <Style Selector="TextBox"><Setter Property="MinHeight" Value="32" /></Style>
     <Style Selector="Button.subtle"><Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" /></Style>

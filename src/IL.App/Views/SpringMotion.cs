@@ -72,6 +72,12 @@ public sealed class SpringMotion
         return To(response: .28);
     }
     public void Stop() { _timer.Stop(); _completion?.TrySetResult(); _completion = null; }
+    internal double TranslationY => _y.Value;
+    internal Task ShiftLayout(double delta)
+    {
+        _y.Value += delta; Apply();
+        return To(_opacity.Target, _x.Target, _y.Target, _size.Target, .3);
+    }
     public static SpringMotion Entrance(Control control, double y = 12, double scale = 1)
     {
         var motion = For(control); motion.Set(0, y: FirstRunWizard.MotionReduced() ? 0 : y, scale: FirstRunWizard.MotionReduced() ? 1 : scale);

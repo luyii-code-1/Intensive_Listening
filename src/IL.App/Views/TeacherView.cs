@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls;
@@ -33,6 +34,8 @@ public sealed class TeacherView : UserControl
     private readonly Action _libraryChanged;
     private readonly Action _openSettings;
     private readonly TeacherWorkspaceViewModel _vm;
+    private readonly ObservableCollection<ListBoxItem> _projectItems = [];
+    private readonly SpringListCollection<ListBoxItem> _projectMotion;
     private readonly ListBox _projectList = new() { Background = Brushes.Transparent };
     private readonly TextBox _title = WorkspaceUi.Input(hint: "项目名称");
     private readonly TextBox _transcript = WorkspaceUi.Input(hint: "SRT 字幕", multiline: true);
@@ -69,6 +72,8 @@ public sealed class TeacherView : UserControl
     {
         _store = store; _queue = queue; _transcriptions = transcriptions ?? new(store, queue); _settings = settings; _libraryDirectory = libraryDirectory;
         _libraryChanged = libraryChanged ?? (() => { }); _openSettings = openSettings ?? (() => { }); _vm = new(store);
+        _projectList.ItemsSource = _projectItems;
+        _projectMotion = new(_projectList, _projectItems, frame => new ListBoxItem { Content = frame, Margin = new Thickness(0, 0, 0, 4), Padding = new Thickness(10, 6), HorizontalContentAlignment = HorizontalAlignment.Stretch }, _projectItems.Move);
         Build();
         _transcriptions.TranscriptBound += project => Dispatcher.UIThread.Post(async () => await RunAsync(async () =>
         {
@@ -200,15 +205,15 @@ public sealed class TeacherView : UserControl
     private void RefreshProjects()
     {
         _loading = true;
-        _projectList.ItemsSource = _vm.Projects.Select(p =>
+        _projectMotion.Update(_vm.Projects.Select(p =>
         {
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 4) };
             var title = WorkspaceUi.Text(p.Title); title.TextWrapping = TextWrapping.NoWrap; title.TextTrimming = TextTrimming.CharacterEllipsis;
             var details = WorkspaceUi.Stack(title, WorkspaceUi.Text(ProjectStatus(p), 12)); details.Spacing = 3;
             if (p.TranscriptionJobId is string id && _queue.JobById(id) is { Status: TranscriptionJobStatus.Running } job) details.Children.Add(new ProgressBar { Height = 4, Value = (job.Fraction ?? 0) * 100 });
             row.Children.Add(details); var remove = WorkspaceUi.IconButton("delete", "删除项目", () => RunAsync(() => DeleteProjectAsync(p))); remove.Classes.Add("subtle"); remove.Padding = new Thickness(6); remove.Margin = new Thickness(8, 0, 0, 0); ToolTip.SetTip(remove, "删除项目"); Grid.SetColumn(remove, 1); row.Children.Add(remove);
-            return new ListBoxItem { Tag = p.Id, Content = row, Margin = new Thickness(0, 0, 0, 4), Padding = new Thickness(10, 6), HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        }).ToArray();
+            return (p.Id, (Control)row);
+        }));
         _projectList.SelectedItem = _projectList.Items.OfType<ListBoxItem>().FirstOrDefault(i => (string?)i.Tag == _vm.Project?.Id);
         _emptyProjects.IsVisible = _vm.Projects.Count == 0; _loading = false; BuildCommands();
     }
@@ -228,7 +233,7 @@ public sealed class TeacherView : UserControl
     }
     private void BuildStage()
     {
-        var key = $"{_vm.Project?.Id}|{_vm.Project?.Step}|{_vm.Project?.ReviewPhase}|{_overview}|{_manual}";
+        var key = $"{_vm.Project?.Id}|{_vm.Project?.Step}|{_vm.Project?.ReviewPhase}|{_overview}|{_manual}|{string.Join(',', _expandedRepeats.Order())}|{string.Join(',', _vm.Project?.Exercises.EffectiveMaterials.Select(m => m.Id) ?? [])}";
         _stage.AnimateChanges = key != _stageKey; _stageKey = key;
         if (_vm.Project is not { } p)
         {
@@ -286,7 +291,7 @@ public sealed class TeacherView : UserControl
         Grid.SetRow(body, 2); layout.Children.Add(body);
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 12, 0, 0) };
         if (!grouping) footer.Children.Add(BackToQuestionsButton());
-        Control next = grouping ? WorkspaceUi.Button("下一步：设置挖空", () => RunAsync(() => ChangePhaseAsync(ReviewPhase.Cloze)), true)
+        Control next = grouping ? WorkspaceUi.NextButton("下一步：设置挖空", () => RunAsync(() => ChangePhaseAsync(ReviewPhase.Cloze)))
             : p.Step != CourseProjectStep.Completed ? WorkspaceUi.Button("完成审阅", () => RunAsync(FinishReviewAsync), true)
             : BuildDeliveryCommands();
         Grid.SetColumn(next, 1); footer.Children.Add(next); Grid.SetRow(footer, 3); layout.Children.Add(footer);

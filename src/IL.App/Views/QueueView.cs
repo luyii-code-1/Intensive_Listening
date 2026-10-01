@@ -15,12 +15,26 @@ public sealed class QueueView : UserControl
     private readonly Func<TranscriptionJob, Task> _loadSrt;
     private readonly Func<DuplicateMatch, Task>? _openExisting;
     private readonly Func<Task>? _pickAudio;
+    private readonly SpringListCollection<Control> _rows;
     private readonly StackPanel _content = new() { Spacing = 10 };
     private readonly DispatcherTimer _refresh = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private bool _listening;
+    private sealed record JobLayout(TranscriptionJobStatus Status, TranscriptionStage Stage, string Title, bool Consumed, string? Srt, DuplicateMatch? Duplicate, bool Segments);
+    private sealed record JobRow(JobLayout Layout, Control Card, TextBlock Message, ProgressBar? Progress, TextBlock? Percentage, TextBlock? Segments);
+    private readonly Dictionary<string, JobRow> _jobRows = [];
+    private static JobLayout LayoutFor(TranscriptionJob job) => new(job.Status, job.Stage, job.Title, job.SrtConsumed, job.Srt, job.Duplicate, job.SegmentTotal is > 0);
+    private static void UpdateProgress(JobRow row, TranscriptionJob job)
+    {
+        var elapsed = Elapsed(job); row.Message.Text = elapsed == null ? job.Message : $"{job.Message}（{elapsed}）";
+        var percentage = (int)Math.Round(Math.Clamp((job.Fraction ?? 0) * 100, 0, 100));
+        if (row.Progress != null) row.Progress.Value = percentage;
+        if (row.Percentage != null) row.Percentage.Text = $"{percentage}%";
+        if (row.Segments != null) row.Segments.Text = $"分段 {job.SegmentIndex ?? 0}/{job.SegmentTotal}";
+    }
     public QueueView(TranscriptionQueue queue, Func<TranscriptionJob, Task> loadSrt, Func<DuplicateMatch, Task>? openExisting = null, Func<Task>? pickAudio = null)
     {
         _queue = queue; _loadSrt = loadSrt; _openExisting = openExisting; _pickAudio = pickAudio;
+        _rows = new(_content, _content.Children, frame => frame, _content.Children.Move);
         var root = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
         root.Children.Add(new ScrollViewer { Content = _content, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled });
         Content = root;
@@ -31,7 +45,9 @@ public sealed class QueueView : UserControl
     private void OnChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(() => { if (_listening && !_refresh.IsEnabled) _refresh.Start(); });
     private void Render()
     {
-        _content.Children.Clear(); var jobs = _queue.Jobs;
+        var entries = new List<(string Key, Control Content)>(); var jobs = _queue.Jobs;
+        var ids = jobs.Select(j => j.Id).ToHashSet();
+        foreach (var id in _jobRows.Keys.Where(id => !ids.Contains(id)).ToArray()) _jobRows.Remove(id);
         if (jobs.Count == 0)
         {
             var empty = new StackPanel { Spacing = 12, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(28, 60), MaxWidth = 500 };
@@ -39,17 +55,21 @@ public sealed class QueueView : UserControl
             empty.Children.Add(new TextBlock { Text = "暂无转写任务", FontWeight = FontWeight.SemiBold, FontSize = 20, HorizontalAlignment = HorizontalAlignment.Center });
             empty.Children.Add(WorkspaceUi.Text("在教师端项目中提交音频后，可随时从这里查看进度。"));
             if (_pickAudio != null) { var pick = WorkspaceUi.Button("选择音频", () => RunAsync(_pickAudio)); pick.HorizontalAlignment = HorizontalAlignment.Center; empty.Children.Add(pick); }
-            _content.Children.Add(empty); return;
+            _rows.Update([("empty", empty)]); return;
         }
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,8,*,Auto") };
         header.Children.Add(WorkspaceUi.Text("转写队列", 14, true)); var count = WorkspaceUi.Text($"{jobs.Count} 个任务", 12); count.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(count, 2); header.Children.Add(count);
         if (jobs.Any(j => j.IsTerminal)) { var clear = WorkspaceUi.Button("清除已完成", () => RunAsync(() => { _queue.ClearFinished(); return Task.CompletedTask; })); Grid.SetColumn(clear, 3); header.Children.Add(clear); }
-        _content.Children.Add(header);
+        entries.Add(("header", header));
         var interrupted = jobs.Count(j => j.Status == TranscriptionJobStatus.Interrupted);
         if (interrupted > 0)
-            _content.Children.Add(new FAInfoBar { IsOpen = true, IsClosable = false, Severity = FAInfoBarSeverity.Warning, Title = "有未完成的任务", Message = $"上次退出时还有 {interrupted} 个任务没有结束。", ActionButton = WorkspaceUi.Button("继续", () => RunAsync(() => { _queue.ResumeInterrupted(); return Task.CompletedTask; })) });
+            entries.Add(("interrupted", new FAInfoBar { IsOpen = true, IsClosable = false, Severity = FAInfoBarSeverity.Warning, Title = "有未完成的任务", Message = $"上次退出时还有 {interrupted} 个任务没有结束。", ActionButton = WorkspaceUi.Button("继续", () => RunAsync(() => { _queue.ResumeInterrupted(); return Task.CompletedTask; })) }));
         foreach (var job in jobs)
         {
+            var layout = LayoutFor(job);
+            if (_jobRows.TryGetValue(job.Id, out var existing) && existing.Layout == layout)
+            { UpdateProgress(existing, job); entries.Add((job.Id, existing.Card)); continue; }
+            ProgressBar? progress = null; TextBlock? percentageLabel = null, segments = null;
             var color = StatusBrush(job);
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("20,12,*") };
             var icon = WorkspaceUi.Icon(StatusIcon(job), 20); icon.Foreground = color; icon.VerticalAlignment = VerticalAlignment.Top; icon.Margin = new Thickness(0, 2, 0, 0); row.Children.Add(icon);
@@ -61,10 +81,10 @@ public sealed class QueueView : UserControl
             {
                 var percentage = (int)Math.Round(Math.Clamp((job.Fraction ?? 0) * 100, 0, 100));
                 var progressRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,42"), Margin = new Thickness(0, 4, 0, 0) };
-                progressRow.Children.Add(new ProgressBar { Minimum = 0, Maximum = 100, Value = percentage, Height = 5, VerticalAlignment = VerticalAlignment.Center });
-                var value = WorkspaceUi.Text($"{percentage}%", 12); value.TextAlignment = TextAlignment.Right; Grid.SetColumn(value, 2); progressRow.Children.Add(value); body.Children.Add(progressRow);
+                progressRow.Children.Add(progress = new ProgressBar { Minimum = 0, Maximum = 100, Value = percentage, Height = 5, VerticalAlignment = VerticalAlignment.Center });
+                var value = percentageLabel = WorkspaceUi.Text($"{percentage}%", 12); value.TextAlignment = TextAlignment.Right; Grid.SetColumn(value, 2); progressRow.Children.Add(value); body.Children.Add(progressRow);
             }
-            if (job.SegmentTotal is int total && total > 0) body.Children.Add(WorkspaceUi.Text($"分段 {job.SegmentIndex ?? 0}/{total}", 12));
+            if (job.SegmentTotal is int total && total > 0) body.Children.Add(segments = WorkspaceUi.Text($"分段 {job.SegmentIndex ?? 0}/{total}", 12));
             var actions = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
             if (job.Status == TranscriptionJobStatus.Completed && !job.SrtConsumed && !string.IsNullOrWhiteSpace(job.Srt)) actions.Children.Add(Action("载入字幕", () => _loadSrt(job), true));
             if (job.Status == TranscriptionJobStatus.AwaitingDecision && job.Duplicate != null) actions.Children.Add(Action("处理重复音频", () => ResolveDuplicateAsync(job), true));
@@ -72,8 +92,10 @@ public sealed class QueueView : UserControl
             if (job.Status is TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted) actions.Children.Add(Action("重试", () => { _queue.Retry(job.Id); return Task.CompletedTask; }));
             if (job.Status == TranscriptionJobStatus.Completed && !string.IsNullOrWhiteSpace(job.Srt)) actions.Children.Add(Action("导出 SRT", async () => { var path = await WorkspaceUi.Save(this, "导出转写字幕", job.Title + ".srt", "srt"); if (path != null) await File.WriteAllTextAsync(path, job.Srt); }));
             actions.Children.Add(Action("删除", async () => { if (await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "删除转写任务？", job.IsActive ? $"将取消并永久删除「{job.Title}」。" : $"将永久删除「{job.Title}」的任务记录。", "删除")) { _queue.Delete(job.Id); WorkspaceToast.Show(this, "任务已删除", $"「{job.Title}」已从转写队列移除。"); } }));
-            body.Children.Add(actions); Grid.SetColumn(body, 2); row.Children.Add(body); _content.Children.Add(WorkspaceUi.Surface(row, new Thickness(14)));
+            body.Children.Add(actions); Grid.SetColumn(body, 2); row.Children.Add(body); var card = WorkspaceUi.Surface(row, new Thickness(14));
+            _jobRows[job.Id] = new(layout, card, message, progress, percentageLabel, segments); entries.Add((job.Id, card));
         }
+        _rows.Update(entries);
     }
     private Button Action(string text, Func<Task> action, bool primary = false) { var button = WorkspaceUi.Button(text, () => RunAsync(action), primary); button.Margin = new Thickness(0, 0, 8, 0); return button; }
     public async Task ResolveDuplicateAsync(TranscriptionJob job)

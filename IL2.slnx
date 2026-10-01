@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/IL.Core/IL.Core.csproj" />
+  <Project Path="src/IL.App/IL.App.csproj" />
+  <Project Path="tests/IL.Core.Tests/IL.Core.Tests.csproj" />
+  <Project Path="tests/IL.App.Tests/IL.App.Tests.csproj" />
+</Solution>

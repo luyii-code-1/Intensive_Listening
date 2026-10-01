@@ -1,0 +1,10 @@
+{
+  "windows": {
+    "appId": "hm3xyft6jd@76922d8db672517",
+    "configAddress": "https://hm3xyft6jd-default-cn.rum.aliyuncs.com"
+  },
+  "macOS": {
+    "appId": "",
+    "configAddress": ""
+  }
+}

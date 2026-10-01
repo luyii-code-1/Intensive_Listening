@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "dart-running",
+      "title": "Running",
+      "audioPath": "portable.wav",
+      "status": "running",
+      "stage": "recognizing",
+      "message": "服务器正在识别。",
+      "enqueuedAt": "2026-10-01T00:00:00.000Z",
+      "projectId": "dart-legacy-project",
+      "startedAt": null,
+      "finishedAt": null,
+      "sha256": null,
+      "audioMd5": null,
+      "cacheProfile": null,
+      "audioDurationMs": null,
+      "srt": null,
+      "srtConsumed": false,
+      "duplicateApproved": false
+    },
+    {
+      "id": "dart-completed",
+      "title": "Completed",
+      "audioPath": "portable.wav",
+      "status": "completed",
+      "stage": "formatting",
+      "message": "字幕已写入 SRT。",
+      "enqueuedAt": "2026-09-30T00:00:00.000Z",
+      "projectId": null,
+      "startedAt": null,
+      "finishedAt": null,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "audioMd5": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "cacheProfile": "{\"model\":\"qwen\"}",
+      "audioDurationMs": 1000,
+      "srt": "1\n00:00:00,000 --> 00:00:01,000\nHello from Dart.\n",
+      "srtConsumed": false,
+      "duplicateApproved": false
+    }
+  ]
+}

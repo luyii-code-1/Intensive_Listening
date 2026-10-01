@@ -2,9 +2,9 @@ name: Windows build
 
 on:
   push:
-    branches: [dev, main]
+    branches: [dev]
   pull_request:
-    branches: [dev, main]
+    branches: [dev]
   release:
     types: [published]
 
@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   build:
+    if: github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'v2.')
     runs-on: windows-2022
     steps:
       - name: Check out source

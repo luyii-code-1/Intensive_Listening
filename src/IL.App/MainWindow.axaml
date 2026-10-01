@@ -1,0 +1,34 @@
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:views="clr-namespace:IL.App.Views" xmlns:fa="clr-namespace:FluentAvalonia.UI.Controls;assembly=FluentAvalonia" x:Class="IL.App.MainWindow" Width="1440" Height="900" MinWidth="720" MinHeight="560" Title="Intensive Listening">
+  <Grid Name="RootLayer">
+    <Grid Name="ShellGrid" ColumnDefinitions="320,*">
+      <Border Name="NavigationPane" Background="{DynamicResource WorkspacePaneBrush}">
+        <Grid RowDefinitions="42,*,Auto" Margin="4,0">
+          <Button Name="PaneToggle" Classes="subtle" HorizontalAlignment="Left" Width="40" Height="40" Padding="0" />
+          <StackPanel Grid.Row="1" Spacing="4">
+            <Button Name="StudentButton" Classes="nav selected" />
+            <Button Name="TeacherButton" Classes="nav" />
+            <Button Name="SettingsButton" Classes="nav" />
+          </StackPanel>
+          <StackPanel Grid.Row="2" Spacing="8" Margin="4,0,4,4">
+            <Separator />
+            <Button Name="QueueButton" Classes="nav" />
+          </StackPanel>
+        </Grid>
+      </Border>
+      <Border Grid.Column="1" Background="{DynamicResource WorkspaceBackgroundBrush}" BorderBrush="{DynamicResource WorkspaceCardBorderBrush}" BorderThickness="1,1,0,0" CornerRadius="8,0,0,0">
+        <views:WorkspaceContentHost Name="PageHost" />
+      </Border>
+    </Grid>
+    <fa:FAProgressRing Name="NavigationBusy" IsVisible="False" IsActive="True" Width="24" Height="24" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,12,0" IsHitTestVisible="False" />
+    <Border Name="AgentOverlay" IsVisible="False" Background="#2E000000">
+      <Border HorizontalAlignment="Center" VerticalAlignment="Center" Padding="28,24" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+          <fa:FAProgressRing IsActive="True" Width="32" Height="32" HorizontalAlignment="Center" />
+          <TextBlock Text="智能体正在工作" FontSize="17" FontWeight="Medium" HorizontalAlignment="Center" Margin="0,18,0,6" />
+          <TextBlock Text="课程制作数据正在由 MCP 智能体处理。" />
+          <Button Name="AgentButton" Content="强制断开" HorizontalAlignment="Center" Margin="0,20,0,0" />
+        </StackPanel>
+      </Border>
+    </Border>
+  </Grid>
+</Window>

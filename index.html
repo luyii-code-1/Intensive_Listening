@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Intensive Listening - 精听播放器</title>
+  
+  <!-- PWA & Mobile Web Capabilities -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="shortcut icon" href="favicon.ico">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
+  <meta name="theme-color" content="#b80f28">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="精听播放器">
+
+  <link rel="stylesheet" href="css/fluent.css">
+  <!-- Offline JSZip with fallback -->
+  <script src="lib/jszip.min.js"></script>
+</head>
+<body>
+  <!-- 阿里云 ARMS RUM 遥测探针 -->
+  <script>
+    !(function(c,b,d,a){c[a]||(c[a]={});c[a]=
+    { 
+      endpoint: 'https://proj-xtrace-ae8828bae3abd29c8bb93ef647dfd4f1-cn-hangzhou.cn-hangzhou.log.aliyuncs.com/rum/web/v2?workspace=default-cms-1788892690042201-cn-hangzhou&service_id=hm3xyft6jd@5ac84fe55e86125713b2c',
+      // 设置环境信息，参考值：'prod' | 'gray' | 'pre' | 'daily' | 'local'
+      env: 'prod', 
+      // 设置路由模式， 参考值：'history' | 'hash'
+      spaMode: 'history',
+      collectors: {
+        // 页面性能指标监听开关（关闭默认项）
+        perf: false,
+        // WebVitals指标监听开关（关闭默认项）
+        webVitals: false,
+        // Ajax监听开关（关闭默认项，不拦截劫持网络请求）
+        api: false,
+        // 静态资源开关（关闭默认项）
+        staticResource: false,
+        // JS错误监听开关（关闭默认项）
+        jsError: false,
+        // 控制台错误监听开关（关闭默认项）
+        consoleError: false,
+        // 用户行为监听开关（关闭默认项，不自动抓取DOM点击行为）
+        action: false,
+      },
+      // 链路追踪配置开关，默认关闭
+      tracing: false,
+    }
+    with(b)with(body)with(insertBefore(createElement("script"),firstChild))setAttribute("crossorigin","",src=d)
+})(window, document, "https://sdk.rum.aliyuncs.com/v2/browser-sdk.js", "__rum");
+  </script>
+
+  <div id="app">
+    <!-- Header / Command Bar -->
+    <header class="app-header">
+      <div class="header-left">
+        <button id="back-btn" class="icon-btn" title="返回主页" style="display: none;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+        </button>
+        <img src="icons/icon.svg" class="app-logo-mark" alt="Logo" width="22" height="22">
+        <div id="app-title" class="app-title">学生端</div>
+        <button id="file-info-btn" class="fluent-btn sm" style="display: none;">文件信息</button>
+        <button id="btn-show-legal" class="fluent-btn sm" title="查看用户协议与隐私政策">用户协议与隐私</button>
+      </div>
+      <div class="header-right">
+        <button id="btn-install-pwa" class="fluent-btn sm" style="display: none;" title="安装为本地离线客户端">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>安装客户端</span>
+        </button>
+        <button id="theme-toggle-btn" class="icon-btn" title="切换暗黑模式">
+          <svg class="sun-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+        <button id="btn-open-audio" class="fluent-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+          <span>打开音频</span>
+        </button>
+        <button id="btn-import-ilp" class="fluent-btn filled">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>导入精听包</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Mobile Tabs (visible only on <= 860px) -->
+    <div id="mobile-tabs" class="mobile-tabs-bar">
+      <div class="mobile-tab active" data-tab="question">题目练习</div>
+      <div class="mobile-tab" data-tab="transcript">听力字幕</div>
+      <div class="mobile-tab" data-tab="split">上下分屏</div>
+    </div>
+
+    <!-- Main Workspace Area -->
+    <main id="main-workspace" class="main-workspace">
+      <!-- 1. Home / Library View -->
+      <div id="home-view" class="home-view">
+        <!-- Empty State -->
+        <div id="empty-state" class="empty-state-box">
+          <img src="icons/icon.svg" class="empty-logo-mark" alt="Intensive Listening Logo" width="64" height="64">
+          <h2 class="empty-title">打开音频或精听包</h2>
+          <p class="empty-desc">直接播放常见音频，或导入带有题目与挖空练习的 .ilp 精听包。<br>您也可以直接将 .ilp 文件拖拽至此窗口。</p>
+          <div class="empty-actions">
+            <button id="btn-empty-open-audio" class="fluent-btn">打开音频</button>
+            <button id="btn-empty-import" class="fluent-btn filled">导入精听包</button>
+            <button id="btn-empty-load-sample" class="fluent-btn">加载示例课程</button>
+          </div>
+        </div>
+
+        <!-- Recent Lessons List -->
+        <div id="recent-lessons-section" class="recent-section" style="display: none;">
+          <h3 class="recent-title">最近课程</h3>
+          <div id="lesson-list" class="lesson-list"></div>
+        </div>
+      </div>
+
+      <!-- 2. Player View -->
+      <div id="player-view" class="player-view" data-tab="question" style="display: none;">
+        <!-- Left Column: Question & Controls -->
+        <section class="player-section">
+          <!-- Question Container -->
+          <div class="question-container">
+            <div id="question-card" class="fluent-card">
+              <div id="no-question-text" class="question-title" style="text-align: center; color: var(--text-secondary); margin: 30px 0;">当前题目未设置</div>
+              <div id="question-content" style="display: none;">
+                <h3 id="current-question-title" class="question-title"></h3>
+                <div id="question-options" class="question-options"></div>
+                <div class="answer-box">
+                  <button id="btn-toggle-answer" class="fluent-btn sm">显示答案</button>
+                  <span id="answer-display" class="answer-text" style="display: none;"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Controls Container (Desktop / In-page) -->
+          <div id="desktop-controls" class="controls-container">
+            <!-- Progress Slider -->
+            <div class="slider-wrapper">
+              <input type="range" id="seek-slider" class="fluent-slider" min="0" max="1000" value="0" step="1">
+              <div class="time-row tabular-nums">
+                <span id="current-time-text">00:00</span>
+                <span id="total-time-text">00:00</span>
+              </div>
+            </div>
+
+            <!-- Control Buttons -->
+            <div class="controls-row">
+              <button id="btn-prev-question" class="fluent-btn" title="上一题">上一题</button>
+              <button id="btn-prev-sentence" class="fluent-btn" title="上一句">上一句</button>
+              <button id="btn-play-toggle" class="fluent-btn filled play-btn" title="播放 / 暂停">
+                <svg id="play-icon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                <svg id="pause-icon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+                  <rect x="6" y="4" width="4" height="16"></rect>
+                  <rect x="14" y="4" width="4" height="16"></rect>
+                </svg>
+              </button>
+              <button id="btn-next-sentence" class="fluent-btn" title="下一句">下一句</button>
+              <button id="btn-next-question" class="fluent-btn" title="下一题">下一题</button>
+            </div>
+
+            <!-- Toggles (Single Sentence Loop & Hide Subtitles) -->
+            <div class="toggles-row">
+              <label class="fluent-checkbox" id="chk-loop-label">
+                <span class="checkbox-box" id="chk-loop-box">
+                  <svg class="check-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="2 6 5 9 10 3"></polyline>
+                  </svg>
+                </span>
+                <span>单句循环</span>
+              </label>
+              <label class="fluent-checkbox" id="chk-hide-subtitles-label">
+                <span class="checkbox-box" id="chk-hide-subtitles-box">
+                  <svg class="check-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="2 6 5 9 10 3"></polyline>
+                  </svg>
+                </span>
+                <span>隐藏字幕</span>
+              </label>
+            </div>
+
+            <!-- Action buttons (Repeat sentence, Cloze toggles) -->
+            <div class="actions-row">
+              <button id="btn-repeat-sentence" class="fluent-btn">重复本句</button>
+              <button id="btn-toggle-material-cloze" class="fluent-btn" style="display: none;">显示本段挖空</button>
+              <button id="btn-toggle-all-cloze" class="fluent-btn">显示全部挖空</button>
+            </div>
+
+            <!-- Question Index Strip -->
+            <div id="question-strip-container" class="question-strip-container" style="display: none;">
+              <span class="question-strip-label">题目索引</span>
+              <div id="question-strip" class="question-strip"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right Column: Subtitles / Transcript Pane -->
+        <section class="transcript-section" id="transcript-container">
+          <!-- Floating Return Button -->
+          <div id="return-original-btn-wrap" class="return-btn-float" style="display: none;">
+            <button id="btn-return-original" class="fluent-btn sm filled">返回原句</button>
+          </div>
+
+          <!-- Transcript Cards List -->
+          <div id="transcript-pane" class="transcript-pane"></div>
+
+          <!-- Mobile Sticky Mini Player (Visible on mobile transcript tab) -->
+          <div id="mobile-mini-player" class="mobile-mini-player">
+            <div class="mini-progress-row">
+              <span id="mini-current-time" class="tabular-nums">00:00</span>
+              <input type="range" id="mini-seek-slider" class="fluent-slider" min="0" max="1000" value="0" step="1">
+              <span id="mini-total-time" class="tabular-nums">00:00</span>
+            </div>
+            <div class="mini-controls-row">
+              <button id="mini-btn-prev" class="fluent-btn sm" title="上一句">上一句</button>
+              <button id="mini-btn-play" class="fluent-btn sm filled" title="播放 / 暂停">
+                <svg id="mini-play-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                <svg id="mini-pause-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+                  <rect x="6" y="4" width="4" height="16"></rect>
+                  <rect x="14" y="4" width="4" height="16"></rect>
+                </svg>
+              </button>
+              <button id="mini-btn-next" class="fluent-btn sm" title="下一句">下一句</button>
+              <button id="mini-btn-repeat" class="fluent-btn sm" title="重听本句">重听</button>
+              <button id="mini-btn-loop" class="fluent-btn sm" title="循环本句">单句循环</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Floating Cue Context Popover (浮窗操作栏) -->
+    <div id="cue-popover" class="cue-popover" style="display: none;">
+      <div class="popover-badge" id="popover-cue-time">00:00</div>
+      <div class="popover-buttons">
+        <button id="popover-btn-play" class="fluent-btn sm filled" title="从此句开始连续播放">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          <span>播放</span>
+        </button>
+        <button id="popover-btn-play-pause" class="fluent-btn sm" title="朗读此单句，读完自动暂停">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5 3 16 12 5 21 5 3"></polygon>
+            <rect x="18" y="4" width="3" height="16" rx="1"></rect>
+          </svg>
+          <span>播放并暂停</span>
+        </button>
+        <button id="popover-btn-loop" class="fluent-btn sm" title="循环朗读本单句">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="17 1 21 5 17 9"></polyline>
+            <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+            <polyline points="7 23 3 19 7 15"></polyline>
+            <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+          </svg>
+          <span>单句循环</span>
+        </button>
+      </div>
+      <button id="popover-btn-close" class="icon-btn sm" title="关闭操作浮窗">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Hidden File Inputs -->
+    <input type="file" id="ilp-file-input" accept=".ilp,application/zip" style="display: none;">
+    <input type="file" id="audio-file-input" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" style="display: none;">
+
+    <!-- Hidden Audio Engine -->
+    <audio id="audio-engine" preload="auto"></audio>
+
+    <!-- Drag & Drop Fullscreen Overlay -->
+    <div id="drop-overlay" class="drop-overlay">
+      <div class="drop-overlay-box">释放精听包 (.ilp) 立即解析播放</div>
+    </div>
+
+    <!-- File Info Modal -->
+    <div id="file-info-modal" class="fluent-modal-overlay" style="display: none;">
+      <div class="fluent-dialog">
+        <div class="dialog-header">文件信息</div>
+        <div class="dialog-body">
+          <table class="info-table">
+            <tbody>
+              <tr><td>课程标题</td><td id="info-title">-</td></tr>
+              <tr><td>课程标识</td><td id="info-uuid">-</td></tr>
+              <tr><td>音频时长</td><td id="info-duration">-</td></tr>
+              <tr><td>包版本号</td><td id="info-version">-</td></tr>
+              <tr><td>音频文件</td><td id="info-audio">-</td></tr>
+              <tr><td>字幕文件</td><td id="info-transcript">-</td></tr>
+              <tr><td>总句子数</td><td id="info-cues-count">-</td></tr>
+              <tr><td>题目数量</td><td id="info-questions-count">-</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="dialog-footer">
+          <button id="btn-close-info-modal" class="fluent-btn filled">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="fluent-modal-overlay" style="display: none;">
+      <div class="fluent-dialog">
+        <div class="dialog-header">确认删除课程</div>
+        <div class="dialog-body">
+          您确定要从本地记录中移除这门课程吗？本地保存的学习进度也将被清除。
+        </div>
+        <div class="dialog-footer">
+          <button id="btn-cancel-delete" class="fluent-btn">取消</button>
+          <button id="btn-confirm-delete" class="fluent-btn filled" style="background-color: #d13438;">删除</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alert / Message Dialog -->
+    <div id="alert-modal" class="fluent-modal-overlay" style="display: none;">
+      <div class="fluent-dialog">
+        <div class="dialog-header" id="alert-title">提示</div>
+        <div class="dialog-body" id="alert-message"></div>
+        <div class="dialog-footer">
+          <button id="btn-close-alert" class="fluent-btn filled">好</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Legal Modal (User Agreement & Privacy Policy) -->
+    <div id="legal-modal" class="fluent-modal-overlay" style="display: none;">
+      <div class="fluent-dialog legal-dialog">
+        <div class="dialog-header">用户协议与隐私政策</div>
+        <div class="legal-nav">
+          <div class="legal-tab active" data-legal="agreement">用户协议</div>
+          <div class="legal-tab" data-legal="privacy">隐私政策与遥测说明</div>
+        </div>
+        <div class="legal-content">
+          <!-- Agreement Tab -->
+          <div id="legal-content-agreement">
+            <h4>Intensive Listening 开源许可与使用提示</h4>
+            <p><strong>版本：</strong>2026-10-01<br><strong>版权所有：</strong>Luyii</p>
+            <p>本软件依据 GNU General Public License Version 3（GPL-3.0-only）发布。完整许可证文本可在项目开源仓库中查阅。</p>
+            <h4>一、你的权利与义务</h4>
+            <p>你可以运行、研究、复制、修改及再分发本软件，也可以发布衍生版本，但必须遵守 GNU GPL v3 的全部条款，包括在适用时向接收者提供对应源代码、保留版权与许可声明，并以 GNU GPL v3 许可衍生作品。</p>
+            <h4>二、用户内容与版权</h4>
+            <p>用户导入至本播放器的音频、试卷、字幕、题目及工程仍由相应权利人享有权利。用户应确保自己有权处理和播放这些内容。本软件的开源许可不代表为任何用户取得第三方内容的授权。</p>
+            <h4>三、纯静态运行与本地数据</h4>
+            <p>本播放器为纯前端静态应用，所有解压、解析与播放均在您的本地浏览器（IndexedDB）中完成，无需向开发团队服务器上传任何听力音频或字幕文件。</p>
+            <h4>四、免责声明</h4>
+            <p>本软件按 GNU GPL v3 所述“按现状”提供，不附带任何明示或暗示的保证。听力练习、自动切片及挖空结果仅供辅助学习，正式教学或考试使用前应人工核对。依法不得排除或限制的法定权利与责任不受本提示影响。</p>
+          </div>
+          <!-- Privacy Tab -->
+          <div id="legal-content-privacy" style="display: none;">
+            <h4>Intensive Listening 隐私说明与阿里云遥测探针声明</h4>
+            <p>我们高度重视您的个人数据安全与隐私保护。作为一款纯静态运行的前端应用，我们严格遵循最小化与透明化数据原则。</p>
+            <h4>一、本地私有数据保障</h4>
+            <p>您导入的 <code>.ilp</code> 精听包、音频文件、字幕文本、个人答题进度及单词挖空标记<strong>完全保存在您本机的浏览器数据库（IndexedDB 与 LocalStorage）中</strong>。本站绝不收集、保存或外传任何您的私有课程内容与听力音频。</p>
+            <h4>二、阿里云应用实时监控服务 (ARMS RUM) 遥测声明</h4>
+            <p>为了保障播放器的系统稳定性、诊断不同浏览器与移动设备上的前端异常并优化播放器性能，本站集成了<strong>阿里云性能监控探针（Browser SDK v2）</strong>。遵循数据极简与透明原则，我们已<strong>关闭全部 7 项默认自动拦截与采集项</strong>（包括 API 网络劫持、静态资源、控制台错误、JS运行时错误、WebVitals、DOM 点击追踪等），仅在必要时上报少量自定义事件：</p>
+            <ul>
+              <li><strong>应用打开基础信息：</strong>匿名收集基础的设备分辨率、浏览器类型、操作系统及主题模式，用于屏幕自适应与兼容诊断；</li>
+              <li><strong>业务操作事件：</strong>仅在用户主动导入精听包、加载音频或开启课程时记录轻量化自定义事件名；</li>
+              <li><strong>默认关闭项：</strong>已彻底关闭全局网络请求拦截、控制台日志监听与页面 DOM 行为自动收集，杜绝任何后台静默抓取；</li>
+              <li><strong>绝对排除项：</strong>探针绝不收集任何个人敏感身份信息（如姓名、手机号、密码），也绝不窃取或回传您正在播放的音频与题目私密文本。</li>
+            </ul>
+            <h4>三、数据传输与存储</h4>
+            <p>监控探针采集的数据均通过 HTTPS 强加密链路直接上报至阿里云位于华东 1（杭州）的日志监控集群，保留期限依阿里云标准审计配置执行，仅供开发者用于改进软件质量。</p>
+            <h4>四、用户的选择权</h4>
+            <p>使用本播放器即代表您已了解并接受上述性能监控与本地存储机制。如您不同意，可随时关闭页面或通过浏览器屏蔽脚本插件阻止探针运行，这不会影响本地基础播放核心功能的完整性。</p>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button id="btn-close-legal" class="fluent-btn filled">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fullscreen Blocking Legal Overlay (全屏阻断式用户协议与隐私政策) -->
+    <div id="blocking-legal-overlay" class="blocking-legal-overlay" style="display: none;">
+      <div class="blocking-legal-modal">
+        <!-- Brand Header -->
+        <div class="blocking-legal-header">
+          <div class="brand-avatar">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              <line x1="12" y1="19" x2="12" y2="22"></line>
+            </svg>
+          </div>
+          <div class="brand-text-block">
+            <h2 class="brand-heading">Intensive Listening 在线播放器</h2>
+            <div class="brand-subheading">首次使用提示：服务协议、隐私保护与阿里云性能遥测合规声明</div>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <div class="blocking-tabs">
+          <button class="blocking-tab-btn active" data-tab="agreement">用户协议 (GPL-3.0 许可)</button>
+          <button class="blocking-tab-btn" data-tab="privacy">隐私政策与阿里云遥测说明</button>
+        </div>
+
+        <!-- Scrollable Document Content -->
+        <div class="blocking-scroll-body">
+          <div id="block-article-agreement" class="blocking-article">
+            <h3>Intensive Listening 开源许可与服务条款</h3>
+            <p class="article-meta">生效版本：2026-10-01 ｜ 开发者：Luyii ｜ 开源许可证：GNU General Public License v3</p>
+            
+            <h4>一、开源许可与软件属性</h4>
+            <p>本软件（Intensive Listening 在线精听播放器）依据 GNU General Public License Version 3（GPL-3.0-only）完全开源发布。您可以自由运行、研究、复制、修改及在遵守 GNU GPL v3 条款前提下发布衍生版本。</p>
+
+            <h4>二、纯本地运行与数据所有权</h4>
+            <p><strong>本播放器为纯前端静态 Web 应用</strong>。您所导入的 <code>.ilp</code> 精听包、音频文件、字幕及答题进度，均直接在您的本地浏览器（IndexedDB 离线数据库）中解压与存储。<strong>系统绝不会将您的听力音频或私有题目上传至任何第三方服务器</strong>。</p>
+
+            <h4>三、知识产权声明</h4>
+            <p>用户导入至播放器的任何听力录音、考试试题、字幕文本等素材的版权属于原权利人所有。用户应确保其拥有合法使用与播放该等材料的权利。本软件开源许可不代表为任何用户取得第三方专有教材的授权。</p>
+
+            <h4>四、免责声明</h4>
+            <p>本软件“按现状”提供，不包含任何明示或暗示的保证。听力练习、自动切片及单词挖空仅供辅助学习，正式考试或教学前应人工核实。在法律允许的最大范围内，开发者不对因使用本软件造成的任何直接或间接损失承担责任。</p>
+          </div>
+
+          <div id="block-article-privacy" class="blocking-article" style="display: none;">
+            <h3>隐私保护与阿里云性能监控服务 (ARMS RUM) 声明</h3>
+            <p class="article-meta">更新日期：2026-10-01 ｜ 监控服务：阿里云应用实时监控服务 (ARMS RUM Browser SDK v2)</p>
+
+            <h4>一、个人隐私与数据安全承诺</h4>
+            <p>我们高度重视您的个人隐私与数据安全。本播放器遵循<strong>数据最小化</strong>与<strong>全匿名化</strong>原则。我们向您郑重承诺：</p>
+            <ul>
+              <li><strong>绝不采集个人敏感信息：</strong>不收集姓名、手机号、密码、社交账号、通讯录或地理位置；</li>
+              <li><strong>绝不外传用户私有内容：</strong>您所导入播放的音频文件、字幕文本、个人做题记录 100% 保存在您本地设备中；</li>
+              <li><strong>纯静态安全运行：</strong>静态部署于 Pages 托管网络，无自建后端收集或留存您的使用痕迹。</li>
+            </ul>
+
+            <h4>二、阿里云应用实时监控服务 (ARMS RUM) 集成说明</h4>
+            <p>为了保障播放器的系统稳定性、诊断不同移动设备与浏览器上的前端兼容性并优化解码体验，本站集成了<strong>阿里云性能监控探针（Browser SDK v2）</strong>，运行于生产环境（prod）。遵循数据极简原则，<strong>默认自动采集项已全部关闭</strong>，仅保留少量自定义业务事件：</p>
+            <ul>
+              <li><strong>应用启动基础环境：</strong>收集基础的匿名设备分辨率、浏览器版本、操作系统类型及主题配置；</li>
+              <li><strong>轻量级业务事件：</strong>仅在用户主动导入精听包、加载音频或开启播放时触发自定义事件；</li>
+              <li><strong>默认项全部关闭：</strong>网络请求（API）劫持拦截、静态资源监视、控制台错误拦截、JS 未捕获错误捕获及 DOM 点击行为自动收集均已设为关闭（false）；</li>
+              <li><strong>数据传输链路：</strong>自定义事件通过 HTTPS 强加密链路直接上报至阿里云位于华东 1（杭州）的日志监控集群。</li>
+            </ul>
+
+            <h4>三、知情同意与退出机制</h4>
+            <p>使用本播放器即代表您已了解并接受上述性能监控与本地存储机制。如您不同意，可点击下方“不同意并退出”关闭页面，或通过浏览器扩展屏蔽探针脚本，这不会影响本地离线播放功能的完整性。</p>
+          </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="blocking-legal-footer">
+          <label class="fluent-checkbox checked" id="chk-blocking-consent">
+            <span class="checkbox-box" id="chk-blocking-box">
+              <svg class="check-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="2 6 4.5 9 10 3"></polyline>
+              </svg>
+            </span>
+            <span class="checkbox-label-text">我已认真阅读并同意《用户协议》与《隐私政策及阿里云遥测声明》</span>
+          </label>
+          <div class="blocking-action-buttons">
+            <button id="btn-blocking-decline" class="fluent-btn">不同意并退出</button>
+            <button id="btn-blocking-accept" class="fluent-btn filled lg">同意并进入播放器</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fullscreen Ad Blocker Warning Modal (全屏提示关闭广告拦截器) -->
+    <div id="adblock-overlay" class="adblock-overlay" style="display: none;">
+      <div class="adblock-modal">
+        <div class="adblock-header">
+          <div class="adblock-avatar">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+          </div>
+          <div class="adblock-header-text">
+            <h3 class="adblock-heading">检测到体验监控探针被拦截</h3>
+            <p class="adblock-subheading">请暂时关闭广告拦截插件或添加白名单，以提供更好的播放体验</p>
+          </div>
+        </div>
+
+        <div class="adblock-body">
+          <div class="adblock-notice-box">
+            <p><strong>为什么会出现此提示？</strong></p>
+            <p>播放器内置了系统体验质量监测与性能遥测探针（阿里云 ARMS RUM）。您的浏览器扩展（如 <strong>uBlock Origin</strong>、<strong>AdGuard</strong>、<strong>AdBlock Plus</strong>、<strong>Brave 盾牌</strong> 等）拦截了数据通道，导致系统无法获得解码延迟与异常报错指标。</p>
+          </div>
+
+          <div class="adblock-commitments">
+            <h4>播放器隐私与纯净承诺：</h4>
+            <ul>
+              <li><strong>100% 纯净无广告：</strong>播放器为学术精听工具，零弹窗、零广告、零第三方商业追踪；</li>
+              <li><strong>个人数据全本地保存：</strong>您的课程音频、字幕、答题记录 100% 保存在本地浏览器 IndexedDB，绝不上传；</li>
+              <li><strong>遥测仅用于系统健康：</strong>监测仅收集匿名 WebVitals 音频性能与系统崩溃调用栈，用于保障连续播放稳定性。</li>
+            </ul>
+          </div>
+
+          <div id="adblock-guide-box" class="adblock-guide-box" style="display: none;">
+            <h4>白名单添加指引：</h4>
+            <ol>
+              <li>点击浏览器工具栏上的广告拦截器图标（如 uBlock / AdGuard / AdBlock）；</li>
+              <li>点击电源开关按钮关闭对本站的拦截，或选择“在此网站上暂停拦截”；</li>
+              <li>完成后点击下方【我已关闭，重新检测并播放】即可正常继续学习。</li>
+            </ol>
+          </div>
+
+          <div id="adblock-retry-msg" class="adblock-retry-msg" style="display: none;"></div>
+        </div>
+
+        <div class="adblock-footer">
+          <button id="btn-adblock-guide-toggle" class="fluent-btn sm">白名单设置指引</button>
+          <div class="adblock-footer-right">
+            <button id="btn-adblock-ignore" class="fluent-btn">坚持播放</button>
+            <button id="btn-adblock-retry" class="fluent-btn filled">我已关闭，重新检测并播放</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

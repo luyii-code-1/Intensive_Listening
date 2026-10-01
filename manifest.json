@@ -1,0 +1,45 @@
+{
+  "name": "Intensive Listening - 精听在线播放器",
+  "short_name": "精听播放器",
+  "description": "Windows Fluent Design 风格的纯前端 ILP 精听播放器，离线支持题目作答、字幕同步与挖空练习。",
+  "id": "intensive-listening-web-player",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f3f3",
+  "theme_color": "#b80f28",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "categories": [
+    "education",
+    "music",
+    "utilities"
+  ],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

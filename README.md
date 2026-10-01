@@ -152,11 +152,11 @@ bash scripts/publish-csharp-windows.sh
 ```
 
 ```powershell
-Expand-Archive artifacts/IL2-win-x64.zip artifacts/runtime
+Expand-Archive artifacts/build/IL2-win-x64.zip artifacts/runtime
 ./scripts/package-csharp-windows.ps1 -RuntimeDirectory (Resolve-Path artifacts/runtime).Path -OutputDirectory "$PWD/artifacts/installer" -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 ```
 
-运行包包含 VLC、FFmpeg、ARMS SDK 与独立播放器启动器；构建脚本校验依赖摘要。兼容性与验证说明见 [CSHARP_MIGRATION.md](CSHARP_MIGRATION.md)。
+运行包包含 VLC、FFmpeg、ARMS SDK 与独立播放器启动器；构建脚本校验依赖摘要。兼容性与验证说明见 [迁移与兼容说明](docs/MIGRATION.md)。
 
 ### 自动构建
 
@@ -181,21 +181,26 @@ Expand-Archive artifacts/IL2-win-x64.zip artifacts/runtime
 ## 源码结构
 
 ```text
-assets/            字体、证书、许可文本与品牌资源
-lib/
-  asr/             ASR 服务配置与云端转写客户端
-  audio/           音频处理与波形/播放控制辅助
-  documents/       文档与材料文本管理
-  ilp/             .ilp 课程包编解码、题目结构规划与词级挖空模型
-  mcp/             MCP Server、HTTP Tool Call 接口与智能体 SKILL 引导定义
-  projects/        教师端课程工程存储与版本管理
-  settings/        应用设置、文件关联与 MCP 开关配置
-  student/         学生端时间轴跟随、词槽交互与词典查询接口
-  transcription/   VAD 语音切分与 SRT 字幕解析
-  widgets/         桌面端通用通知栏与交互组件
-test/              单元测试与组件测试
-windows/           Windows Runner、文件关联与原生集成源码
+src/
+  IL.App/          Avalonia 界面、ViewModel、音频与桌面集成
+  IL.Core/         课程、工程、转写、MCP、设置与遥测
+  IL.Launcher/     独立课程播放器启动器
+tests/             C# 自动测试与旧版数据兼容夹具
+tools/             离屏界面与动画验证工具
+assets/            图标、字体、许可文本与品牌资源
+third_party/       原生依赖来源、许可证与下载缓存
+scripts/           构建、打包、验证与生成文件清理
+docs/              迁移、兼容性与诊断记录
+artifacts/         本地构建、验证与安装包产物
 ```
+
+Dart/Flutter 实现、旧测试与夹具生成脚本保存在 GitHub 的
+[`archive/dart-1.x`](https://github.com/luyii-code-1/Intensive_Listening/tree/archive/dart-1.x)
+分支，存档说明见该分支的 `DART_ARCHIVE.md`。
+
+标准 Windows 构建写入 `artifacts/build/`；本地保留的发布文件集中在
+`artifacts/releases/`，原生下载缓存位于 `artifacts/native/`。
+可运行 `bash scripts/clean-generated.sh` 清理编译与打包中间产物。
 
 ## 参与项目
 
@@ -206,7 +211,7 @@ windows/           Windows Runner、文件关联与原生集成源码
 - 预期行为与实际表现
 - 必要的日志或界面截图
 
-提交代码前，请运行 `flutter analyze` 和 `flutter test`，并说明变更覆盖的使用场景。
+提交代码前，请运行 `dotnet test IL2.slnx -c Release`，并说明变更覆盖的使用场景。
 
 ## 许可证
 

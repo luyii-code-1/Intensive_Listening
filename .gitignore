@@ -7,79 +7,21 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Dart and Flutter generated files
-.dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
-.packages
-.pub-cache/
-.pub/
-build/
+# Generated .NET and packaging output
+**/bin/
+**/obj/
+artifacts/
+TestResults/
 coverage/
-doc/api/
-*.symbols
-*.map.json
-
-# Generated Windows build state
-windows/flutter/ephemeral/
-windows/third_party/ffmpeg/ffmpeg.exe
-windows/third_party/arms/alibabacloud_rum.dll
-
-# Unsupported platforms and repository-local tooling
-android/
-ios/
-linux/
-macos/
-web/
-scripts/
-!scripts/
-scripts/*
-!scripts/prepare_windows_dependencies.ps1
-!scripts/verify_windows_bundle.ps1
-!scripts/package_windows_installer.ps1
-!scripts/windows_installer.iss
-
-# Internal project material and repository automation
-.agents/
-.github/
-!.github/
-.github/*
-!.github/workflows/
-.github/workflows/*
-!.github/workflows/windows-build.yml
-!.github/workflows/sync-dev-to-main.yml
-!.github/scripts/
-.github/scripts/*
-!.github/scripts/deploy_installer.py
-docs/
-HANDOFF*.md
-README.en.md
-CONTRIBUTING*.md
-SECURITY*.md
-THIRD_PARTY_NOTICES*.md
-!THIRD_PARTY_NOTICES.md
-.metadata
-
-# Logs, packages, and local output
 *.log
 *.tmp
 *.zip
 *.7z
 *.exe
-dist/
-
-# C# migration build output
-**/bin/
-**/obj/
-artifacts/
-TestResults/
-!scripts/publish-csharp-windows.sh
-!scripts/test-csharp.sh
-!scripts/export-csharp-fixtures.dart
-!scripts/csharp-windows-installer.iss
+third_party/arms/alibabacloud_rum.dll
 !tests/fixtures/*.zip
-!scripts/validate-csharp-windows.ps1
-!scripts/package-csharp-windows.ps1
-!scripts/publish-csharp-macos.sh
-!scripts/bundle-csharp-macos.py
-!.github/workflows/csharp-windows-build.yml
+
+# Local design references and agent tooling
+.agents/
+docs/references/
+docs/prototypes/

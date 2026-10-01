@@ -1659,8 +1659,8 @@ class IntensiveListeningApp {
 
   reportTelemetryEvent(name, properties = {}) {
     const payload = {
-      app_version: '1.0.1+7',
-      commit_id: 'c38d937',
+      app_version: '1.0.1+8',
+      commit_id: '6d0f5ac',
       ...properties,
       timestamp: Date.now()
     };

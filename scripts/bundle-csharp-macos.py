@@ -29,7 +29,7 @@ with zipfile.ZipFile(arms_archive) as sdk:
     for name in ['libalibabacloud_rum.dylib', 'libcurl.dylib']:
         (arms / name).write_bytes(sdk.read('AlibabaCloud_RUM_macOS_0.4.4/lib/arm64/Release/' + name))
         (arms / name).chmod(0o755)
-shutil.copy('windows/third_party/arms/README.md', licenses / 'ARMS.md')
+shutil.copy('third_party/arms/README.md', licenses / 'ARMS.md')
 (licenses / 'ARMS-macOS.json').write_text(json.dumps({'version': '0.4.4', 'source': 'https://rum-sdk.oss-cn-hangzhou.aliyuncs.com/native/AlibabaCloud_RUM_macOS.zip', 'sha256': 'b837d135b16eb1ec087cfba8796be2425765cb39e16b161d663364135e59085e'}, indent=2))
 
 # Homebrew dependencies are absolute. Copy their closure and rewrite each load command.
@@ -127,7 +127,7 @@ with (app / 'Contents/Info.plist').open('wb') as f:
 iconset = resources / 'AppIcon.iconset'
 iconset.mkdir()
 png = resources / 'source.png'
-subprocess.run(['sips', '-s', 'format', 'png', 'windows/runner/resources/app_icon.ico', '--out', str(png)], check=True, stdout=subprocess.DEVNULL)
+subprocess.run(['sips', '-s', 'format', 'png', 'assets/app_icon.ico', '--out', str(png)], check=True, stdout=subprocess.DEVNULL)
 for size in [16, 32, 128, 256, 512]:
     for scale in [1, 2]:
         label = f'icon_{size}x{size}' + ('@2x' if scale == 2 else '') + '.png'

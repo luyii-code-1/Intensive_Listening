@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-output="${1:-artifacts/IL2-win-x64}"
+output="${1:-artifacts/build/IL2-win-x64}"
 mkdir -p "$output/tools" artifacts/native
 output="$(cd "$output" && pwd)"
 dotnet test IL2.slnx -c Release --nologo
 dotnet publish src/IL.App/IL.App.csproj -c Release -r win-x64 --self-contained true -o "$output" --nologo
-dotnet publish src/IL.Launcher/IL.Launcher.csproj -c Release -r win-x64 --self-contained true -o artifacts/launcher --nologo
-cp artifacts/launcher/lesson_player_launcher.exe "$output/tools/lesson_player_launcher.exe"
-ffmpeg="windows/third_party/ffmpeg/ffmpeg.exe"
+dotnet publish src/IL.Launcher/IL.Launcher.csproj -c Release -r win-x64 --self-contained true -o artifacts/build/launcher --nologo
+cp artifacts/build/launcher/lesson_player_launcher.exe "$output/tools/lesson_player_launcher.exe"
+ffmpeg="third_party/ffmpeg/ffmpeg.exe"
 if [[ ! -f "$ffmpeg" ]]; then
   curl -fL --retry 2 https://github.com/GyanD/codexffmpeg/releases/download/9.0.1/ffmpeg-9.0.1-essentials_build.zip -o artifacts/native/ffmpeg.zip
   python3 - <<'PY'
 import zipfile,pathlib
 with zipfile.ZipFile('artifacts/native/ffmpeg.zip') as z:
     name=next(n for n in z.namelist() if n.endswith('/bin/ffmpeg.exe'))
-    pathlib.Path('windows/third_party/ffmpeg').mkdir(parents=True,exist_ok=True)
-    pathlib.Path('windows/third_party/ffmpeg/ffmpeg.exe').write_bytes(z.read(name))
+    pathlib.Path('third_party/ffmpeg').mkdir(parents=True,exist_ok=True)
+    pathlib.Path('third_party/ffmpeg/ffmpeg.exe').write_bytes(z.read(name))
 PY
 fi
 python3 - "$ffmpeg" <<'PY'
@@ -29,9 +29,9 @@ if [[ ! -f artifacts/native/AlibabaCloud_RUM_Windows.zip ]]; then
 fi
 mkdir -p "$output/licenses"
 cp LICENSE "$output/licenses/Intensive-Listening-LICENSE.txt"
-cp windows/third_party/arms/README.md "$output/licenses/ARMS.md"
-cp windows/third_party/ffmpeg/*LICENSE* "$output/licenses/" 2>/dev/null || true
-cp windows/third_party/ffmpeg/README.md "$output/licenses/FFmpeg-README.md"
+cp third_party/arms/README.md "$output/licenses/ARMS.md"
+cp third_party/ffmpeg/*LICENSE* "$output/licenses/" 2>/dev/null || true
+cp third_party/ffmpeg/README.md "$output/licenses/FFmpeg-README.md"
 cp THIRD_PARTY_NOTICES.md "$output/licenses/THIRD_PARTY_NOTICES.md"
 python3 - "$output" <<'PY'
 import hashlib,sys,zipfile,pathlib,uuid

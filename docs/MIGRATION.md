@@ -1,7 +1,9 @@
 # Intensive Listening 2.0
 
-C# 开发位于 `2.0-dev`，2.0 发布源码同步到 `main`，行为参考同一仓库的 Dart `lib/` 与 `test/`。
-优先目标是 Windows x64，同时提供 macOS ARM64 开发包。技术栈为 .NET 10、Avalonia 12、FluentAvalonia、CommunityToolkit.Mvvm，音频播放使用 LibVLC，转写音频处理使用 FFmpeg。
+C# 开发位于 `2.0-dev`，2.0 发布源码同步到 `main`，Dart `lib/`、`test/` 与生成脚本保存在 [源码存档分支](https://github.com/luyii-code-1/Intensive_Listening/tree/archive/dart-1.x)。
+当前维护平台是 Windows x64。macOS ARM64 打包资料保留用于历史开发包追溯。技术栈为 .NET 10、Avalonia 12、FluentAvalonia、CommunityToolkit.Mvvm，音频播放使用 LibVLC，转写音频处理使用 FFmpeg。
+
+历史交付记录中的路径对应验证当时的目录。当前发布验证记录位于 `artifacts/releases/v2.0.0/verification/`；旧截图、日志与报告已集中到工作区的 `_archive/validation/2026-10-01/`。
 
 ## 开发与构建
 
@@ -33,7 +35,7 @@ Windows 的文件关联、ARMS SDK 和独立 EXE 导出保持 Windows 平台范�
 ```
 
 本机运行窗口可用于开发；Windows 包包含 LibVLC 原生库、插件、FFmpeg、ARMS SDK 和 .NET 运行时。
-输出为 `artifacts/IL2-win-x64/IL.App.exe` 与 `artifacts/IL2-win-x64.zip`，目标 Windows 无需安装 .NET。
+输出为 `artifacts/build/IL2-win-x64/IL.App.exe` 与 `artifacts/build/IL2-win-x64.zip`，目标 Windows 无需安装 .NET。
 
 Windows 验证与安装包制作：
 
@@ -55,7 +57,7 @@ scripts/package-csharp-windows.ps1 -RuntimeDirectory F:\dev\il2\runtime -OutputD
 Windows 用户数据沿用 `%LOCALAPPDATA%\Intensive Listening\data`。首次读取会迁移旧根目录中的课程、工程、设置、进度、队列和 MCP 数据。
 独立播放器使用单独的课程数据目录，启动参数为 `--standalone lesson.ilp`。
 
-`tests/fixtures` 保存由原 Dart 实际生成的课包、工程、旧版工程元数据、队列和中文密码配置归档。C# 测试验证读取；生成脚本保留在测试目录或 `scripts/export-csharp-fixtures.dart`。
+`tests/fixtures` 保存由原 Dart 实际生成的课包、工程、旧版工程元数据、队列和中文密码配置归档。C# 测试验证读取；对应生成脚本保存在 `archive/dart-1.x` 分支。
 Windows 运行诊断为 `IL.App.exe --verify-runtime report.json`，检查原生音频与 FFmpeg、工程和课包交付，并生成可独立运行的验证课程。
 
 UI 视觉与交互由用户验收；自动化测试与原生运行检查分别记录，不替代人工验收。
@@ -100,7 +102,7 @@ ZIP 解压到另一目录后，签名验证和相同原生检查再次通过。�
 
 ## 2026-10-01 Dart UI 还原
 
-`2.0-dev` 按当前 `lib/main.dart` 的实际 `StudentPage`、`TeacherPage`、
+C# 界面按存档版本 `lib/main.dart` 的实际 `StudentPage`、`TeacherPage`、
 `SettingsPage` 和 `lib/widgets/first_run_wizard.dart` 重新实现 C# 界面。
 导航改为左侧展开/紧凑窗格；制作页恢复音频、转写、审阅、完成四阶段，
 分题、题目总览与挖空各自的原布局；播放页恢复课程主页与题目/字幕双栏；
@@ -110,7 +112,7 @@ OOBE 恢复分步渐变面板，按已有云端配置选择五步或六步。
 界面内嵌 Dart 原版思源黑体 Regular/Medium/Bold 与原图标字体。
 字体诊断确认三种字重、中文、拉丁文字和图标实际解析。
 
-可重复生成原版离屏图：
+在 `archive/dart-1.x` 源码检出目录中，可重复生成原版离屏图：
 
 ```sh
 flutter test test/ui_reference_render_test.dart

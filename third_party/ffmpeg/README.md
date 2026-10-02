@@ -11,7 +11,7 @@
 `ffmpeg.exe` 是构建依赖，不纳入版本控制。请从上述二进制包取得文件，核对校验值后放置到：
 
 ```text
-windows/third_party/ffmpeg/ffmpeg.exe
+third_party/ffmpeg/ffmpeg.exe
 ```
 
 Windows Release 构建会将该文件复制到应用输出目录。

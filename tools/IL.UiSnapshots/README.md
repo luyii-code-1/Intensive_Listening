@@ -42,7 +42,8 @@ Dialog title, message and action text are checked against the embedded text fami
 The motion mode also checks the welcome logo's spring entrance and the version / Git short commit shown on the first OOBE page.
 
 These images establish offscreen rendering and resource integration. They are
-review artifacts for comparison with `artifacts/ui-reference/dart`, rather
+review artifacts for comparison with the Dart baseline archived under
+`../_archive/validation/2026-10-01/ui-reference/dart`, rather
 than an assertion of Windows interaction or visual acceptance.
 
 Rendering follows Avalonia's documented

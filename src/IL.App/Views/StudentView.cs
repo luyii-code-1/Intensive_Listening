@@ -180,7 +180,7 @@ public sealed class StudentView : UserControl
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,auto"), Margin = new Thickness(24, 22, 24, 20), MinHeight = 36 };
         if (_vm.HasMedia)
         {
-            var title = new TextBlock { FontSize = 18, FontWeight = FontWeight.Medium, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+            var title = new TextBlock { FontSize = 18, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
             title.Bind(TextBlock.TextProperty, new Binding(nameof(_vm.Title))); ToolTip.SetTip(title, _vm.Title);
             var leading = new Grid { ColumnDefinitions = new ColumnDefinitions("auto,auto,auto") };
             var back = WorkspaceUi.IconButton("back", "返回主页", _vm.ReturnHomeAsync); back.Margin = new Thickness(-12, 0, 8, 0);
@@ -316,7 +316,7 @@ public sealed class StudentView : UserControl
         _questionMaterialId = id;
         _selectedAnswers.Clear(); _revealedAnswers.Clear();
         if (_vm.Questions.Count == 0)
-        { _questions.Content = new TextBlock { Text = "当前题目未设置", FontSize = 17, FontWeight = FontWeight.Medium, HorizontalAlignment = HorizontalAlignment.Center }; return; }
+        { _questions.Content = new TextBlock { Text = "当前题目未设置", FontSize = 17, HorizontalAlignment = HorizontalAlignment.Center }; return; }
         var panel = new StackPanel { Spacing = 14 };
         foreach (var question in _vm.Questions) panel.Children.Add(QuestionTemplate(question));
         _questions.Content = new ScrollViewer { Content = panel, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };

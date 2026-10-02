@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Layout;
 using Avalonia.Input.Platform;
 using Avalonia.Media;
@@ -13,13 +14,17 @@ using IL.App.Views.Dialogs;
 using IL.App.Services;
 using IL.Core.Infrastructure;
 using IL.Core.Settings;
+using IL.Core.Mcp;
 
 namespace IL.App.Views;
 
 public sealed class SettingsView : UserControl
 {
     private readonly AppSettingsStore _store;
+    private readonly AppPrivateApiServer? _mcpServer;
+    private readonly StackPanel _agents = new() { Spacing = 8 };
     private readonly Func<AppSettings, Task> _apply;
+    private readonly PlayerShortcutSettingsView _playerShortcuts;
     private AppSettings _settings = AppSettings.Defaults();
     private Task _preferenceSaves = Task.CompletedTask;
     private bool _populating;
@@ -28,21 +33,52 @@ public sealed class SettingsView : UserControl
     private readonly Slider _font = new() { Minimum = 14, Maximum = 28, TickFrequency = 1, IsSnapToTickEnabled = true, Width = 200 };
     private readonly TextBlock _fontValue = WorkspaceUi.Text("18");
     private readonly ComboBox _theme = new() { MinWidth = 145 };
+    private sealed record FontChoice(string Value, string Label, FontFamily Family);
+    private sealed record WeightChoice(FontWeight Weight, string Label);
+    private readonly ComboBox _applicationFont = new() { Width = 260, MaxDropDownHeight = 360 };
+    private readonly ComboBox _applicationWeight = new() { Width = 180 };
+    private readonly TextBox _fontPreview = new()
+    {
+        Text = "精听，让每一句都听得清楚\nThe quick brown fox jumps over a lazy dog\n1234567890  08:00–12:00",
+        AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontSize = 17, MinHeight = 110
+    };
     private readonly ToggleSwitch _association = new(), _mcp = new(), _skip = new(), _debug = new(), _telemetry = new();
     private readonly TextBox _localDirectory = WorkspaceUi.Input();
     private readonly ComboBox _localModel = new() { MinWidth = 180 };
     private readonly DispatcherTimer _fontSave = new() { Interval = TimeSpan.FromMilliseconds(250) };
     public Action? BackRequested { get; set; }
     public Func<Task>? WithdrawAgreementRequested { get; set; }
-    public SettingsView(AppSettingsStore store, Func<AppSettings, Task>? apply = null)
+    public SettingsView(AppSettingsStore store, Func<AppSettings, Task>? apply = null, AppPrivateApiServer? mcpServer = null)
     {
-        _store = store; _apply = apply ?? (_ => Task.CompletedTask);
+        _store = store; _mcpServer = mcpServer; _apply = apply ?? (_ => Task.CompletedTask);
+        _playerShortcuts = new(bindings => ChangePreferenceAsync(s => s with { PlayerKeyBindings = bindings }, "扩展按键"));
         _theme.ItemsSource = new[] { ThemeItem("跟随系统", "system"), ThemeItem("浅色模式", "light"), ThemeItem("深色模式", "dark") };
+        _applicationFont.ItemsSource = new[] { new FontChoice("", "HarmonyOS Sans SC（默认）", WorkspaceUi.BodyFont) }
+            .Concat(FontManager.Current.SystemFonts.OrderBy(f => f.Name, StringComparer.CurrentCultureIgnoreCase)
+                .Select(f => new FontChoice(f.Name, f.Name, f))).ToArray();
+        _applicationFont.ItemTemplate = new FuncDataTemplate<FontChoice>((item, _) => item is null ? null : new TextBlock
+        {
+            Text = item.Label, FontFamily = item.Family, FontWeight = FontWeight.Normal,
+            TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 240, VerticalAlignment = VerticalAlignment.Center
+        });
+        _applicationWeight.ItemsSource = new[]
+        {
+            new WeightChoice(FontWeight.Thin, "纤细 · Thin"), new WeightChoice(FontWeight.ExtraLight, "特细 · Extra Light"),
+            new WeightChoice(FontWeight.Light, "细体 · Light"), new WeightChoice(FontWeight.Normal, "常规 · Regular"),
+            new WeightChoice(FontWeight.Medium, "中等 · Medium"), new WeightChoice(FontWeight.SemiBold, "半粗 · Semi Bold"),
+            new WeightChoice(FontWeight.Bold, "粗体 · Bold"), new WeightChoice(FontWeight.ExtraBold, "特粗 · Extra Bold"),
+            new WeightChoice(FontWeight.Black, "黑体 · Black"), new WeightChoice(FontWeight.ExtraBlack, "特黑 · Extra Black")
+        };
+        _applicationWeight.ItemTemplate = new FuncDataTemplate<WeightChoice>((item, _) => item is null ? null : new TextBlock { Text = item.Label, FontWeight = item.Weight, VerticalAlignment = VerticalAlignment.Center });
         Build(); WirePreferences();
-        AttachedToVisualTree += async (_, _) => await RunAsync(ReloadAsync);
-        DetachedFromVisualTree += (_, _) => { _fontSave.Stop(); if (!_populating && (int)Math.Round(_font.Value) != _settings.TranscriptFontSize) _ = ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); };
+        AttachedToVisualTree += async (_, _) =>
+        {
+            if (_mcpServer is not null) { _mcpServer.AgentsChanged += OnAgentsChanged; _mcpServer.AgentStateChanged += OnAgentStateChanged; }
+            await RunAsync(ReloadAsync);
+        };
+        DetachedFromVisualTree += (_, _) => { if (_mcpServer is not null) { _mcpServer.AgentsChanged -= OnAgentsChanged; _mcpServer.AgentStateChanged -= OnAgentStateChanged; } _fontSave.Stop(); if (!_populating && (int)Math.Round(_font.Value) != _settings.TranscriptFontSize) _ = ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); };
     }
-    public async Task ReloadAsync() { await _preferenceSaves; Populate(await _store.LoadAsync()); }
+    public async Task ReloadAsync() { await _preferenceSaves; Populate(await _store.LoadAsync()); await RefreshAgentsAsync(); }
     public void Populate(AppSettings settings)
     {
         _populating = true;
@@ -53,16 +89,32 @@ public sealed class SettingsView : UserControl
             _timeout.Value = settings.CloudTimeoutSeconds; _concurrency.Value = settings.CloudConcurrency;
             _font.Value = settings.TranscriptFontSize; _fontValue.Text = settings.TranscriptFontSize.ToString();
             _theme.SelectedItem = _theme.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string?)i.Tag == settings.ThemeMode);
+            PopulateTypography(settings);
+            _playerShortcuts.Populate(settings.PlayerKeyBindings);
             _association.IsChecked = settings.FileAssociationEnabled; _mcp.IsChecked = settings.McpEnabled; _skip.IsChecked = settings.SkipOpeningPrompts;
             _debug.IsChecked = settings.DebugLogging; _telemetry.IsChecked = settings.TelemetryEnabled;
             _localDirectory.Text = settings.LocalModelsDirectory; _localModel.ItemsSource = settings.DetectedLocalModels; _localModel.SelectedItem = settings.SelectedLocalModel;
         }
         finally { _populating = false; }
     }
-    private static ComboBoxItem ThemeItem(string label, string value) => new() { Content = label, Tag = value };
+    private static ComboBoxItem ThemeItem(string label, string value) => new()
+    {
+        Content = new TextBlock { Text = label, FontSize = 14, VerticalAlignment = VerticalAlignment.Center },
+        Tag = value, VerticalContentAlignment = VerticalAlignment.Center
+    };
     private void WirePreferences()
     {
         _theme.SelectionChanged += async (_, _) => { if (!_populating && _theme.SelectedItem is ComboBoxItem { Tag: string mode }) await ChangePreferenceAsync(s => s with { ThemeMode = mode }, "外观主题"); };
+        _applicationFont.SelectionChanged += async (_, _) =>
+        {
+            if (!_populating && _applicationFont.SelectedItem is FontChoice font)
+            { await ChangePreferenceAsync(s => s with { ApplicationFontFamily = font.Value }, "应用字体"); UpdateFontPreview(); }
+        };
+        _applicationWeight.SelectionChanged += async (_, _) =>
+        {
+            if (!_populating && _applicationWeight.SelectedItem is WeightChoice weight)
+            { await ChangePreferenceAsync(s => s with { ApplicationFontWeight = (int)weight.Weight }, "应用字重"); UpdateFontPreview(); }
+        };
         _association.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { FileAssociationEnabled = _association.IsChecked == true, FileAssociationPrompted = true }, "关联文件格式"); };
         _mcp.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { McpEnabled = _mcp.IsChecked == true }, "MCP"); };
         _skip.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { SkipOpeningPrompts = _skip.IsChecked == true }, "跳过题前提示"); };
@@ -77,6 +129,23 @@ public sealed class SettingsView : UserControl
         };
         _font.ValueChanged += (_, _) => { _fontValue.Text = ((int)Math.Round(_font.Value)).ToString(); if (!_populating) { _fontSave.Stop(); _fontSave.Start(); } };
         _fontSave.Tick += async (_, _) => { _fontSave.Stop(); await ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); };
+    }
+    private void PopulateTypography(AppSettings settings)
+    {
+        _applicationFont.SelectedItem = _applicationFont.Items.OfType<FontChoice>().FirstOrDefault(f => f.Value == settings.ApplicationFontFamily) ?? _applicationFont.Items[0];
+        _applicationWeight.SelectedItem = _applicationWeight.Items.OfType<WeightChoice>().FirstOrDefault(w => (int)w.Weight == settings.ApplicationFontWeight);
+        UpdateFontPreview();
+    }
+    private void UpdateFontPreview()
+    {
+        _fontPreview.FontFamily = ApplicationTypography.ResolveFont(_settings);
+        _fontPreview.FontWeight = (FontWeight)_settings.ApplicationFontWeight;
+    }
+    private async Task ResetTypographyAsync()
+    {
+        await ChangePreferenceAsync(s => s with { ApplicationFontFamily = "", ApplicationFontWeight = 500 }, "应用字体");
+        _populating = true;
+        try { PopulateTypography(_settings); } finally { _populating = false; }
     }
     private Task ChangePreferenceAsync(Func<AppSettings, AppSettings> update, string label)
     {
@@ -97,24 +166,55 @@ public sealed class SettingsView : UserControl
         await _apply(settings); await _store.SaveAsync(settings);
         if (Application.Current != null) Application.Current.RequestedThemeVariant = settings.ThemeMode switch { "dark" => ThemeVariant.Dark, "light" => ThemeVariant.Light, _ => ThemeVariant.Default };
     }
+    private sealed record SettingsCategory(string Title, string Icon, Control Content);
+    private static Control CategoryPage(string title, string description, params Control[] settings)
+    {
+        var page = new StackPanel { MaxWidth = 1040, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
+        page.Children.Add(new StackPanel { Spacing = 4, Children = { WorkspaceUi.Text(title, 20, true), WorkspaceUi.Text(description, 12) } });
+        foreach (var setting in settings) page.Children.Add(setting);
+        return page;
+    }
     private void Build()
     {
-        var cards = new StackPanel { Spacing = 8 };
-        cards.Children.Add(Card("color", "外观主题", "控制应用界面的明暗外观。", _theme));
-        cards.Children.Add(Card("open_file", "关联文件格式", "双击 .ilp 精听包直接进入播放界面。", _association));
-        cards.Children.Add(Card("robot", "MCP", "接管需在应用内批准；关闭主窗口后服务继续运行，可从托盘退出。", _mcp));
-        cards.Children.Add(Card("forward", "跳过题前提示", "首次打开课程时定位到第一题前并暂停，保留已有播放进度。", _skip));
-        var font = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, VerticalAlignment = VerticalAlignment.Center };
-        _fontValue.VerticalAlignment = VerticalAlignment.Center; font.Children.Add(_font); font.Children.Add(_fontValue);
-        cards.Children.Add(Card("font", "字幕字体大小", "调整播放页逐句列表的文字大小。", font));
-        cards.Children.Add(Card("folder_open", "数据目录", "打开保存课程、制作工程和个人设置的文件夹。", ActionButton("打开", () => LaunchAsync(AppDirectories.DataDirectory()))));
-        cards.Children.Add(Card("info", "调试模式", "开启后在日志目录中记录详细诊断信息。", _debug));
-        cards.Children.Add(Card("chart", "匿名使用情况分析", "向阿里云发送匿名设备 ID、ASR 指标与 API 主机名、系统与硬件信息、红色错误提示原文及运行元数据。可随时关闭。", _telemetry));
-        cards.Children.Add(Card("document", "用户协议与隐私", "查看协议，或撤回此前的同意。", Actions(ActionButton("查看隐私说明", () => ShowLegalAsync("privacy_zh_cn.txt", "隐私说明")), ActionButton("撤回同意", WithdrawAsync))));
-        cards.Children.Add(Card("folder_open", "日志", "警告和错误保存在数据目录的 logs 文件夹中。", Actions(ActionButton("打开日志目录", () => LaunchAsync(AppLog.DirectoryPath)), ActionButton("清理日志", ClearLogsAsync))));
-        cards.Children.Add(Card("delete", "缓存", "释放可重新生成的临时文件；课程和制作数据保留。", ActionButton("清理", ClearCacheAsync)));
-        cards.Children.Add(Card("info", "关于", "查看应用版本、作者与最终用户许可协议。", ActionButton("查看", AboutAsync)));
-        var apiBody = new StackPanel { Spacing = 12, Margin = new Thickness(18, 12, 18, 18) };
+        var typography = new StackPanel { Spacing = 10, Margin = new Thickness(18, 8, 18, 10) };
+        var fontSelectors = new WrapPanel { Orientation = Orientation.Horizontal };
+        var familyField = WorkspaceUi.Field("字体", _applicationFont); familyField.Margin = new Thickness(0, 0, 12, 8); fontSelectors.Children.Add(familyField);
+        var weightField = WorkspaceUi.Field("字重", _applicationWeight); weightField.Margin = new Thickness(0, 0, 0, 8); fontSelectors.Children.Add(weightField);
+        typography.Children.Add(fontSelectors);
+        typography.Children.Add(WorkspaceUi.Field("字体预览 · 可以编辑测试文字", _fontPreview));
+        var fontSettings = new Expander
+        {
+            Header = Row("font", "应用字体与样式", "字体和字重即时应用，标题保留强调层级", ActionButton("恢复默认", ResetTypographyAsync)),
+            Content = typography, IsExpanded = true, HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var appearance = CategoryPage("外观与字体", "调整应用外观与全局文字显示",
+            Card("color", "外观主题", "选择跟随系统、浅色或深色外观", _theme), fontSettings);
+
+        var transcriptSize = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, VerticalAlignment = VerticalAlignment.Center };
+        _fontValue.VerticalAlignment = VerticalAlignment.Center; transcriptSize.Children.Add(_font); transcriptSize.Children.Add(_fontValue);
+        var shortcutSettings = new Expander
+        {
+            Header = Row("play", "扩展按键", "使用翻页笔或键盘单键控制播放，仅在应用前台的播放页生效", null),
+            Content = _playerShortcuts, HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var playback = CategoryPage("播放", "设置播放习惯、字幕大小与精听包关联",
+            Card("forward", "跳过题前提示", "首次打开课程时定位到第一题前并暂停，保留已有播放进度", _skip),
+            Card("font", "字幕字体大小", "调整播放页逐句列表的文字大小", transcriptSize),
+            shortcutSettings, Card("open_file", "关联文件格式", "双击 .ilp 精听包直接进入播放界面", _association));
+
+        var mcpBody = new StackPanel { Spacing = 10, Margin = new Thickness(18, 8, 18, 10) };
+        mcpBody.Children.Add(Actions(ActionButton("复制 MCP 配置", CopyMcpConfigurationAsync), ActionButton("复制操作提示", CopyAgentPromptAsync)));
+        mcpBody.Children.Add(WorkspaceUi.Text("智能体授权", 14, true)); mcpBody.Children.Add(_agents);
+        mcpBody.Children.Add(new Separator());
+        mcpBody.Children.Add(WorkspaceUi.Text("使用指南", 14, true));
+        mcpBody.Children.Add(WorkspaceUi.Text("在制作区域点击新建项目，选择智能体制作并选择音频和相关材料。打开本机智能体，例如 WorkBuddy，复制提示词到对话框并发送；首次接管需在应用内批准。", 12));
+        mcpBody.Children.Add(WorkspaceUi.Text("首次使用时将 MCP 配置添加到客户端。制作完成后智能体交还应用，由你审阅、保存并导出。", 12));
+        var mcpSettings = new Expander
+        {
+            Header = Row("robot", "MCP", "连接智能体并管理授权，关闭主窗口后服务在托盘继续运行", _mcp),
+            Content = mcpBody, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var apiBody = new StackPanel { Spacing = 10, Margin = new Thickness(18, 8, 18, 10) };
         var archiveActions = Actions(ActionButton("导入", ImportApiAsync), ActionButton("导出", ExportApiAsync)); archiveActions.HorizontalAlignment = HorizontalAlignment.Right; apiBody.Children.Add(archiveActions);
         apiBody.Children.Add(WorkspaceUi.Field("API Endpoint", _baseUrl)); apiBody.Children.Add(WorkspaceUi.Field("Path", _endpoint)); apiBody.Children.Add(WorkspaceUi.Field("Name", _model)); apiBody.Children.Add(WorkspaceUi.Field("Key", _key));
         var limits = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*") }; limits.Children.Add(WorkspaceUi.Field("分段并发", _concurrency)); var timeout = WorkspaceUi.Field("单段超时（秒）", _timeout); Grid.SetColumn(timeout, 2); limits.Children.Add(timeout); apiBody.Children.Add(limits);
@@ -122,28 +222,92 @@ public sealed class SettingsView : UserControl
         var local = WorkspaceUi.Stack(WorkspaceUi.Field("本地模型目录", _localDirectory), _localModel, ActionButton("扫描模型", () => { var models = AppSettings.ScanLocalModels(_localDirectory.Text ?? ""); _localModel.ItemsSource = models; _localModel.SelectedIndex = models.Count > 0 ? 0 : -1; WorkspaceToast.Show(this, $"已发现 {models.Count} 个模型。"); return Task.CompletedTask; }));
         apiBody.Children.Add(new Expander { Header = "本地模型目录与选择", Content = local, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch });
         var save = ActionButton("保存 API 配置", SaveAsync, true); save.HorizontalAlignment = HorizontalAlignment.Right; apiBody.Children.Add(save);
-        var expansion = new Expander { Header = Row("cloud", "API 设置", "配置云端转写服务、请求并发和超时；密钥保存在本机。", ActionButton("如何配置？", () => LaunchAsync("https://il.luyii.cn/guide.html#api-setup"))), Content = apiBody, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch };
-        var guideRows = WorkspaceUi.Stack(Row("toggle_right", "1. 启用服务", "打开上方 MCP 开关，设置会立即生效。", null), Row("copy", "2. 连接 AI 客户端", "复制 MCP 配置，粘贴到 WorkBuddy 或 AI CLI 配置。", null), Row("robot", "3. 开始制作", "复制一键操作提示发送给 AI，再提供音频、试卷及答案或原文。", null), WorkspaceUi.Text("应用会先显示接管审批；制作完成后智能体返回用户模式。", 12));
-        var guideHeader = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") }; guideHeader.Children.Add(Icon("help", 16)); var guideTitle = WorkspaceUi.Text("快速使用指南", 14, true); guideTitle.Margin = new Thickness(8, 0, 0, 0); Grid.SetColumn(guideTitle, 1); guideHeader.Children.Add(guideTitle); var steps = WorkspaceUi.Text("3 步", 12); Grid.SetColumn(steps, 2); guideHeader.Children.Add(steps);
-        var content = new StackPanel { MaxWidth = 1040, HorizontalAlignment = HorizontalAlignment.Stretch, Spacing = 12 };
-        content.Children.Add(WorkspaceUi.Text("应用与集成", 20, true)); content.Children.Add(cards); expansion.Margin = new Thickness(0, 8, 0, 8); content.Children.Add(expansion);
-        content.Children.Add(WorkspaceUi.Text("MCP 与智能体", 20, true)); content.Children.Add(WorkspaceUi.Text("标准 MCP 与 HTTP Tool Call 共用应用内的 Agent 会话和制作操作。", 12));
-        content.Children.Add(Actions(ActionButton("复制一键操作提示", CopyAgentPromptAsync, true), ActionButton("复制MCP配置", CopyMcpConfigurationAsync), WorkspaceUi.Text("直接复制发送给 AI 即可快速开始制作", 12)));
-        content.Children.Add(new Expander { Header = guideHeader, Content = guideRows, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch });
-        var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto") };
+        var apiSettings = new Expander
+        {
+            Header = Row("cloud", "API 设置", "配置云端转写服务、请求并发和超时", ActionButton("如何配置？", () => LaunchAsync("https://il.luyii.cn/guide.html#api-setup"))),
+            Content = apiBody, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var authoring = CategoryPage("制作与智能体", "配置音频转写服务和智能体制作连接", apiSettings, mcpSettings);
+        var maintenance = CategoryPage("数据与维护", "管理本机数据、缓存与诊断日志",
+            Card("folder_open", "数据目录", "打开保存课程、制作工程和个人设置的文件夹", ActionButton("打开", () => LaunchAsync(AppDirectories.DataDirectory()))),
+            Card("delete", "缓存", "释放可重新生成的临时文件，课程和制作数据保留", ActionButton("清理", ClearCacheAsync)),
+            Card("folder_open", "日志", "警告和错误保存在数据目录的 logs 文件夹中", Actions(ActionButton("打开目录", () => LaunchAsync(AppLog.DirectoryPath)), ActionButton("清理", ClearLogsAsync))),
+            Card("info", "调试模式", "开启后记录详细诊断信息", _debug));
+        var privacy = CategoryPage("隐私与关于", "查看数据使用选项、协议与版本信息",
+            Card("chart", "匿名使用情况分析", "向阿里云发送匿名设备 ID、ASR 指标与 API 主机名、系统与硬件信息、红色错误提示原文及运行元数据，可随时关闭", _telemetry),
+            Card("document", "用户协议与隐私", "查看协议或撤回此前的同意", Actions(ActionButton("查看隐私说明", () => ShowLegalAsync("privacy_zh_cn.txt", "隐私说明")), ActionButton("撤回同意", WithdrawAsync))),
+            Card("info", "关于", "查看应用版本、作者与最终用户许可协议", ActionButton("查看", AboutAsync)));
+
+        var categories = new[]
+        {
+            new SettingsCategory("外观与字体", "color", appearance), new SettingsCategory("播放", "play", playback),
+            new SettingsCategory("制作与智能体", "robot", authoring), new SettingsCategory("数据与维护", "folder_open", maintenance),
+            new SettingsCategory("隐私与关于", "info", privacy)
+        };
+        var navigation = new ListBox { ItemsSource = categories, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
+        navigation.ItemTemplate = new FuncDataTemplate<SettingsCategory>((category, _) => category is null ? null : new StackPanel
+        {
+            Orientation = Orientation.Horizontal, Spacing = 10, Margin = new Thickness(4, 6),
+            Children = { WorkspaceUi.Icon(category.Icon), WorkspaceUi.Text(category.Title) }
+        });
+        var scroll = new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+        navigation.SelectionChanged += (_, _) =>
+        {
+            if (navigation.SelectedItem is not SettingsCategory category) return;
+            scroll.Content = category.Content; scroll.Offset = default;
+        };
+        navigation.SelectedIndex = 0;
+        var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("180,*"), Margin = new Thickness(20, 0, 24, 24) };
+        layout.Children.Add(navigation); Grid.SetColumn(scroll, 1); layout.Children.Add(scroll);
+        var compact = false;
+        void ArrangeCategories()
+        {
+            var next = Bounds.Width < 820;
+            if (next == compact) return;
+            compact = next;
+            layout.ColumnDefinitions = new ColumnDefinitions(compact ? "*" : "180,*");
+            layout.RowDefinitions = new RowDefinitions(compact ? "Auto,*" : "*");
+            Grid.SetColumn(scroll, compact ? 0 : 1); Grid.SetRow(scroll, compact ? 1 : 0);
+            navigation.ItemsPanel = new FuncTemplate<Panel?>(() => compact ? new WrapPanel { Orientation = Orientation.Horizontal } : new StackPanel());
+            scroll.Margin = compact ? new Thickness(0, 12, 0, 0) : new Thickness(12, 0, 0, 0);
+        }
+        SizeChanged += (_, _) => ArrangeCategories(); ArrangeCategories();
+        var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
         root.Children.Add(WorkspaceUi.PageHeader("设置", back: () => { BackRequested?.Invoke(); return Task.CompletedTask; }));
-        var scroll = new ScrollViewer { Content = content, Margin = new Thickness(24, 4, 24, 24), HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled }; Grid.SetRow(scroll, 1); root.Children.Add(scroll);
-        Content = root;
+        Grid.SetRow(layout, 1); root.Children.Add(layout); Content = root;
+    }
+    private void OnAgentsChanged() => Dispatcher.UIThread.Post(async () => await RunAsync(RefreshAgentsAsync));
+    private void OnAgentStateChanged(bool active) => OnAgentsChanged();
+    private async Task RefreshAgentsAsync()
+    {
+        if (_mcpServer is null) { _agents.Children.Clear(); _agents.Children.Add(WorkspaceUi.Text("智能体授权服务尚未连接。", 12)); return; }
+        var registrations = await _mcpServer.GetRegisteredAgentsAsync();
+        _agents.Children.Clear();
+        if (registrations.Count == 0) _agents.Children.Add(WorkspaceUi.Text("尚未注册智能体。首次连接并批准接管后，授权会显示在这里。", 12));
+        foreach (var agent in registrations)
+        {
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            row.Children.Add(WorkspaceUi.Stack(WorkspaceUi.Text(agent.Name, 14, true), WorkspaceUi.Text(agent.Active ? "正在接管" : agent.Pending ? "等待审批" : agent.Approved ? "已授权" : "未授权 · 下次接管需审批", 12)));
+            var revoke = ActionButton("撤销授权", async () => { await _mcpServer.RevokeAgentAsync(agent.Uuid); await RefreshAgentsAsync(); WorkspaceToast.Show(this, "授权已撤销，下次接管需重新审批。"); });
+            revoke.IsEnabled = agent.Approved || agent.Pending;
+            var remove = ActionButton("删除注册", async () =>
+            {
+                if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "删除智能体注册", $"删除“{agent.Name}”的注册与授权？再次使用时需要重新注册并更新客户端 MCP 配置。", "删除注册")) return;
+                await _mcpServer.RevokeAgentAsync(agent.Uuid, remove: true); await RefreshAgentsAsync();
+            });
+            var actions = Actions(revoke, remove); actions.Margin = new Thickness(16, 0, 0, 0); Grid.SetColumn(actions, 1); row.Children.Add(actions);
+            _agents.Children.Add(row);
+        }
     }
     private static Control Icon(string symbol, double size = 22) => WorkspaceUi.Icon(symbol, size);
     private static Control Row(string symbol, string title, string description, Control? trailing)
     {
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("22,14,*,20,Auto"), MinHeight = 76, Margin = new Thickness(18, 0) };
-        row.Children.Add(Icon(symbol)); var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 12) }; text.Children.Add(WorkspaceUi.Text(title, 14, true)); var caption = WorkspaceUi.Text(description, 12); caption.Opacity = .85; text.Children.Add(caption); Grid.SetColumn(text, 2); row.Children.Add(text);
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("22,14,*,20,Auto"), MinHeight = 60, Margin = new Thickness(18, 0) };
+        row.Children.Add(Icon(symbol)); var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 10) }; text.Children.Add(WorkspaceUi.Text(title, 14, true)); var caption = WorkspaceUi.Text(description, 12); caption.Opacity = .85; text.Children.Add(caption); Grid.SetColumn(text, 2); row.Children.Add(text);
         if (trailing != null) { trailing.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(trailing, 4); row.Children.Add(trailing); }
         return row;
     }
-    private static Control Card(string symbol, string title, string description, Control trailing) => WorkspaceUi.SettingsRow(symbol, title, description, trailing);
+    private static Control Card(string symbol, string title, string description, Control trailing) => WorkspaceUi.SettingsRow(symbol, title, description, trailing, compact: true);
     private static WrapPanel Actions(params Control[] controls) { var panel = new WrapPanel(); foreach (var c in controls) { c.Margin = new Thickness(0, 0, 8, 0); c.VerticalAlignment = VerticalAlignment.Center; panel.Children.Add(c); } return panel; }
     private Button ActionButton(string title, Func<Task> action, bool primary = false) => WorkspaceUi.Button(title, () => RunAsync(action), primary);
     private AppSettings ReadApi() => _settings with { AsrProvider = AsrProviderKind.Cloud, CloudBaseUrl = _baseUrl.Text?.Trim() ?? "", CloudEndpoint = _endpoint.Text?.Trim() ?? "", CloudModel = _model.Text?.Trim() ?? "", CloudApiKey = _key.Text?.Trim() ?? "", CloudTimeoutSeconds = (int)(_timeout.Value ?? 180), CloudConcurrency = (int)(_concurrency.Value ?? 10), CloudLanguage = "en", TranslateChineseToEnglish = true, LocalModelsDirectory = _localDirectory.Text?.Trim() ?? "", SelectedLocalModel = _localModel.SelectedItem as string ?? "", DetectedLocalModels = _localModel.ItemsSource?.OfType<string>().ToArray() ?? [] };

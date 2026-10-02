@@ -1,10 +1,8 @@
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Media;
-using Avalonia.Threading;
 using IL.App.Views.Dialogs;
 using FluentAvalonia.UI.Controls;
 
@@ -32,9 +30,10 @@ public sealed class SpringMotion
     private readonly TranslateTransform _translation = new();
     private readonly ScaleTransform _scale = new(1, 1);
     private readonly Axis _opacity = new(1), _x = new(0), _y = new(0), _size = new(1);
-    private readonly DispatcherTimer _timer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
-    private readonly Stopwatch _clock = new();
-    private double _last, _response = .32;
+    private TimeSpan? _lastFrame;
+    private double _response = .32;
+    private long _generation;
+    private bool _running;
     private TaskCompletionSource? _completion;
     public SpringMotion(Control control)
     {
@@ -42,7 +41,6 @@ public sealed class SpringMotion
         control.RenderTransformOrigin = RelativePoint.Center;
         _group = new TransformGroup { Children = { _scale, _translation } };
         control.RenderTransform = _group;
-        _timer.Tick += (_, _) => Tick();
         control.DetachedFromVisualTree += (_, _) => Stop();
     }
     public void Set(double opacity = 1, double x = 0, double y = 0, double scale = 1)
@@ -54,17 +52,27 @@ public sealed class SpringMotion
     {
         _completion?.TrySetResult(); _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         _opacity.Target = opacity; _x.Target = x; _y.Target = y; _size.Target = scale;
-        _response = FirstRunWizard.MotionReduced() ? .18 : response;
-        if (FirstRunWizard.MotionReduced()) { Reset(_x, 0); Reset(_y, 0); Reset(_size, 1); }
-        if (!_timer.IsEnabled) { _clock.Restart(); _last = 0; _timer.Start(); }
-        return _completion.Task;
+        var completion = _completion;
+        var reduced = FirstRunWizard.MotionReduced();
+        _response = reduced ? .18 : response;
+        if (reduced) { Reset(_x, 0); Reset(_y, 0); Reset(_size, 1); }
+        if (!_running)
+        {
+            if (TopLevel.GetTopLevel(_control) is not { } owner) { Set(opacity, x, y, scale); return completion.Task; }
+            _running = true; _lastFrame = null;
+            RequestFrame(owner, ++_generation);
+        }
+        return completion.Task;
     }
-    private void Tick()
+    private void RequestFrame(TopLevel owner, long generation) => owner.RequestAnimationFrame(time =>
     {
-        var now = _clock.Elapsed.TotalSeconds; var elapsed = Math.Min(.064, now - _last); _last = now;
+        if (!_running || generation != _generation) return;
+        var elapsed = _lastFrame is { } last ? Math.Max(0, (time - last).TotalSeconds) : 0;
+        _lastFrame = time;
         var done = _opacity.Step(elapsed, _response) & _x.Step(elapsed, _response) & _y.Step(elapsed, _response) & _size.Step(elapsed, _response);
         Apply(); if (done) Stop();
-    }
+        else RequestFrame(owner, generation);
+    });
     private void Apply() { _control.RenderTransform = _group; _control.Opacity = _opacity.Value; _translation.X = _x.Value; _translation.Y = _y.Value; _scale.ScaleX = _scale.ScaleY = _size.Value; }
     public Task Pulse()
     {
@@ -72,7 +80,7 @@ public sealed class SpringMotion
         else _size.Velocity -= .45;
         return To(response: .28);
     }
-    public void Stop() { _timer.Stop(); _completion?.TrySetResult(); _completion = null; }
+    public void Stop() { _running = false; ++_generation; _lastFrame = null; _completion?.TrySetResult(); _completion = null; }
     internal double TranslationY => _y.Value;
     internal Task ShiftLayout(double delta)
     {

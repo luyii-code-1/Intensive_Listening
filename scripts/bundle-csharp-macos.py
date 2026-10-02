@@ -113,7 +113,7 @@ for p in mac.rglob('*'):
         raise RuntimeError(f'External Homebrew dependency: {p}')
     native.append(p)
 plist = {
-    'CFBundleName': 'Intensive Listening', 'CFBundleDisplayName': 'Intensive Listening 2.0',
+    'CFBundleName': 'Intensive Listening', 'CFBundleDisplayName': 'Intensive Listening 2 Resonance',
     'CFBundleExecutable': 'IL.App', 'CFBundleIdentifier': 'com.luyii.intensivelistening.preview',
     'CFBundlePackageType': 'APPL', 'CFBundleInfoDictionaryVersion': '6.0',
     'CFBundleShortVersionString': '2.0.0', 'CFBundleVersion': '2.0.0',

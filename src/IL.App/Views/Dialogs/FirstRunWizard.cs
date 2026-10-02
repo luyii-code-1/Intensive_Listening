@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using FluentAvalonia.UI.Windowing;
@@ -23,7 +24,7 @@ internal sealed class FirstRunWizard : Border
     private readonly string _agreement, _privacy;
     private readonly Action<AppSettings?> _finish;
     private readonly Grid _page = new() { ClipToBounds = true, Name = "OobePageHost" };
-    private readonly Dictionary<int, StackPanel> _pages = new();
+    private readonly Dictionary<int, ScrollViewer> _pages = new();
     private readonly bool _windows;
     private CancellationTokenSource? _transition;
     private Button? _licenseNext;
@@ -56,13 +57,10 @@ internal sealed class FirstRunWizard : Border
             header.Children.Add(Brand(24)); var name = WorkspaceUi.Text("Intensive Listening"); name.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(name, 2); header.Children.Add(name);
             var close = WorkspaceUi.IconButton("cancel", "关闭", () => { finish(null); return Task.CompletedTask; }); Grid.SetColumn(close, 3); header.Children.Add(close); layout.Children.Add(header);
         }
-        var centered = new Grid(); centered.Children.Add(_page);
-        var scroll = new ScrollViewer { Content = centered, Padding = new Thickness(windows ? 40 : 28, 20), HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
-        _page.MaxWidth = windows ? 680 : 730; _page.HorizontalAlignment = HorizontalAlignment.Center; _page.VerticalAlignment = VerticalAlignment.Center;
-        scroll.SizeChanged += (_, _) => { centered.MinHeight = Math.Max(0, scroll.Bounds.Height - 40); _page.Width = Math.Max(0, Math.Min(_page.MaxWidth, scroll.Bounds.Width - (windows ? 80 : 56))); };
-        Grid.SetRow(scroll, windows ? 0 : 1); layout.Children.Add(scroll);
+        // Each page owns its scrolling and centering within the same fixed viewport.
+        Grid.SetRow(_page, windows ? 0 : 1); layout.Children.Add(_page);
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,*"), Margin = new Thickness(22, 0, 22, windows ? 12 : 16) };
-        var version = CenterText(AppBuildInfo.Version + " Prelude", 12); version.Opacity = .75; Grid.SetColumn(version, 1); footer.Children.Add(version);
+        var version = CenterText(AppBuildInfo.ReleaseName, 12); version.Opacity = .75; Grid.SetColumn(version, 1); footer.Children.Add(version);
         _fraction.FontSize = 12; _fraction.Opacity = .6; _fraction.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(_fraction, 2); footer.Children.Add(_fraction); Grid.SetRow(footer, windows ? 1 : 2); layout.Children.Add(footer);
         Child = layout; Render();
         AttachedToVisualTree += (_, _) =>
@@ -77,7 +75,7 @@ internal sealed class FirstRunWizard : Border
         DetachedFromVisualTree += (_, _) => { _attached = false; CancelTransition(); };
     }
     internal static Task<AppSettings?> ShowAsync(Window owner, AppSettings initial, string agreement, string privacy) =>
-        OperatingSystem.IsWindows() ? ShowWindowsAsync(owner, initial, agreement, privacy) : ShowInlineAsync(owner, initial, agreement, privacy);
+        ShowInlineAsync(owner, initial, agreement, privacy);
 
     internal static Window CreateWindowsWindow(Window owner, AppSettings initial, string agreement, string privacy)
     {
@@ -102,16 +100,37 @@ internal sealed class FirstRunWizard : Border
     {
         var completion = new TaskCompletionSource<AppSettings?>();
         var root = owner.Content as Grid ?? throw new InvalidOperationException("首次设置需要应用根布局。");
-        var layer = new Border { Background = new SolidColorBrush(Color.Parse("#80000000")), Padding = new Thickness(16), Focusable = true };
-        var wizard = new FirstRunWizard(owner, initial, agreement, privacy, value => completion.TrySetResult(value));
+        var layer = new Border { Focusable = true };
+        layer.Bind(BackgroundProperty, new DynamicResourceExtension("WorkspaceBackgroundBrush"));
+        var wizard = new FirstRunWizard(owner, initial, agreement, privacy, value => completion.TrySetResult(value), windows: true);
         layer.Child = wizard;
-        void Resize() { wizard.Width = Math.Max(0, Math.Min(owner.ClientSize.Width - 32, 1040)); wizard.Height = Math.Max(0, Math.Min(owner.ClientSize.Height - 32, 740)); }
-        EventHandler<SizeChangedEventArgs> resize = (_, _) => Resize();
         EventHandler closed = (_, _) => completion.TrySetResult(null);
-        owner.SizeChanged += resize; owner.Closed += closed;
+        var underlying = root.Children.Select(control => (Control: control, Enabled: control.IsEnabled)).ToArray();
+        foreach (var item in underlying) item.Control.IsEnabled = false;
+        owner.Closed += closed;
         layer.KeyDown += (_, e) => { if (e.Key == Key.Escape) { completion.TrySetResult(null); e.Handled = true; } };
-        root.Children.Add(layer); Resize(); layer.Focus();
-        try { return await completion.Task; } finally { owner.SizeChanged -= resize; owner.Closed -= closed; root.Children.Remove(layer); }
+        root.Children.Add(layer); layer.Focus();
+        try { return await completion.Task; } finally { owner.Closed -= closed; root.Children.Remove(layer); foreach (var item in underlying) item.Control.IsEnabled = item.Enabled; }
+    }
+    private sealed class ViewportHeightConverter : Avalonia.Data.Converters.IValueConverter
+    {
+        public object Convert(object? value, Type type, object? parameter, System.Globalization.CultureInfo culture) => value is double height ? Math.Max(0, height - 40) : 0d;
+        public object ConvertBack(object? value, Type type, object? parameter, System.Globalization.CultureInfo culture) => throw new NotSupportedException();
+    }
+    private ScrollViewer BuildPageSurface()
+    {
+        var body = BuildPage();
+        body.MaxWidth = _windows ? 680 : 730;
+        body.HorizontalAlignment = HorizontalAlignment.Stretch; body.VerticalAlignment = VerticalAlignment.Center;
+        var centered = new Grid(); centered.Children.Add(body);
+        var scroll = new ScrollViewer
+        {
+            Content = centered, Padding = new Thickness(_windows ? 40 : 28, 20),
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
+        };
+        centered.Bind(MinHeightProperty, new Avalonia.Data.Binding("Bounds.Height") { Source = scroll, Converter = new ViewportHeightConverter() });
+        return scroll;
     }
     private static Border Brand(double size)
     {
@@ -220,7 +239,7 @@ internal sealed class FirstRunWizard : Border
     {
         var previous = _visibleStep;
         CancelTransition();
-        if (!_pages.TryGetValue(_step, out var body)) _pages[_step] = body = BuildPage();
+        if (!_pages.TryGetValue(_step, out var body)) _pages[_step] = body = BuildPageSurface();
         _visibleStep = _step;
         _fraction.Text = $"{(_initial.CloudReady && _step == 5 ? 5 : _step + 1)} / {(_initial.CloudReady ? 5 : 6)}";
         _fraction.IsVisible = _step != 0;
@@ -251,9 +270,9 @@ internal sealed class FirstRunWizard : Border
         catch (OperationCanceledException) { }
         finally { if (_transition == cancellation) Normalize(body); }
     }
-    private async Task TransitionAsync(StackPanel incoming, int direction)
+    private async Task TransitionAsync(ScrollViewer incoming, int direction)
     {
-        var outgoing = _page.Children.OfType<StackPanel>().FirstOrDefault();
+        var outgoing = _page.Children.OfType<ScrollViewer>().FirstOrDefault();
         var cancellation = _transition = new CancellationTokenSource();
         if (outgoing == incoming) { Normalize(incoming); return; }
         incoming.Opacity = 0; incoming.RenderTransform = new TranslateTransform(direction * 80, 0);
@@ -282,7 +301,8 @@ internal sealed class FirstRunWizard : Border
         var motion = SpringMotion.For(body);
         motion.Set(0, x: MotionReduced() ? 0 : x, y: MotionReduced() ? 0 : y);
         using var registration = cancellation.Register(motion.Stop);
-        var logo = (body as StackPanel)?.Children.OfType<Border>().FirstOrDefault(c => c.Name is "OobeWelcomeLogo" or "OobeDoneLogo");
+        var content = body is ScrollViewer { Content: Grid centered } ? centered.Children.OfType<StackPanel>().FirstOrDefault() : body as StackPanel;
+        var logo = content?.Children.OfType<Border>().FirstOrDefault(c => c.Name is "OobeWelcomeLogo" or "OobeDoneLogo");
         if (logo != null)
         {
             var logoMotion = SpringMotion.For(logo);

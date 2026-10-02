@@ -21,6 +21,7 @@ using IL.Core.Models;
 using IL.Core.Projects;
 using IL.Core.Settings;
 using IL.Core.Transcription;
+using IL.Core.Mcp;
 
 namespace IL.App.Views;
 
@@ -28,6 +29,10 @@ public sealed class TeacherView : UserControl
 {
     public Action? ProjectOpened { get; set; }
     private readonly CourseProjectStore _store;
+    private readonly AppPrivateApiServer? _mcpServer;
+    private readonly Func<Task>? _enableMcp;
+    private readonly Border _agentAuthoringHost = new() { IsVisible = false };
+    private readonly TextBlock _heading = WorkspaceUi.Text("课程项目", 22, true);
     private readonly TranscriptionQueue _queue;
     private readonly ProjectTranscriptionBinding _transcriptions;
     private readonly Func<AppSettings> _settings;
@@ -61,7 +66,10 @@ public sealed class TeacherView : UserControl
     private SrtTranscriptStructure? _reviewStructure;
     private Button? _createQuestion;
     private bool _loading, _saving, _agentMode, _overview, _manual, _compact;
-    private bool _exporting, _addingToLibrary;
+    private bool _exporting, _addingToLibrary, _reviewEdited;
+    private int _editRevision;
+    private Button? _reviewSaveButton;
+    private Control? _reviewDeliveryCommands;
     private bool? _dragSelection;
     private int? _dragAnchor, _dragSection;
     private readonly SemaphoreSlim _operations = new(1, 1);
@@ -69,9 +77,9 @@ public sealed class TeacherView : UserControl
     private string? _renderedProjectId;
     private Window? _owner;
 
-    public TeacherView(CourseProjectStore store, TranscriptionQueue queue, Func<AppSettings> settings, string libraryDirectory, Action? libraryChanged = null, Action? openSettings = null, ProjectTranscriptionBinding? transcriptions = null)
+    public TeacherView(CourseProjectStore store, TranscriptionQueue queue, Func<AppSettings> settings, string libraryDirectory, Action? libraryChanged = null, Action? openSettings = null, ProjectTranscriptionBinding? transcriptions = null, AppPrivateApiServer? mcpServer = null, Func<Task>? enableMcp = null)
     {
-        _store = store; _queue = queue; _transcriptions = transcriptions ?? new(store, queue); _settings = settings; _libraryDirectory = libraryDirectory;
+        _store = store; _mcpServer = mcpServer; _enableMcp = enableMcp; _queue = queue; _transcriptions = transcriptions ?? new(store, queue); _settings = settings; _libraryDirectory = libraryDirectory;
         _libraryChanged = libraryChanged ?? (() => { }); _openSettings = openSettings ?? (() => { }); _vm = new(store);
         _projectList.ItemsSource = _projectItems;
         _projectMotion = new(_projectList, _projectItems, frame => new ListBoxItem { Content = frame, Margin = new Thickness(0, 0, 0, 4), Padding = new Thickness(10, 6), HorizontalContentAlignment = HorizontalAlignment.Stretch }, _projectItems.Move);
@@ -98,7 +106,7 @@ public sealed class TeacherView : UserControl
     public Task ReturnToProjectsAsync() => RunAsync(CloseProjectAsync);
     public async Task OpenProjectAsync(string id) => await RunAsync(async () =>
     {
-        await SaveDraftAsync(); await _transcriptions.RestorePendingAsync(); await _vm.OpenAsync(id); RenderProject();
+        await SaveDraftAsync(); _agentAuthoringHost.IsVisible = false; await _transcriptions.RestorePendingAsync(); await _vm.OpenAsync(id); RenderProject();
     });
     public async Task PrepareAgentSessionAsync()
     {
@@ -125,6 +133,7 @@ public sealed class TeacherView : UserControl
             }
             _agentDraft = null;
         }
+        _agentAuthoringHost.IsVisible = false;
         await RefreshProjectsFromStoreAsync(); if (id != null) { await _vm.OpenAsync(id); RenderProject(); }
     });
     public async Task LoadJobTranscriptAsync(TranscriptionJob job) => await RunAsync(async () =>
@@ -140,7 +149,7 @@ public sealed class TeacherView : UserControl
         _back.Content = WorkspaceUi.Icon("back"); _back.Classes.Add("subtle"); _back.Padding = new Thickness(8); _back.Margin = new Thickness(0, 0, 8, 0);
         ToolTip.SetTip(_back, "返回项目列表"); _back.Click += async (_, _) => await RunAsync(CloseProjectAsync);
         header.Children.Add(_back);
-        var heading = WorkspaceUi.Text("课程项目", 22, true); heading.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(heading, 1); header.Children.Add(heading);
+        _heading.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(_heading, 1); header.Children.Add(_heading);
         Grid.SetColumn(_projectCommands, 2); header.Children.Add(_projectCommands); page.Children.Add(header);
         var projects = new Grid { RowDefinitions = new RowDefinitions("*") , Margin = new Thickness(12, 4, 12, 16) };
         projects.Children.Add(_projectList); _emptyProjects.HorizontalAlignment = HorizontalAlignment.Center; _emptyProjects.VerticalAlignment = VerticalAlignment.Center; projects.Children.Add(_emptyProjects);
@@ -153,7 +162,7 @@ public sealed class TeacherView : UserControl
         var aligned = new Border { Child = titleArea, HorizontalAlignment = HorizontalAlignment.Left, MaxWidth = 760, Margin = new Thickness(0, 0, 0, 20) };
         aligned.Bind(WidthProperty, new Avalonia.Data.Binding("Bounds.Width") { Source = _editor, Converter = new TeacherWidthConverter() });
         Grid.SetRow(aligned, 0); _editor.Children.Add(aligned); Grid.SetRow(_stage, 1); _editor.Children.Add(_stage);
-        Grid.SetColumn(_editor, 2); _content.Children.Add(_editor); Grid.SetRow(_content, 1); page.Children.Add(_content); Grid.SetRow(_busyOverlay, 1); page.Children.Add(_busyOverlay); Content = page;
+        Grid.SetColumn(_editor, 2); _content.Children.Add(_editor); Grid.SetRow(_content, 1); page.Children.Add(_content); Grid.SetRow(_agentAuthoringHost, 1); page.Children.Add(_agentAuthoringHost); Grid.SetRow(_busyOverlay, 1); page.Children.Add(_busyOverlay); Content = page;
         RenderProject();
     }
     private sealed class TeacherWidthConverter : Avalonia.Data.Converters.IValueConverter
@@ -173,7 +182,9 @@ public sealed class TeacherView : UserControl
     }
     private void BuildCommands()
     {
-        _projectCommands.Children.Clear(); _back.IsVisible = _vm.Project != null;
+        _projectCommands.Children.Clear(); _back.IsVisible = _vm.Project != null || _agentAuthoringHost.IsVisible;
+        _projectCommands.IsVisible = !_agentAuthoringHost.IsVisible; _content.IsVisible = !_agentAuthoringHost.IsVisible;
+        _heading.Text = _agentAuthoringHost.IsVisible ? "智能体制作" : "课程项目";
         var projects = _vm.Projects.Select(p => (p.Title, (Func<Task>)(() => OpenProjectAsync(p.Id)), true)).ToList();
         if (_compact)
         {
@@ -220,17 +231,21 @@ public sealed class TeacherView : UserControl
     }
     private void RenderProject()
     {
-        if (_renderedProjectId != _vm.Project?.Id) { _questionEdits.Clear(); _selected.Clear(); _expandedRepeats.Clear(); _reviewList = null; _reviewScroll = null; _overview = _manual = false; _renderedProjectId = _vm.Project?.Id; if (_vm.Project != null) ProjectOpened?.Invoke(); }
+        if (_renderedProjectId != _vm.Project?.Id) { _questionEdits.Clear(); _selected.Clear(); _expandedRepeats.Clear(); _reviewList = null; _reviewScroll = null; _overview = _manual = false; _renderedProjectId = _vm.Project?.Id; _reviewEdited = false; _reviewSaveButton = null; _reviewDeliveryCommands = null; if (_vm.Project != null) ProjectOpened?.Invoke(); }
         _loading = true; _title.Text = _vm.Project?.Title ?? ""; _transcript.Text = _vm.Project?.Transcript ?? ""; _editingCues = _vm.Cues.ToArray(); _loading = false;
         foreach (var child in _editor.Children) if (Grid.GetRow(child) == 0) child.IsVisible = _vm.Project != null;
-        _editor.IsEnabled = !_agentMode; _back.IsVisible = _vm.Project != null; _steps.Value = (int)(_vm.Project?.Step ?? CourseProjectStep.Audio);
+        _editor.IsEnabled = !_agentMode; _back.IsVisible = _vm.Project != null || _agentAuthoringHost.IsVisible;
+        RenderProgress(); RefreshProjects(); BuildStage();
+    }
+    private void RenderProgress()
+    {
+        _steps.Value = (int)(_vm.Project?.Step ?? CourseProjectStep.Audio);
         _stepLabels.Children.Clear(); var labels = new[] { "音频", "转写", "审阅", "完成" };
         for (var i = 0; i < labels.Length; i++)
         {
             var label = WorkspaceUi.Text(labels[i], 12, i == (int)(_vm.Project?.Step ?? 0)); label.HorizontalAlignment = i == 0 ? HorizontalAlignment.Left : i == 3 ? HorizontalAlignment.Right : HorizontalAlignment.Center;
             if (i <= _steps.Value) label.Foreground = WorkspaceUi.Accent; Grid.SetColumn(label, i); _stepLabels.Children.Add(label);
         }
-        RefreshProjects(); BuildStage();
     }
     private void BuildStage()
     {
@@ -238,6 +253,7 @@ public sealed class TeacherView : UserControl
         _stage.AnimateChanges = key != _stageKey; _stageKey = key;
         if (_vm.Project is not { } p)
         {
+            _reviewSaveButton = null; _reviewDeliveryCommands = null;
             _reviewList = null; _reviewScroll = null; _reviewStructure = null; _cueItemIndexes.Clear();
             var empty = WorkspaceUi.Stack(WorkspaceUi.Icon("open_folder_horizontal", 40), WorkspaceUi.Text("还没有课程项目", 17, true), WorkspaceUi.Text("创建项目后即可绑定音频、转写字幕并导出精听包。"));
             empty.Children[0].Margin = new Thickness(0, 0, 0, 10);
@@ -246,7 +262,7 @@ public sealed class TeacherView : UserControl
         }
         if (!p.HasAudio)
         {
-            _stage.Content = StepSurface("选择音频", "音频会复制到项目目录，之后可以随时退出并恢复制作。", WorkspaceUi.Button("选择音频", () => RunAsync(BindAudioAsync), true)); return;
+            _stage.Content = StepSurface("选择音频", "音频会复制到项目目录，之后可以随时退出并恢复制作。", WorkspaceUi.Row(WorkspaceUi.Button("选择音频", () => RunAsync(BindAudioAsync), true), WorkspaceUi.Button("导入 SRT", () => RunAsync(ImportSrtAsync)))); return;
         }
         if (p.Step == CourseProjectStep.Transcription && !p.HasTranscript)
         {
@@ -265,7 +281,7 @@ public sealed class TeacherView : UserControl
         child.HorizontalAlignment = HorizontalAlignment.Left;
         return new StackPanel { MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Left, Spacing = 4, Children = { WorkspaceUi.Text(title, 20), WorkspaceUi.Text(description, 12), new Border { Margin = new Thickness(0, 14, 0, 0), Child = child } } };
     }
-    private async Task CloseProjectAsync() { await SaveDraftAsync(); await _vm.OpenAsync(""); RenderProject(); }
+    private async Task CloseProjectAsync() { await SaveDraftAsync(); _agentAuthoringHost.IsVisible = false; _agentAuthoringHost.Child = null; await _vm.OpenAsync(""); RenderProject(); }
     private Control BuildReview(CourseProject p)
     {
         var grouping = p.ReviewPhase == ReviewPhase.Grouping;
@@ -292,10 +308,13 @@ public sealed class TeacherView : UserControl
         Grid.SetRow(body, 2); layout.Children.Add(body);
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 12, 0, 0) };
         if (!grouping) footer.Children.Add(BackToQuestionsButton());
-        Control next = grouping ? WorkspaceUi.NextButton("下一步：设置挖空", () => RunAsync(() => ChangePhaseAsync(ReviewPhase.Cloze)))
-            : p.Step != CourseProjectStep.Completed ? WorkspaceUi.Button("完成审阅", () => RunAsync(FinishReviewAsync), true)
-            : BuildDeliveryCommands();
-        Grid.SetColumn(next, 1); footer.Children.Add(next); Grid.SetRow(footer, 3); layout.Children.Add(footer);
+        _reviewSaveButton = WorkspaceUi.Button("保存", () => RunAsync(SaveReviewAsync), true);
+        _reviewDeliveryCommands = BuildDeliveryCommands();
+        UpdateReviewActions();
+        var actions = grouping
+            ? WorkspaceUi.Row(WorkspaceUi.Button("下一步：设置挖空", () => RunAsync(() => ChangePhaseAsync(ReviewPhase.Cloze))), _reviewSaveButton, _reviewDeliveryCommands)
+            : WorkspaceUi.Row(_reviewSaveButton, _reviewDeliveryCommands);
+        Grid.SetColumn(actions, 1); footer.Children.Add(actions); Grid.SetRow(footer, 3); layout.Children.Add(footer);
         return layout;
     }
     private Control BackToQuestionsButton()
@@ -311,8 +330,19 @@ public sealed class TeacherView : UserControl
         export.IsEnabled = add.IsEnabled = !_exporting && !_addingToLibrary;
         var commands = new WrapPanel(); export.Margin = new Thickness(0, 0, 8, 0); commands.Children.Add(export); commands.Children.Add(add); return commands;
     }
+    private void UpdateReviewActions()
+    {
+        var saved = _vm.CanDeliver && !_reviewEdited;
+        if (_reviewSaveButton is not null) _reviewSaveButton.IsVisible = !saved;
+        if (_reviewDeliveryCommands is not null) _reviewDeliveryCommands.IsVisible = saved;
+    }
+    private void MarkReviewEdited()
+    {
+        _reviewEdited = true; _editRevision++; UpdateReviewActions();
+    }
     private async Task DeliverAsync(bool addToLibrary)
     {
+        if (!_vm.CanDeliver || _reviewEdited) throw new InvalidOperationException("请先保存本次编辑。");
         _addingToLibrary = addToLibrary; _exporting = !addToLibrary; BuildStage();
         try { if (addToLibrary) await AddToLibraryAsync(); else await ExportIlpAsync(); }
         finally { _addingToLibrary = _exporting = false; BuildStage(); }
@@ -567,7 +597,7 @@ public sealed class TeacherView : UserControl
             Dispatcher.UIThread.Post(() => { if (_reviewList == list) list.ScrollIntoView(index); }, DispatcherPriority.Loaded);
         return Task.CompletedTask;
     }
-    private void ScheduleSave() { if (_loading || _agentMode || _vm.Project == null) return; _autosave.Stop(); _autosave.Start(); }
+    private void ScheduleSave() { if (_loading || _agentMode || _vm.Project == null) return; MarkReviewEdited(); _autosave.Stop(); _autosave.Start(); }
     private async Task SaveDraftAsync()
     {
         _autosave.Stop(); if (_vm.Project == null || _loading || _agentMode || _saving) return;
@@ -582,20 +612,21 @@ public sealed class TeacherView : UserControl
             var edits = _questionEdits.ToArray();
             var renumbered = edits.Any(e => p.Exercises.Questions.FirstOrDefault(q => q.Id == e.Key)?.Number != e.Value.Number);
             foreach (var question in edits.Select(e => e.Value)) if (exercises.Questions.Any(q => q.Id == question.Id)) exercises = TeacherWorkspaceViewModel.UpdateQuestion(exercises, question);
-            await _vm.SaveAsync(p with { Title = title, Transcript = text, Exercises = exercises, TranscriptionJobId = changed ? null : p.TranscriptionJobId,
+            await _vm.SaveEditingAsync(p with { Title = title, Transcript = text, Exercises = exercises, TranscriptionJobId = changed ? null : p.TranscriptionJobId,
                 Step = p.Step == CourseProjectStep.Completed ? p.Step : string.IsNullOrWhiteSpace(text) ? p.HasAudio ? CourseProjectStep.Transcription : CourseProjectStep.Audio : CourseProjectStep.Review });
             foreach (var edit in edits) if (_questionEdits.TryGetValue(edit.Key, out var current) && current == edit.Value) _questionEdits.Remove(edit.Key);
-            RefreshProjects(); if (renumbered) BuildStage();
+            RefreshProjects(); RenderProgress(); UpdateReviewActions(); if (renumbered) BuildStage();
         }
         finally { _saving = false; }
     }
     private void RetireTranscription(CourseProject p) { if (p.TranscriptionJobId is string id) { _queue.Cancel(id); _queue.MarkSrtConsumed(id); } }
     private async Task SaveExercisesAsync(LessonExercises exercises)
     {
+        MarkReviewEdited();
         var edits = _questionEdits.Values.ToArray();
         await SaveDraftAsync(); if (_vm.Project == null) return;
         foreach (var edit in edits) if (exercises.Questions.Any(q => q.Id == edit.Id)) exercises = TeacherWorkspaceViewModel.UpdateQuestion(exercises, edit);
-        await _vm.SaveAsync(_vm.Project with { Exercises = exercises, AutomaticQuestionPlanApplied = true }); RenderProject();
+        await _vm.SaveEditingAsync(_vm.Project with { Exercises = exercises, AutomaticQuestionPlanApplied = true }); RenderProject();
     }
     public Task CreateProjectAsync() => RunAsync(NewAsync);
     public async Task PickAudioAndEnqueueAsync() => await RunAsync(async () =>
@@ -607,17 +638,30 @@ public sealed class TeacherView : UserControl
     });
     private async Task NewAsync()
     {
-        var choice = await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "新建项目", "可以先创建空白项目，也可以选择音频并直接进入转写步骤。", "空白项目", "选择音频");
-        if (choice < 0) return; var audio = choice == 1 ? await WorkspaceUi.Pick(this, "选择课程音频", "mp3", "wav", "m4a") : null;
-        if (choice == 1 && audio == null) return; await SaveDraftAsync(); var p = await _store.CreateAsync(audio); if (p.AudioPath != null) { p = p with { AudioDuration = await VadSlicer.ProbeDurationAsync(p.AudioPath) }; await _store.SaveAsync(p); } await _vm.OpenAsync(p.Id); RenderProject();
+        var choice = await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "新建项目", "选择课程的制作方式。", "人工制作", "智能体制作");
+        if (choice < 0) return;
+        await SaveDraftAsync();
+        if (choice == 1)
+        {
+            if (_mcpServer is null || _enableMcp is null) throw new InvalidOperationException("智能体制作服务尚未连接。");
+            await _vm.OpenAsync("");
+            _agentAuthoringHost.Child = new AgentAuthoringView(_mcpServer, _enableMcp);
+            _agentAuthoringHost.IsVisible = true;
+        }
+        else
+        {
+            _agentAuthoringHost.IsVisible = false;
+            var project = await _store.CreateAsync(); await _vm.OpenAsync(project.Id);
+        }
+        RenderProject();
     }
-    private async Task BindAudioAsync() { await SaveDraftAsync(); if (_vm.Project == null) return; var path = await WorkspaceUi.Pick(this, "绑定课程音频", "mp3", "wav", "m4a"); if (path == null) return; RetireTranscription(_vm.Project); await _vm.SaveAsync(await _store.BindAudioAsync(_vm.Project, path, await VadSlicer.ProbeDurationAsync(path))); RenderProject(); }
+    private async Task BindAudioAsync() { await SaveDraftAsync(); if (_vm.Project == null) return; var path = await WorkspaceUi.Pick(this, "绑定课程音频", "mp3", "wav", "m4a"); if (path == null) return; MarkReviewEdited(); RetireTranscription(_vm.Project); await _vm.SaveEditingAsync(await _store.BindAudioAsync(_vm.Project, path, await VadSlicer.ProbeDurationAsync(path))); RenderProject(); }
     private async Task ImportSrtAsync()
     {
         await SaveDraftAsync(); if (_vm.Project == null) return; var path = await WorkspaceUi.Pick(this, "导入字幕", "srt"); if (path == null) return;
         var text = await File.ReadAllTextAsync(path); var cues = SrtParser.Parse(Encoding.UTF8.GetBytes(text), _vm.Project.AudioDuration ?? TimeSpan.FromDays(7));
         var preserve = _vm.Cues.Count == cues.Count && _vm.Cues.Zip(cues).All(pair => pair.First.Start == pair.Second.Start && pair.First.End == pair.Second.End);
-        RetireTranscription(_vm.Project); await _vm.SaveAsync(_vm.Project with { Transcript = text, Step = CourseProjectStep.Review, ReviewPhase = ReviewPhase.Grouping, TranscriptionJobId = null,
+        MarkReviewEdited(); RetireTranscription(_vm.Project); await _vm.SaveEditingAsync(_vm.Project with { Transcript = text, Step = CourseProjectStep.Review, ReviewPhase = ReviewPhase.Grouping, TranscriptionJobId = null,
             Exercises = preserve ? _vm.Project.Exercises : SrtQuestionPlanner.Plan(cues), AutomaticQuestionPlanApplied = true, AutoQuestionPlanDeferred = false }); RenderProject(); WorkspaceToast.Show(this, "字幕已导入\n现在可以进行题目与挖空审阅。");
     }
     private async Task TranscribeAsync()
@@ -648,7 +692,15 @@ public sealed class TeacherView : UserControl
     }
     private async Task ExportSrtAsync() { await SaveDraftAsync(); if (_vm.Project == null) return; var path = await WorkspaceUi.Save(this, "导出课程字幕", _vm.Project.Title + ".srt", "srt"); if (path != null) await File.WriteAllTextAsync(path, _vm.Project.Transcript); }
     private async Task ExportExamAsync() { if (_vm.Project == null) return; var document = await _store.ReadExamDocumentAsync(_vm.Project); if (document == null) throw new InvalidOperationException("请先导入试卷。"); var path = await WorkspaceUi.Save(this, "导出试卷文本", _vm.Project.Title + "-试卷.txt", "txt"); if (path != null) await File.WriteAllTextAsync(path, document.Text); }
-    private async Task FinishReviewAsync() { await SaveDraftAsync(); if (_vm.Project == null || !_vm.Project.HasTranscript) return; SrtParser.Parse(Encoding.UTF8.GetBytes(_vm.Project.Transcript), _vm.Project.AudioDuration ?? TimeSpan.FromDays(7)); await _vm.SaveAsync(_vm.Project with { Step = CourseProjectStep.Completed }); RenderProject(); WorkspaceToast.Show(this, "审阅完成\n现在可以加入播放或导出课程。"); }
+    private async Task SaveReviewAsync()
+    {
+        var revision = _editRevision;
+        await SaveDraftAsync(); await _vm.SaveReviewAsync();
+        _reviewEdited = revision != _editRevision;
+        if (_reviewEdited) await SaveDraftAsync();
+        RenderProgress(); UpdateReviewActions(); RefreshProjects();
+        if (!_reviewEdited) WorkspaceToast.Show(this, "工程已保存", "现在可以添加到播放或导出精听包。", false);
+    }
     private async Task ExportIlpAsync() { await SaveDraftAsync(); if (_vm.Project == null) return; var path = await WorkspaceUi.Save(this, "导出精听包", _vm.Project.Title + ".ilp", "ilp"); if (path == null) return; await WithBusyAsync("正在生成精听包…", () => new ProjectDelivery().CreateIlpAsync(_vm.Project, path)); await _vm.SaveAsync(_vm.Project with { PackageVersion = _vm.Project.PackageVersion + 1, LastExportPath = path, Step = CourseProjectStep.Completed }); RenderProject(); WorkspaceToast.Show(this, $"课程已导出\n版本 {_vm.Project.PackageVersion} 已保存为精听包。"); }
     private async Task AddToLibraryAsync() { await SaveDraftAsync(); if (_vm.Project == null) return; IL.Core.Projects.ProjectDeliveryResult? delivery = null; await WithBusyAsync("正在添加到播放…", async () => { delivery = await new ProjectDelivery().AddToLibraryAsync(_vm.Project, _libraryDirectory); }); await _vm.SaveAsync(_vm.Project with { PackageVersion = delivery!.PackageVersion, Step = CourseProjectStep.Completed }); RenderProject(); _libraryChanged(); WorkspaceToast.Show(this, "课程已加入播放库。"); }
     public Func<CourseProject, Task<string?>>? StandaloneExporter { get; set; }

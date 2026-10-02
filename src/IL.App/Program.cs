@@ -45,6 +45,16 @@ internal static class Program
         }
         catch (Exception error) { CrashMonitor.Fatal(error); return 1; }
     }
-    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<App>().UsePlatformDetect()
-        .With(new Avalonia.Media.FontManagerOptions { DefaultFamilyName = Views.Dialogs.WorkspaceUi.BodyFont.ToString() }).LogToTrace();
+    public static AppBuilder BuildAvaloniaApp()
+    {
+        var builder = AppBuilder.Configure<App>().UsePlatformDetect()
+            .With(new Avalonia.Media.FontManagerOptions { DefaultFamilyName = Views.Dialogs.WorkspaceUi.BodyFont.ToString() });
+        if (OperatingSystem.IsMacOS())
+        {
+            // Retina transitions retain two page surfaces plus text and effect resources.
+            builder.With(new SkiaOptions { MaxGpuResourceSizeBytes = 128 * 1024 * 1024 })
+                .With(new AvaloniaNativePlatformOptions { OverlayPopups = true });
+        }
+        return builder.LogToTrace();
+    }
 }

@@ -1,9 +1,9 @@
 <div align="center">
   <img src="assets/branding/intensive_listening_mark.png" alt="Intensive Listening" width="112" />
-  <h1>Intensive Listening</h1>
+  <h1>Intensive Listening 2 Resonance</h1>
   <p>面向英语听力教学的材料制作与逐句训练工具</p>
   <p>
-    <img src="https://img.shields.io/badge/Release-v2.0.0%20Pre--Release-B71C1C" alt="v2.0.0 Pre-Release" />
+    <img src="https://img.shields.io/badge/Release-v2.0.0-B71C1C" alt="v2.0.0" />
     <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4?logo=windows" alt="Windows 10/11" />
     <img src="https://img.shields.io/badge/Framework-Avalonia-8B44AC" alt="Avalonia" />
     <img src="https://img.shields.io/badge/Status-Early%20Development-E7A33E" alt="Early Development" />
@@ -28,12 +28,12 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 
 ### 课程制作（教师端）
 
-- **四步向导制课**：按「音频 → 转写 → 审阅 → 完成」管理课程工程，支持本地草稿与智能体修改版本冲突处理
+- **制作方式选择**：新建项目时选择人工制作或智能体制作；人工制作进入「音频 → 转写 → 审阅 → 完成」流程，可设置标题、选择音频和导入 SRT
 - **转写与时间轴校对**：导入音频或 SRT 字幕，支持 VAD 语音切分与阿里云百炼（DashScope）云端 ASR 转写，在时间轴中逐句校对与合并拆分
 - **材料与小题编排**：按听力材料（对话/独白）树状组织小题，编辑题号、题干、选项（`A / B / C...`）与正确答案
 - **题前提示与重复朗读**：绑定题前播报提示（`题前提示`）与二遍重读区间（`重复朗读`），在时间轴上直观折叠展示
 - **词级点选与重读同步设空**：按词点选设置挖空，自动同步同一材料下重复朗读区间的对应挖空词
-- **一键打包与分发**：支持导出为 `.ilp` 精听包，或直接添加到本机学生端播放列表
+- **保存与分发**：审阅中保留自动保存草稿；点击「保存」后显示「导出为精听包」与「添加到播放」，再次编辑后需重新保存。支持导出 `.ilp` 或添加到本机播放列表
 
 <p align="center">
   <img src="assets/screenshots/teacher_grouping.png" alt="教师端：四步向导制课与材料小题编排" width="100%" />
@@ -60,12 +60,14 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 
 ### MCP 智能体协同制课
 
-- **一键引导与安全审批**：在设置中启用 MCP 后，复制 MCP 配置到客户端，再复制一键操作提示发送给 AI。`MCP.md` 引导先检查 `/test`，再注册自报名称并获得专属 UUID 与 MCP URL；首次调用 `change_event` 请求接管时弹出 60 秒审批（「是 / 否 / 关闭 MCP」），超时按拒绝处理，同一 UUID 获批后可复用授权
+- **素材准备与交接**：智能体制作页可设置标题、选择一个必选音频和多份可选材料，推荐 DOCX 或文字版 PDF。打开本机智能体（例如 WorkBuddy），复制含文件路径与制作任务的提示词到对话框并发送；页面显示推荐模型 DeepSeek-v4.1 Flash。
+- **接管审批与授权管理**：在制作页或设置中启用 MCP，首次使用可复制 MCP 配置到客户端。设置的 MCP 折叠区提供注册与授权状态、撤销授权和删除注册。`MCP.md` 引导先检查 `/test`，再注册自报名称并获得专属 UUID 与 MCP URL；首次调用 `change_event` 请求接管时弹出 60 秒审批（「是 / 否 / 关闭 MCP」），超时按拒绝处理，同一 UUID 获批后可复用授权；撤销后重新审批，删除注册后需重新注册。接管期间主窗口显示当前智能体的自报名称
+- **制作进度**：接管界面显示制作 Skill 的 11 步和详细操作状态。智能体通过 `report_authoring_step` 上报进行中、已完成、跳过或失败；完成及跳过步骤计入进度，转写与资料提取可并行。
 - **多源资料接入**：支持绑定本地音频并触发后台 ASR（`import_project_media`、`start_project_asr`），同时导入从试卷/答案/原文 DOCX 或可提取文本 PDF 转换出的 UTF-8 文本（`import_project_text`、`read_project_text`）
 - **全链路自动编排**：智能体可对照原文分页校对并回写 SRT（`read_project_srt`、`set_cue_text`、`import_project_srt`），原子提交材料、小题、选项、答案、题前提示与重复朗读区间（`auto_plan_questions`、`apply_question_plan`），并同步生成词级挖空与校验工程（`apply_cloze_plan`、`validate_course_project`）
 - **会话释放与热刷新**：制作完成后调用 `change_event(event: "User")` 退回用户模式，应用自动刷新工程列表并回到制作首页
 
-设置页提供日志目录、调试模式、日志清理和授权撤回；Windows 安装后引导设置文件关联、MCP、转写 API 与匿名数据分析。
+设置页通过分类导航组织外观与字体、播放、制作与智能体、数据与维护、隐私与关于。应用字体可从本机字体列表选择，支持字重、可编辑预览和恢复默认，并即时应用；Windows 安装后在主窗口内铺满展示首次设置，引导设置文件关联、MCP、转写 API 与匿名数据分析。
 
 <p align="center">
   <img src="assets/screenshots/mcp_collaboration.png" alt="MCP 智能体协同制课" width="100%" />
@@ -84,10 +86,11 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 ### 2. MCP 智能体握手与执行时序
 
 ```text
-开启设置中 MCP 开关 → 配置 MCP 客户端并把一键操作提示发给 AI → AI 读取 MCP.md 并调用 /test
+新建项目 → 智能体制作 → 设置标题、选择音频与可选材料 → 启用 MCP
+  → 打开本机智能体，配置 MCP 并发送制作提示词 → AI 读取 MCP.md 并调用 /test
   → register_agent 获取 UUID 和专属 MCP URL → change_event 请求 Agent 接管并完成应用内首次审批
   → AI 读取 SKILL.md 完成转写、校对、分题与挖空 → validate_course_project 与 change_event(User)
-  → 自动刷新制作工程列表
+  → 自动刷新制作工程列表 → 用户审阅并保存 → 用户加入播放或导出
 ```
 
 ### 3. 学生端精听练习流程
@@ -108,7 +111,7 @@ Intensive Listening 是一款面向英语听力教学的 Windows 桌面应用，
 
 ### 2. 在应用内填入配置
 
-打开应用左侧导航栏 **「设置」 → 「API 设置」**，应用已预置默认服务端点与模型名称，只需粘贴 `Key` 即可用于课程制作（也支持通过密码加密的 `.zip` 配置包一键导入/导出）：
+打开应用左侧导航栏 **「设置」 → 「制作与智能体」 → 「API 设置」**，应用已预置默认服务端点与模型名称，只需粘贴 `Key` 即可用于课程制作（也支持通过密码加密的 `.zip` 配置包一键导入/导出）：
 
 | 配置项 | 默认值 / 说明 |
 | --- | --- |
@@ -156,7 +159,15 @@ Expand-Archive artifacts/build/IL2-win-x64.zip artifacts/runtime
 ./scripts/package-csharp-windows.ps1 -RuntimeDirectory (Resolve-Path artifacts/runtime).Path -OutputDirectory "$PWD/artifacts/installer" -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 ```
 
-运行包包含 VLC、FFmpeg、ARMS SDK 与独立播放器启动器；构建脚本校验依赖摘要。兼容性与验证说明见 [迁移与兼容说明](docs/MIGRATION.md)。
+Apple Silicon macOS 自包含构建与 DMG 打包：
+
+```bash
+bash scripts/publish-csharp-macos.sh
+```
+
+输出 `artifacts/installer/Intensive-Listening-2.0.0-osx-arm64.dmg`，打开后将应用拖入 Applications。macOS ARM64 包要求 macOS 26.0 或更新版本，包含 .NET、VLC、FFmpeg 与 ARMS 运行依赖，并执行原生运行检查；当前使用 ad-hoc 开发签名。
+
+Windows 运行包包含 VLC、FFmpeg、ARMS SDK 与独立播放器启动器；构建脚本校验依赖摘要。兼容性与验证说明见 [迁移与兼容说明](docs/MIGRATION.md)。
 
 ### 自动构建
 

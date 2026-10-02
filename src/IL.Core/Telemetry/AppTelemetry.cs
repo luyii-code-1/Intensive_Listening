@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using IL.Core.Infrastructure;
 namespace IL.Core.Telemetry;
-public sealed class AppTelemetry(string version="2.0.0-dev",ITelemetryTransport? transport=null,string? dataDirectory=null,bool? supportedPlatform=null)
+public sealed class AppTelemetry(string version="2.0.0",ITelemetryTransport? transport=null,string? dataDirectory=null,bool? supportedPlatform=null)
 {
     private readonly ITelemetryTransport _transport=transport??new NativeTelemetryTransport(); private readonly SemaphoreSlim _gate=new(1,1); private readonly bool _supported=supportedPlatform??(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS());
     private volatile bool _consent,_enabled; private bool _launchReported,_activeReported; public bool Enabled=>_enabled;

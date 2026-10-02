@@ -24,7 +24,7 @@ public sealed class LibVlcAudioPlayer : IAudioPlayer
     private double _rate = 1, _volume = 1;
     private bool _applyOptions;
 
-    public LibVlcAudioPlayer(Action<string>? trace=null)
+    public LibVlcAudioPlayer(Action<string>? trace=null, bool useDummyAudioOutput=false)
     {
         _trace=trace;
         var native = Environment.GetEnvironmentVariable("ILP_LIBVLC_PATH");
@@ -43,7 +43,9 @@ public sealed class LibVlcAudioPlayer : IAudioPlayer
             _nativeLibrary=NativeLibrary.Load(Path.Combine(native!,OperatingSystem.IsWindows()?"libvlc.dll":"libvlc.dylib"));
             _parseNative=Marshal.GetDelegateForFunctionPointer<ParseWithOptions>(NativeLibrary.GetExport(_nativeLibrary,"libvlc_media_parse_with_options"));
         }
-        _lib = new LibVLC("--no-video", "--no-media-library", "--audio-time-stretch");
+        var options = new List<string> { "--no-video", "--no-media-library", "--audio-time-stretch" };
+        if (useDummyAudioOutput) options.Add("--aout=dummy");
+        _lib = new LibVLC(options.ToArray());
         _player = new MediaPlayer(_lib);
         _player.Playing += OnPlaying;
         _player.Paused += OnPaused;

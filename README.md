@@ -216,7 +216,7 @@ Windows 运行包写入 `artifacts/build/`，两个平台安装包均写入 `art
 
 `main` 为发布与默认分支，`2.0-dev` 用于日常开发，PR 目标选择 `2.0-dev`。发布时运行 **Publish 2.0-dev snapshot to main**，将远端开发分支的完整文件树写入以旧 `main` 为父提交的新提交，并验证文件树一致。
 
-**C# Windows build** 在开发与发布分支提交、PR、手动触发及 `v2.*` Release 发布时运行，完成现有测试、自包含构建、Windows 原生运行、独立播放器、单实例与 Inno Setup 安装包验证。发布工作流将 Windows 安装程序附加到 Release；macOS 使用本机打包脚本生成 DMG。
+**C# Windows build** 在开发与发布分支提交、PR、手动触发及 `v2.*` Release 发布时运行，完成现有测试、自包含构建、Windows 原生运行、独立播放器、单实例与 Inno Setup 安装包验证。手动触发与正式版 Release 还会在 Apple Silicon macOS runner 上构建、验证并打包 DMG。发布时两个安装包均附加到 Release，校验后通过专用 SSH 身份传到 `il.luyii.cn` 分发。
 
 ### 技术与源码结构
 

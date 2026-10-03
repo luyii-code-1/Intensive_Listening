@@ -87,7 +87,7 @@ jobs:
         with:
           name: windows-installer
           path: artifacts/installer
-      - name: Attach Windows installer and checksum
+      - name: Attach Windows installer
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -95,4 +95,4 @@ jobs:
         run: |
           cd artifacts/installer
           sha256sum --check SHA256SUMS.txt
-          gh release upload "$RELEASE_TAG" ./*.exe SHA256SUMS.txt --clobber
+          gh release upload "$RELEASE_TAG" ./*.exe --clobber

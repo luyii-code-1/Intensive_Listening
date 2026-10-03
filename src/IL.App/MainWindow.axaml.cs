@@ -1,11 +1,14 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using FluentAvalonia.UI.Controls;
 using Avalonia.Styling;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using IL.App.Services;
 using IL.App.Views;
 using IL.App.Views.Dialogs;
@@ -28,23 +31,31 @@ public partial class MainWindow : Window
     private FAContentDialog? _taskDialog;
     private readonly SpringScalar _paneMotion;
     private readonly DesktopResidence? _residence;
+    private WindowsApprovalNotification? _approvalNotification;
     private bool _initializationStarted;
+    private readonly HashSet<Key> _heldPlayerKeys = new();
+    private bool _playerShortcutBusy;
     private readonly TaskCompletionSource<bool> _initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public MainWindow()
     {
         InitializeComponent();
         Icon = AppBrand.WindowIcon();
-        _paneMotion = new(320, width => ShellGrid.ColumnDefinitions[0].Width = new GridLength(width));
+        _paneMotion = new(this, 320, width => ShellGrid.ColumnDefinitions[0].Width = new GridLength(width));
         Closed += (_, _) => _paneMotion.Stop();
         var standalone=Program.Arguments.Contains("--standalone");
         _services=new(action=>Dispatcher.UIThread.Post(action),standalone);
+        AgentProgressHost.Content = new AgentProgressView(_services.Server.WorkflowProgress);
         _student=new(_services.Student);
-        _teacher=new(_services.Projects,_services.Queue,()=>_services.Settings,_services.LibraryDirectory,()=>Dispatcher.UIThread.Post(async()=>await _services.Student.RefreshAsync()),()=>ShowSettings(),_services.Transcriptions);
-        _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(_services.Server.IsRunning);});
+        AddHandler(KeyDownEvent, OnPlayerKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(KeyUpEvent, OnPlayerKeyUp, RoutingStrategies.Tunnel);
+        Deactivated += (_, _) => _heldPlayerKeys.Clear();
+        _teacher=new(_services.Projects,_services.Queue,()=>_services.Settings,_services.LibraryDirectory,()=>Dispatcher.UIThread.Post(async()=>await _services.Student.RefreshAsync()),()=>ShowSettings(),_services.Transcriptions,_services.Server,EnableMcpAsync);
+        _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(_services.Server.IsRunning);},_services.Server);
         _queue=new(_services.Queue,async job=>{_taskDialog?.Hide();await _teacher.LoadJobTranscriptAsync(job);Navigate(1);},async match=>{if(match.LessonId is {} id){_taskDialog?.Hide();Navigate(0);_services.Student.SelectedLesson=_services.Student.Lessons.FirstOrDefault(l=>l.Id==id);await _services.Student.CurrentLoad;}},()=>PickAudioForQueueAsync());
         _services.ConfirmForcedCuts=()=>OnUiAsync(()=>{RestoreWorkspace();return AppDialogs.ConfirmForcedCutsAsync(this);});
-        _services.Server.ApprovalRequested=name=>OnUiAsync(async()=>{RestoreWorkspace();var decision=await AppDialogs.ApproveAgentAsync(this,name);if(decision==IL.Core.Mcp.AgentApprovalDecision.Approve)await _teacher.PrepareAgentSessionAsync();else if(decision==IL.Core.Mcp.AgentApprovalDecision.DisableMcp){var settings=_services.Settings with{McpEnabled=false};await _services.SettingsStore.SaveAsync(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(false);}return decision;});
-        _services.Server.AgentStateChanged+=active=>Dispatcher.UIThread.Post(async()=>{AgentOverlay.IsVisible=active;ShellGrid.Effect=active?new BlurEffect{Radius=12}:null;_teacher.SetAgentMode(active);if(active)Navigate(1);else await _teacher.FinishAgentSessionAsync();});
+        _services.Server.ApprovalRequested=name=>OnUiAsync(()=>RequestAgentApprovalAsync(name));
+        Closed += (_, _) => _approvalNotification?.Dispose();
+        _services.Server.AgentStateChanged+=active=>Dispatcher.UIThread.Post(async()=>{AgentTakeoverText.Text=$"当前 {_services.Server.ActiveAgentName ?? "未命名智能体"} 正在接管本应用";AgentOverlay.IsVisible=active;ShellGrid.IsEnabled=!active;ShellGrid.Effect=active?new BlurEffect{Radius=12}:null;_teacher.SetAgentMode(active);if(active)Navigate(1);else await _teacher.FinishAgentSessionAsync();});
         _services.Api.ProjectChanged=()=>Dispatcher.UIThread.Post(async()=>await _teacher.RefreshAsync());
         _services.Api.OpenProject=id=>Dispatcher.UIThread.Post(async()=>{RestoreWorkspace();await _teacher.OpenProjectAsync(id);Navigate(1);});
         _services.Api.LibraryChanged=()=>Dispatcher.UIThread.Post(async()=>await _services.Student.RefreshAsync());
@@ -85,6 +96,51 @@ public partial class MainWindow : Window
             Closing+=async(_,e)=>{if(_closing)return;e.Cancel=true;await ExitAsync();};
     }
     private void RestoreWorkspace() { if (_residence != null) _residence.Restore(); else { Show(); if(WindowState==WindowState.Minimized)WindowState=WindowState.Normal;Activate(); } }
+    private async Task<IL.Core.Mcp.AgentApprovalDecision> RequestAgentApprovalAsync(string name)
+    {
+        var foreground = IsVisible && WindowState != WindowState.Minimized && (IsActive || OwnedWindows.Any(w => w.IsActive));
+        if (OperatingSystem.IsWindows() && !foreground)
+        {
+            var presentation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnActivated(object? sender, EventArgs args) => presentation.TrySetResult(true);
+            void OnClosed(object? sender, EventArgs args) => presentation.TrySetResult(false);
+            void OnSessionChanged()
+            {
+                if (!_services.Server.ApprovalPending) presentation.TrySetResult(false);
+            }
+            Activated += OnActivated; Closed += OnClosed;
+            _services.Server.AgentsChanged += OnSessionChanged;
+            try
+            {
+                _approvalNotification ??= new WindowsApprovalNotification(this);
+                _approvalNotification.Show(name, () =>
+                {
+                    if (!_services.Server.ApprovalPending) return;
+                    RestoreWorkspace(); presentation.TrySetResult(true);
+                });
+                OnSessionChanged();
+                if (!await presentation.Task || !_services.Server.ApprovalPending)
+                    return IL.Core.Mcp.AgentApprovalDecision.Refuse;
+            }
+            finally
+            {
+                Activated -= OnActivated; Closed -= OnClosed;
+                _services.Server.AgentsChanged -= OnSessionChanged;
+                _approvalNotification?.Close();
+            }
+        }
+        RestoreWorkspace();
+        _taskDialog?.Hide();
+        var decision = await AppDialogs.ApproveAgentAsync(this, name);
+        if (decision == IL.Core.Mcp.AgentApprovalDecision.Approve) await _teacher.PrepareAgentSessionAsync();
+        else if (decision == IL.Core.Mcp.AgentApprovalDecision.DisableMcp)
+        {
+            var settings = _services.Settings with { McpEnabled = false };
+            await _services.SettingsStore.SaveAsync(settings); await _services.ApplySettingsAsync(settings);
+            _residence?.UpdateMcpState(false);
+        }
+        return decision;
+    }
     internal async Task ActivateFromLaunchAsync(string[] args)
     {
         RestoreWorkspace();
@@ -103,8 +159,43 @@ public partial class MainWindow : Window
     private void ShowSettings(){if(_destination==2)return;if(_destination!=2)_settingsBack=_destination;_settings.Populate(_services.Settings);Navigate(2);}
     private void Navigate(int destination)
     {
+        _heldPlayerKeys.Clear();
         _destination=destination;PageHost.Content=destination switch{1=>_teacher,2=>_settings,_=>_student};
         UpdatePane();
+    }
+    private async void OnPlayerKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (!IsActive || !IsVisible || WindowState == WindowState.Minimized || _destination != 0 ||
+            PageHost.Content != _student || !ShellGrid.IsEnabled || !_services.Student.HasMedia) return;
+        if (e.Source is not Control source) return;
+        if (!PlayerShortcuts.AllowsSource(source, this, ShellGrid) ||
+            this.GetVisualDescendants().OfType<FAContentDialog>().Any(d => d.IsVisible)) return;
+        if (!PlayerShortcuts.TryGetAction(_services.Settings.PlayerKeyBindings, e.Key, e.KeyModifiers, out var action)) return;
+        e.Handled = true;
+        if (!_heldPlayerKeys.Add(e.Key) || _playerShortcutBusy || !_services.Student.CanPlay) return;
+        var player = _services.Student;
+        if (action != PlayerShortcutAction.TogglePlayback && !player.HasTranscript) return;
+        _playerShortcutBusy = true;
+        try
+        {
+            if (action == PlayerShortcutAction.ToggleSubtitles) player.ShowSubtitles = !player.ShowSubtitles;
+            else await (action switch
+            {
+                PlayerShortcutAction.TogglePlayback => player.TogglePlaybackCommand,
+                PlayerShortcutAction.PreviousCue => player.PreviousCueCommand,
+                PlayerShortcutAction.NextCue => player.NextCueCommand,
+                PlayerShortcutAction.PreviousQuestion => player.PreviousQuestionCommand,
+                PlayerShortcutAction.NextQuestion => player.NextQuestionCommand,
+                PlayerShortcutAction.ReplayCue => player.RepeatSentenceCommand,
+                _ => throw new InvalidOperationException("未知播放操作")
+            }).ExecuteAsync(null);
+        }
+        catch (Exception ex) { AppLog.Warning("扩展按键操作失败", ex); WorkspaceToast.Show(this, "播放操作失败", ex.Message, true); }
+        finally { _playerShortcutBusy = false; }
+    }
+    private void OnPlayerKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (_heldPlayerKeys.Remove(e.Key)) e.Handled = true;
     }
     private async Task ShowTeacherAsync()
     {
@@ -164,7 +255,12 @@ public partial class MainWindow : Window
         ResizeQueue();SizeChanged+=OnResize;
         try{await _taskDialog.ShowAsync(this);}finally{SizeChanged-=OnResize;_taskDialog=null;}
     }
-    private static void ApplyTheme(AppSettings settings){if(Avalonia.Application.Current is {} app)app.RequestedThemeVariant=settings.ThemeMode switch{"dark"=>ThemeVariant.Dark,"light"=>ThemeVariant.Light,_=>ThemeVariant.Default};}
+    private static void ApplyTheme(AppSettings settings)
+    {
+        if (Application.Current is not { } app) return;
+        app.RequestedThemeVariant = settings.ThemeMode switch { "dark" => ThemeVariant.Dark, "light" => ThemeVariant.Light, _ => ThemeVariant.Default };
+        ApplicationTypography.Apply(settings);
+    }
     private async Task InitializeAsync()
     {
         try
@@ -196,6 +292,12 @@ public partial class MainWindow : Window
     private async Task PickAudioForQueueAsync()
     {
         _taskDialog?.Hide();Navigate(1);await _teacher.PickAudioAndEnqueueAsync();
+    }
+    private async Task EnableMcpAsync()
+    {
+        var settings = _services.Settings with { McpEnabled = true };
+        await _services.ApplySettingsAsync(settings); await _services.SettingsStore.SaveAsync(settings);
+        _settings.Populate(settings); _residence?.UpdateMcpState(_services.Server.IsRunning);
     }
     private static Task<T> OnUiAsync<T>(Func<Task<T>> action)
     {

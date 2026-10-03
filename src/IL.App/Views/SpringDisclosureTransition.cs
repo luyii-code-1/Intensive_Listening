@@ -12,7 +12,7 @@ public sealed class SpringDisclosureTransition : IPageTransition
     private sealed class State(Control control)
     {
         public readonly SpringMotion Motion = SpringMotion.For(control);
-        public readonly SpringScalar Height = new(control.Bounds.Height, h => control.Height = Math.Max(0, h));
+        public readonly SpringScalar Height = new(control, control.Bounds.Height, h => control.Height = Math.Max(0, h));
         public long Generation;
     }
     private readonly ConditionalWeakTable<Control, State> _states = new();

@@ -25,6 +25,17 @@ public sealed class TeacherWorkspaceViewModel(CourseProjectStore store) : Observ
             await SaveAsync(Project with { Exercises = exercises, AutomaticQuestionPlanApplied = true });
         }
     }
+    public bool CanDeliver => Project is { Step: CourseProjectStep.Completed, HasAudio: true, HasTranscript: true };
+    public Task SaveEditingAsync(CourseProject project) => SaveAsync(project with
+    {
+        Step = project.HasTranscript ? CourseProjectStep.Review : project.HasAudio ? CourseProjectStep.Transcription : CourseProjectStep.Audio
+    });
+    public async Task SaveReviewAsync()
+    {
+        if (Project is not { HasAudio: true, HasTranscript: true } project) throw new InvalidOperationException("请先绑定音频并完成字幕。");
+        SrtParser.Parse(System.Text.Encoding.UTF8.GetBytes(project.Transcript), project.AudioDuration ?? TimeSpan.FromDays(7));
+        await SaveAsync(project with { Step = CourseProjectStep.Completed });
+    }
     public async Task SaveAsync(CourseProject project)
     {
         var pendingJob = Project?.TranscriptionJobId;

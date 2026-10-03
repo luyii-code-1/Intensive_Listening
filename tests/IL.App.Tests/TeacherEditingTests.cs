@@ -8,6 +8,34 @@ namespace IL.App.Tests;
 public sealed class TeacherEditingTests
 {
     [Fact]
+    public async Task ReviewSaveRevealsDeliveryAndEditingRequiresAnotherSaveAcrossReopen()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il2-review-save-gate-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new CourseProjectStore(root); var vm = new TeacherWorkspaceViewModel(store);
+            var project = (await store.CreateAsync()) with
+            {
+                AudioPath = "fixture.wav", Transcript = "1\n00:00:00,000 --> 00:00:01,000\nHello.\n",
+                Step = CourseProjectStep.Review, AutomaticQuestionPlanApplied = true
+            };
+            await store.SaveAsync(project); await vm.OpenAsync(project.Id);
+            Assert.False(vm.CanDeliver);
+            await vm.SaveReviewAsync(); Assert.True(vm.CanDeliver);
+            await vm.SaveEditingAsync(vm.Project! with { Title = "Edited title" });
+            Assert.False(vm.CanDeliver);
+            await vm.OpenAsync(project.Id); Assert.False(vm.CanDeliver);
+            await vm.SaveReviewAsync(); Assert.True(vm.CanDeliver);
+            var exercises = TeacherWorkspaceViewModel.CreateMaterial(vm.Project!.Exercises, [0]);
+            await vm.SaveEditingAsync(vm.Project with { Exercises = exercises }); Assert.False(vm.CanDeliver);
+            await vm.SaveReviewAsync(); Assert.True(vm.CanDeliver);
+            await vm.SaveEditingAsync(vm.Project! with { Transcript = "invalid subtitles" });
+            await Assert.ThrowsAsync<IL.Core.Ilp.IlpException>(vm.SaveReviewAsync);
+            Assert.False(vm.CanDeliver);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    [Fact]
     public async Task BackgroundCompletionAndTitleAutosaveKeepBothResultsWhenConcurrent()
     {
         var root = Path.Combine(Path.GetTempPath(), "il2-review-concurrent-" + Guid.NewGuid().ToString("N"));

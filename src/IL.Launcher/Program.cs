@@ -23,7 +23,11 @@ try
     }
     var info=new ProcessStartInfo(app){UseShellExecute=false,WorkingDirectory=runtime};info.ArgumentList.Add("--standalone");info.ArgumentList.Add(Path.Combine(runtime,"lesson.ilp"));
     info.Environment["ILP_STANDALONE_DATA"]=Path.Combine(root,"data");
-    if(Environment.GetEnvironmentVariable("IL2_LAUNCHER_VERIFY")=="1") { info.ArgumentList.Add("--verify-runtime");info.ArgumentList.Add(Path.Combine(root,"verification.json")); }
+    if(Environment.GetEnvironmentVariable("IL2_LAUNCHER_VERIFY")=="1") { info.ArgumentList.Add("--verify-runtime");info.ArgumentList.Add(Environment.GetEnvironmentVariable("IL2_LAUNCHER_VERIFY_REPORT") ?? Path.Combine(root,"verification.json")); }
     using var process=Process.Start(info)??throw new IOException("播放器启动失败");if(Environment.GetEnvironmentVariable("IL2_LAUNCHER_VERIFY")=="1"){process.WaitForExit();return process.ExitCode;}return 0;
 }
-catch(Exception ex){File.WriteAllText(Path.Combine(Path.GetTempPath(),"il2-standalone-error.txt"),ex.ToString());return 1;}
+catch(Exception ex)
+{
+    var report=Environment.GetEnvironmentVariable("IL2_LAUNCHER_VERIFY_REPORT");
+    File.WriteAllText(report is null ? Path.Combine(Path.GetTempPath(),"il2-standalone-error.txt") : report+".launcher-error.txt",ex.ToString());return 1;
+}

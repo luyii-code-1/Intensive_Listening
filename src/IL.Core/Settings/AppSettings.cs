@@ -23,8 +23,11 @@ public sealed record AppSettings
     public string SelectedLocalModel { get; init; } = "";
     public IReadOnlyList<string> DetectedLocalModels { get; init; } = [];
     public string ThemeMode { get; init; } = "system";
+    public string ApplicationFontFamily { get; init; } = "";
+    public int ApplicationFontWeight { get; init; } = 500;
     public bool SkipOpeningPrompts { get; init; } = true;
     public int TranscriptFontSize { get; init; } = 18;
+    public IReadOnlyDictionary<PlayerShortcutAction, string> PlayerKeyBindings { get; init; } = new Dictionary<PlayerShortcutAction, string>();
     public bool DebugLogging { get; init; }
     public bool TelemetryEnabled { get; init; }
     public bool TelemetryPrompted { get; init; }
@@ -41,11 +44,24 @@ public sealed record AppSettings
     public static AppSettings FromJson(JsonObject j) => new()
     {
         CompletedInstallationId = String(j, "completedInstallationId", ""),
+        ApplicationFontFamily = String(j, "applicationFontFamily", ""),
+        ApplicationFontWeight = Math.Clamp(Integer(j, "applicationFontWeight", 500), 100, 950),
+        PlayerKeyBindings = ReadPlayerKeyBindings(j["playerKeyBindings"]),
         // The released loader always normalizes recognition to the cloud English profile.
         CloudBaseUrl = String(j, "cloudBaseUrl", "https://dashscope.aliyuncs.com"), CloudEndpoint = String(j, "cloudEndpoint", "/api/v1/services/aigc/multimodal-generation/generation"), CloudModel = String(j, "cloudModel", "qwen-audio-3.0-asr-flash"), CloudApiKey = String(j, "cloudApiKey", ""),
         CloudTimeoutSeconds = Integer(j, "cloudTimeoutSeconds", 180), CloudConcurrency = Math.Clamp(Integer(j, "cloudConcurrency", 10), 1, 10), TranslateChineseToEnglish = Bool(j, "translateChineseToEnglish", true), FileAssociationEnabled = Bool(j, "fileAssociationEnabled"), FileAssociationPrompted = Bool(j, "fileAssociationPrompted"), McpEnabled = Bool(j, "mcpEnabled"), LocalModelsDirectory = String(j, "localModelsDirectory", ""), SelectedLocalModel = String(j, "selectedLocalModel", ""), DetectedLocalModels = Strings(j["detectedLocalModels"]), ThemeMode = String(j, "themeMode", "system"), SkipOpeningPrompts = Bool(j, "skipOpeningPrompts", true), TranscriptFontSize = Math.Clamp(Integer(j, "transcriptFontSize", 18), 14, 28), DebugLogging = Bool(j, "debugLogging"), TelemetryEnabled = Bool(j, "telemetryEnabled"), TelemetryPrompted = Bool(j, "telemetryPrompted"), EulaAcceptedVersion = String(j, "eulaAcceptedVersion", "")
     };
     internal static string String(JsonObject j, string k, string d) => j[k] is JsonValue v && v.TryGetValue<string>(out var s) ? s : d;
+    private static IReadOnlyDictionary<PlayerShortcutAction, string> ReadPlayerKeyBindings(JsonNode? node)
+    {
+        var bindings = new Dictionary<PlayerShortcutAction, string>();
+        if (node is JsonObject json)
+            foreach (var pair in json)
+                if (Enum.TryParse<PlayerShortcutAction>(pair.Key, true, out var action) && Enum.IsDefined(action) &&
+                    pair.Value is JsonValue value && value.TryGetValue<string>(out var key) && !string.IsNullOrWhiteSpace(key))
+                    bindings[action] = key;
+        return bindings;
+    }
     internal static bool Bool(JsonObject j, string k, bool d = false) => j[k] is JsonValue v && v.TryGetValue<bool>(out var b) ? b : d;
     internal static int Integer(JsonObject j, string k, int d) { var n = j[k]; if (n == null) return d; if (int.TryParse(n.ToString(), out var i)) return i; return double.TryParse(n.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var f) ? (int)Math.Round(f, MidpointRounding.AwayFromZero) : d; }
     internal static string[] Strings(JsonNode? n) => n is JsonArray a ? a.OfType<JsonValue>().Where(x => x.TryGetValue<string>(out _)).Select(x => x.GetValue<string>()).ToArray() : [];

@@ -25,3 +25,11 @@ third_party/arms/alibabacloud_rum.dll
 .agents/
 docs/references/
 docs/prototypes/
+
+# Machine-local IDE state and runtime diagnostics
+.vs/
+*.user
+*.suo
+*.dmp
+/.intensive_listening/
+/crash-reports/

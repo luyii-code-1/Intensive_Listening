@@ -1,7 +1,7 @@
 # Intensive Listening 2.0
 
 C# 开发位于 `2.0-dev`，2.0 发布源码同步到 `main`，Dart `lib/`、`test/` 与生成脚本保存在 [源码存档分支](https://github.com/luyii-code-1/Intensive_Listening/tree/archive/dart-1.x)。
-当前维护平台是 Windows x64。macOS ARM64 打包资料保留用于历史开发包追溯。技术栈为 .NET 10、Avalonia 12、FluentAvalonia、CommunityToolkit.Mvvm，音频播放使用 LibVLC，转写音频处理使用 FFmpeg。
+当前构建平台为 Windows x64 和 macOS ARM64。技术栈为 .NET 10、Avalonia 12、FluentAvalonia、CommunityToolkit.Mvvm，音频播放使用 LibVLC，转写音频处理使用 FFmpeg。
 
 历史交付记录中的路径对应验证当时的目录。当前发布验证记录位于 `artifacts/releases/v2.0.0/verification/`；旧截图、日志与报告已集中到工作区的 `_archive/validation/2026-10-01/`。
 
@@ -21,17 +21,17 @@ macOS ARM64 包在 Apple Silicon Mac 上构建，需要本机 FFmpeg（可通过
 scripts/publish-csharp-macos.sh
 ```
 
-输出 `artifacts/Intensive Listening 2.0.app`、`artifacts/IL2-osx-arm64.zip` 和 SHA-256。
+默认输出 `artifacts/build/macos-arm64/Intensive Listening 2.0.app` 和 `artifacts/installer/Intensive-Listening-2.0.0-osx-arm64.dmg`。DMG 内提供应用与 Applications 快捷入口，可拖动安装；需要 ZIP 时将脚本第二个参数设为 `zip`。
 包内包含 .NET、官方 VLC 3.0.23 ARM64 原生库、插件及本机 FFmpeg 的完整依赖。
 构建脚本重写原生库加载路径，并进行 ad-hoc 签名与签名验证。构建机的 FFmpeg 8.1
 要求 macOS 26.0；应用的最低系统版本从打包的原生库读取。该开发包尚未进行 Developer ID
 签名和 Apple 公证。用户数据存放于 `~/Library/Application Support/Intensive Listening`。
-Windows 的文件关联、ARMS SDK 和独立 EXE 导出保持 Windows 平台范围。
+文件关联和独立 EXE 导出用于 Windows；两平台均包含 ARMS 原生 SDK。
 
 包内原生诊断可独立运行：
 
 ```sh
-"artifacts/Intensive Listening 2.0.app/Contents/MacOS/IL.App" --verify-runtime "$PWD/artifacts/verification/macos-arm64.json"
+"artifacts/build/macos-arm64/Intensive Listening 2.0.app/Contents/MacOS/IL.App" --verify-runtime "$PWD/artifacts/verification/macos-arm64.json"
 ```
 
 本机运行窗口可用于开发；Windows 包包含 LibVLC 原生库、插件、FFmpeg、ARMS SDK 和 .NET 运行时。

@@ -21,12 +21,14 @@
     </Grid>
     <fa:FAProgressRing Name="NavigationBusy" IsVisible="False" IsActive="True" Width="24" Height="24" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,12,0" IsHitTestVisible="False" />
     <Border Name="AgentOverlay" IsVisible="False" Background="#2E000000">
-      <Border HorizontalAlignment="Center" VerticalAlignment="Center" Padding="28,24" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
-        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-          <fa:FAProgressRing IsActive="True" Width="32" Height="32" HorizontalAlignment="Center" />
-          <TextBlock Text="智能体正在工作" FontSize="17" FontWeight="Medium" HorizontalAlignment="Center" Margin="0,18,0,6" />
-          <TextBlock Text="课程制作数据正在由 MCP 智能体处理。" />
-          <Button Name="AgentButton" Content="强制断开" HorizontalAlignment="Center" Margin="0,20,0,0" />
+      <Border MaxWidth="640" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="24" Padding="28,24" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+        <StackPanel Spacing="16">
+          <StackPanel Spacing="6">
+            <TextBlock Name="AgentTakeoverText" Text="智能体正在工作" FontSize="17" FontWeight="Bold" TextWrapping="Wrap" />
+            <TextBlock Text="课程制作数据正在由 MCP 智能体处理" TextWrapping="Wrap" />
+          </StackPanel>
+          <ContentControl Name="AgentProgressHost" />
+          <Button Name="AgentButton" Content="强制断开" HorizontalAlignment="Right" />
         </StackPanel>
       </Border>
     </Border>

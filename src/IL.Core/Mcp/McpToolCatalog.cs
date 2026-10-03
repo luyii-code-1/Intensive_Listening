@@ -59,6 +59,21 @@ public static class McpToolCatalog
     }
   },
   {
+    "name": "report_authoring_step",
+    "method": "agent.reportStep",
+    "description": "上报制作 SKILL.md 中第 1 至 11 步的状态与详细说明，更新应用接管界面的步骤列表和进度条；并行步骤可分别上报。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "step": { "type": "integer", "minimum": 1, "maximum": 11 },
+        "status": { "type": "string", "enum": ["running", "completed", "skipped", "failed"] },
+        "detail": { "type": "string", "maxLength": 1000, "description": "当前操作、完成结果、跳过原因或失败原因，显示给用户" }
+      },
+      "required": ["step", "status"],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "intensive_listening_status",
     "method": "app.status",
     "description": "制作开始前读取应用与 Agent 会话状态；仅 event=Agent 时可写入。",

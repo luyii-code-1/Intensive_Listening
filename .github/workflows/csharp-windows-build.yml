@@ -76,9 +76,28 @@ jobs:
           path: |
             artifacts/verification/*
             !artifacts/verification/*.exe
+  macos-build:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.'))
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Prepare FFmpeg
+        run: brew install ffmpeg
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+      - name: Build and verify macOS application
+        run: bash scripts/publish-csharp-macos.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-installer
+          path: artifacts/installer/*.dmg
+          if-no-files-found: error
   publish:
     if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.')
-    needs: build
+    needs: [build, macos-build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -86,13 +105,80 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: windows-installer
-          path: artifacts/installer
-      - name: Attach Windows installer
+          path: artifacts/windows
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-installer
+          path: artifacts/macos
+      - name: Attach installers
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          cd artifacts/installer
+          cd artifacts/windows
           sha256sum --check SHA256SUMS.txt
-          gh release upload "$RELEASE_TAG" ./*.exe --clobber
+          gh release upload "$RELEASE_TAG" ./*.exe ../macos/*.dmg --clobber
+
+  deploy:
+    if: github.event_name == 'release' && !github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v2.')
+    needs: publish
+    runs-on: ubuntu-latest
+    concurrency:
+      group: website-release-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-installer
+          path: artifacts/windows
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-installer
+          path: artifacts/macos
+      - name: Verify Release assets and prepare metadata
+        id: prepare
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          latest_tag="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
+          if [[ "$latest_tag" != "$RELEASE_TAG" ]]; then
+            echo "Release $RELEASE_TAG is not the latest stable release; skipping website deployment."
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" > release.json
+          mkdir -p artifacts/deploy
+          python3 .github/scripts/prepare_release_deploy.py \
+            release.json artifacts/windows artifacts/macos artifacts/deploy/latest.json
+          echo 'deploy=true' >> "$GITHUB_OUTPUT"
+      - name: Upload and activate website installers
+        if: steps.prepare.outputs.deploy == 'true'
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.IL_DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.IL_DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.IL_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+
+          remote="il-deploy@$DEPLOY_HOST"
+          downloads='/opt/1panel/www/sites/il.luyii.cn/index/downloads'
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          windows_name="$(jq -r .assets.windows.filename artifacts/deploy/latest.json)"
+          macos_name="$(jq -r .assets.macos.filename artifacts/deploy/latest.json)"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes "artifacts/windows/$windows_name" "$remote:$downloads/.incoming-$suffix-windows.exe"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes "artifacts/macos/$macos_name" "$remote:$downloads/.incoming-$suffix-macos.dmg"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes artifacts/deploy/latest.json "$remote:$downloads/.incoming-$suffix.json"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$remote" \
+            "python3 - $GITHUB_RUN_ID $GITHUB_RUN_ATTEMPT" \
+            < .github/scripts/deploy_release.py

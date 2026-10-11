@@ -9,7 +9,7 @@ public sealed class IlpFileAssociation
         const string classes = @"Software\Classes\";
         if (enabled)
         {
-            var executable = Environment.GetEnvironmentVariable("ILP_PORTABLE_LAUNCHER") ?? Environment.ProcessPath ?? throw new InvalidOperationException("无法确定应用路径");
+            var executable = Environment.ProcessPath ?? throw new InvalidOperationException("无法确定应用路径");
             foreach (var (key, value) in new[] { (".ilp", "IntensiveListening.ilp"), ("IntensiveListening.ilp", "Intensive Listening 精听包"), (@"IntensiveListening.ilp\DefaultIcon", $"\"{executable}\",0"), (@"IntensiveListening.ilp\shell\open\command", $"\"{executable}\" \"%1\"") }) { using var registry = Registry.CurrentUser.CreateSubKey(classes + key); registry.SetValue("", value); }
         }
         else { Registry.CurrentUser.DeleteSubKeyTree(classes + "IntensiveListening.ilp", false); Registry.CurrentUser.DeleteSubKeyTree(classes + ".ilp", false); }

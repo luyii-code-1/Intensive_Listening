@@ -42,7 +42,7 @@ public sealed class SettingsView : UserControl
         Text = "精听，让每一句都听得清楚\nThe quick brown fox jumps over a lazy dog\n1234567890  08:00–12:00",
         AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontSize = 17, MinHeight = 110
     };
-    private readonly ToggleSwitch _association = new(), _mcp = new(), _skip = new(), _debug = new(), _telemetry = new();
+    private readonly ToggleSwitch _association = new(), _mcp = new(), _skip = new(), _createProject = new(), _debug = new(), _telemetry = new();
     private readonly TextBox _localDirectory = WorkspaceUi.Input();
     private readonly ComboBox _localModel = new() { MinWidth = 180 };
     private readonly DispatcherTimer _fontSave = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -91,7 +91,7 @@ public sealed class SettingsView : UserControl
             _theme.SelectedItem = _theme.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string?)i.Tag == settings.ThemeMode);
             PopulateTypography(settings);
             _playerShortcuts.Populate(settings.PlayerKeyBindings);
-            _association.IsChecked = settings.FileAssociationEnabled; _mcp.IsChecked = settings.McpEnabled; _skip.IsChecked = settings.SkipOpeningPrompts;
+            _association.IsChecked = settings.FileAssociationEnabled; _mcp.IsChecked = settings.McpEnabled; _skip.IsChecked = settings.SkipOpeningPrompts; _createProject.IsChecked = settings.CreateProjectOnAudioImport;
             _debug.IsChecked = settings.DebugLogging; _telemetry.IsChecked = settings.TelemetryEnabled;
             _localDirectory.Text = settings.LocalModelsDirectory; _localModel.ItemsSource = settings.DetectedLocalModels; _localModel.SelectedItem = settings.SelectedLocalModel;
         }
@@ -117,6 +117,7 @@ public sealed class SettingsView : UserControl
         };
         _association.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { FileAssociationEnabled = _association.IsChecked == true, FileAssociationPrompted = true }, "关联文件格式"); };
         _mcp.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { McpEnabled = _mcp.IsChecked == true }, "MCP"); };
+        _createProject.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { CreateProjectOnAudioImport = _createProject.IsChecked == true }, "导入音频时同时建立项目"); };
         _skip.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { SkipOpeningPrompts = _skip.IsChecked == true }, "跳过题前提示"); };
         _debug.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { DebugLogging = _debug.IsChecked == true }, "调试模式"); };
         _telemetry.IsCheckedChanged += async (_, _) =>
@@ -198,6 +199,7 @@ public sealed class SettingsView : UserControl
             Content = _playerShortcuts, HorizontalAlignment = HorizontalAlignment.Stretch
         };
         var playback = CategoryPage("播放", "设置播放习惯、字幕大小与精听包关联",
+            Card("music_note", "导入音频时同时建立项目", "导入音频后自动创建制作工程并绑定音频副本", _createProject),
             Card("forward", "跳过题前提示", "首次打开课程时定位到第一题前并暂停，保留已有播放进度", _skip),
             Card("font", "字幕字体大小", "调整播放页逐句列表的文字大小", transcriptSize),
             shortcutSettings, Card("open_file", "关联文件格式", "双击 .ilp 精听包直接进入播放界面", _association));

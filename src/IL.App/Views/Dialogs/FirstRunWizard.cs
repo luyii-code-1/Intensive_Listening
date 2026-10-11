@@ -34,7 +34,7 @@ internal sealed class FirstRunWizard : Border
     internal static Func<bool>? ReducedMotionOverride { get; set; }
     private readonly TextBlock _fraction = WorkspaceUi.Text("");
     private int _step, _font;
-    private bool _association, _mcp, _skip, _telemetry, _accepted, _privateAccepted;
+    private bool _association, _mcp, _createProject, _skip, _telemetry, _accepted, _privateAccepted;
     private string _theme, _key;
 
     private FirstRunWizard(Window owner, AppSettings initial, string agreement, string privacy, Action<AppSettings?> finish, bool windows = false)
@@ -42,7 +42,7 @@ internal sealed class FirstRunWizard : Border
         _owner = owner; _initial = initial; _agreement = agreement; _privacy = privacy; _finish = finish; _windows = windows;
         _association = initial.EulaAcceptedVersion.Length == 0 || initial.FileAssociationEnabled;
         _mcp = initial.EulaAcceptedVersion.Length == 0 || initial.McpEnabled;
-        _skip = initial.SkipOpeningPrompts; _telemetry = !initial.TelemetryPrompted || initial.TelemetryEnabled;
+        _createProject = initial.CreateProjectOnAudioImport; _skip = initial.SkipOpeningPrompts; _telemetry = !initial.TelemetryPrompted || initial.TelemetryEnabled;
         _font = initial.TranscriptFontSize; _theme = initial.ThemeMode; _key = initial.CloudApiKey;
         ClipToBounds = true;
         HorizontalAlignment = HorizontalAlignment.Stretch; VerticalAlignment = VerticalAlignment.Stretch;
@@ -173,7 +173,7 @@ internal sealed class FirstRunWizard : Border
     private void Next()
     {
         if (_step == 1 && (!_accepted || !_privateAccepted)) return;
-        if (_step == 5) { _finish(_initial with { EulaAcceptedVersion = "2026-09-22", FileAssociationEnabled = _association, FileAssociationPrompted = true, McpEnabled = _mcp, SkipOpeningPrompts = _skip, TelemetryEnabled = _telemetry, TelemetryPrompted = true, TranscriptFontSize = _font, ThemeMode = _theme, CloudApiKey = _key.Trim() }); return; }
+        if (_step == 5) { _finish(_initial with { EulaAcceptedVersion = "2026-09-22", FileAssociationEnabled = _association, FileAssociationPrompted = true, McpEnabled = _mcp, SkipOpeningPrompts = _skip, CreateProjectOnAudioImport = _createProject, TelemetryEnabled = _telemetry, TelemetryPrompted = true, TranscriptFontSize = _font, ThemeMode = _theme, CloudApiKey = _key.Trim() }); return; }
         _step = _initial.CloudReady && _step == 3 ? 5 : _step + 1; Render();
     }
     private StackPanel BuildPage()
@@ -207,6 +207,7 @@ internal sealed class FirstRunWizard : Border
                 body.Children.Add(Card("open_file", "关联 .ilp 文件", "双击精听包即可在应用中打开。", Toggle(_association, value => _association = value)));
                 body.Children.Add(Card("robot", "MCP 制作接口", "接管需在应用内批准；关闭主窗口后服务在托盘继续运行。", Toggle(_mcp, value => _mcp = value)));
                 body.Children.Add(Card("forward", "跳过题前提示", "首次打开课程时直接定位到第一题前并暂停。", Toggle(_skip, value => _skip = value)));
+                body.Children.Add(Card("music_note", "导入音频时同时建立项目", "自动创建制作工程并绑定音频副本。", Toggle(_createProject, value => _createProject = value)));
                 var telemetry = new ToggleSwitch { IsChecked = _telemetry, OnContent = "", OffContent = "", MinWidth = 40 };
                 var settingTelemetry = false;
                 telemetry.IsCheckedChanged += async (_, _) => { if (settingTelemetry) return; var enabled = telemetry.IsChecked == true; if (!enabled && _telemetry && !await AppDialogs.ConfirmAsync(_owner, "关闭匿名数据分析？", Retention + "\n\n关闭后可以随时在设置中重新开启。", "确认关闭")) { settingTelemetry = true; telemetry.IsChecked = true; settingTelemetry = false; return; } _telemetry = enabled; };

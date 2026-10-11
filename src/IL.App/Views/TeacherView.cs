@@ -28,6 +28,7 @@ namespace IL.App.Views;
 public sealed class TeacherView : UserControl
 {
     public Action? ProjectOpened { get; set; }
+    public bool HasOpenProject => _vm.Project is not null || _agentAuthoringHost.IsVisible;
     private readonly CourseProjectStore _store;
     private readonly AppPrivateApiServer? _mcpServer;
     private readonly Func<Task>? _enableMcp;
@@ -127,7 +128,7 @@ public sealed class TeacherView : UserControl
                 if (preserve)
                 {
                     var temp = Path.Combine(Path.GetTempPath(), "ilp-draft-" + Guid.NewGuid().ToString("N") + ".zip");
-                    try { await _store.ExportZipToFileAsync(draft, temp); var copy = await _store.ImportZipAsync(temp); await _store.SaveAsync(copy with { Title = draft.Title + " 本地草稿", Transcript = draft.Transcript }); id = copy.Id; }
+                    try { await _store.ExportZipToFileAsync(draft, temp); var copy = await _store.ImportZipAsync(temp); await _store.SaveAsync(copy with { Title = draft.Title + " 本地草稿", Transcript = draft.Transcript, CreatorMachine = Environment.MachineName, CreatorAgent = "用户", UserEdited = true }); id = copy.Id; }
                     finally { if (File.Exists(temp)) File.Delete(temp); }
                 }
             }
@@ -594,7 +595,7 @@ public sealed class TeacherView : UserControl
     {
         _overview = false; BuildStage();
         if (material.CueIndexes.Count > 0 && _cueItemIndexes.TryGetValue(material.CueIndexes[0], out var index) && _reviewList is {} list)
-            Dispatcher.UIThread.Post(() => { if (_reviewList == list) list.ScrollIntoView(index); }, DispatcherPriority.Loaded);
+            Dispatcher.UIThread.Post(async () => { if (_reviewList == list) await SpringScroll.RevealIndexAsync(list, index); }, DispatcherPriority.Loaded);
         return Task.CompletedTask;
     }
     private void ScheduleSave() { if (_loading || _agentMode || _vm.Project == null) return; MarkReviewEdited(); _autosave.Stop(); _autosave.Start(); }
@@ -668,6 +669,7 @@ public sealed class TeacherView : UserControl
     {
         await SaveDraftAsync(); if (_vm.Project?.AudioPath == null) throw new InvalidOperationException("请先绑定音频。");
         if (!_settings().CloudReady) { _openSettings(); return; }
+        await _vm.SaveEditingAsync(_vm.Project);
         var project = await _transcriptions.EnqueueAsync(_vm.Project);
         await _transcriptions.FlushAsync(); await _vm.OpenAsync(project.Id); RenderProject();
         if (_queue.JobById(project.TranscriptionJobId!)?.IsActive == true)
@@ -688,7 +690,7 @@ public sealed class TeacherView : UserControl
     {
         await SaveDraftAsync(); if (_vm.Project == null) return;
         var path = await WorkspaceUi.Pick(this, "导入 DOCX 试卷", "docx"); if (path == null) return;
-        await WithBusyAsync("正在解析 DOCX 试卷…", async () => { var document = await _store.ImportExamDocumentAsync(_vm.Project, path); await _vm.OpenAsync(document.Project.Id); RenderProject(); WorkspaceToast.Show(this, $"试卷已导入\n已提取 {document.ParagraphCount} 个段落和 {document.TableCount} 个表格。"); });
+        await WithBusyAsync("正在解析 DOCX 试卷…", async () => { var document = await _store.ImportExamDocumentAsync(_vm.Project, path); await _vm.SaveEditingAsync(document.Project); await _vm.OpenAsync(document.Project.Id); RenderProject(); WorkspaceToast.Show(this, $"试卷已导入\n已提取 {document.ParagraphCount} 个段落和 {document.TableCount} 个表格。"); });
     }
     private async Task ExportSrtAsync() { await SaveDraftAsync(); if (_vm.Project == null) return; var path = await WorkspaceUi.Save(this, "导出课程字幕", _vm.Project.Title + ".srt", "srt"); if (path != null) await File.WriteAllTextAsync(path, _vm.Project.Transcript); }
     private async Task ExportExamAsync() { if (_vm.Project == null) return; var document = await _store.ReadExamDocumentAsync(_vm.Project); if (document == null) throw new InvalidOperationException("请先导入试卷。"); var path = await WorkspaceUi.Save(this, "导出试卷文本", _vm.Project.Title + "-试卷.txt", "txt"); if (path != null) await File.WriteAllTextAsync(path, document.Text); }

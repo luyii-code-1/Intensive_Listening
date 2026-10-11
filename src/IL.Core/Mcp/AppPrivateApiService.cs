@@ -9,6 +9,7 @@ namespace IL.Core.Mcp;
 
 public sealed class AppPrivateApiService(CourseProjectStore store,string? libraryDirectory=null)
 {
+    public Func<string?>? AgentName { get; set; }
     public Action? ProjectChanged {get;set;}
     public Action<string>? OpenProject {get;set;}
     public Func<CourseProject,Task<CourseProject>>? StartAsr {get;set;}
@@ -27,7 +28,7 @@ public sealed class AppPrivateApiService(CourseProjectStore store,string? librar
     private static int? Answer(JsonNode? value,string[] options) {if(value is null)return null;if(value is not JsonValue v||!v.TryGetValue<int>(out var i)||i<0||i>=options.Length)throw Fail("invalid_answer","答案索引必须对应已有选项");return i;}
     private async Task<CourseProject> RequireAsync(JsonObject args)=>await RequireAsync(Required(args,"projectId"));
     private async Task<CourseProject> RequireAsync(string id)=>(await store.LoadAllAsync()).FirstOrDefault(p=>p.Id==id)??throw Fail("project_not_found","找不到项目："+id);
-    private async Task<CourseProject> SaveAsync(CourseProject p){await store.SaveAsync(p);ProjectChanged?.Invoke();return p;}
+    private async Task<CourseProject> SaveAsync(CourseProject p){p = p with { CreatorMachine = Environment.MachineName, CreatorAgent = p.UserEdited ? "用户" : AgentName?.Invoke() ?? p.CreatorAgent }; await store.SaveAsync(p);ProjectChanged?.Invoke();return p;}
     private static object Summary(CourseProject p)=>new {id=p.Id,title=p.Title,step=p.Step.ToString().ToLowerInvariant(),hasAudio=p.HasAudio,hasTranscript=p.HasTranscript,audioPath=p.AudioPath,durationMs=p.AudioDuration?.TotalMilliseconds,packageUuid=p.PackageUuid,packageVersion=p.PackageVersion,questionPlanPending=p.AutoQuestionPlanDeferred&&p.HasTranscript&&!p.AutomaticQuestionPlanApplied,updatedAt=p.UpdatedAt};
     private static IReadOnlyList<SrtCue> Cues(CourseProject p){if(!p.HasTranscript)throw Fail("transcript_required","项目尚无字幕");try{return SrtParser.Parse(Encoding.UTF8.GetBytes(p.Transcript),p.AudioDuration??TimeSpan.FromDays(7));}catch(IlpException e){throw Fail("invalid_srt",e.Message);}}
     private sealed record Page(int Offset,int Limit,int Total){public int End=>Math.Min(Total,Offset+Limit);public object ToJson()=>new{offset=Offset,limit=Limit,returned=End-Offset,total=Total,hasMore=End<Total};}
@@ -49,7 +50,7 @@ public sealed class AppPrivateApiService(CourseProjectStore store,string? librar
             case "projects.delete":var deleting=await RequireAsync(args);await store.DeleteAsync(deleting.Id);ProjectChanged?.Invoke();return new{projectId=deleting.Id,deleted=true};
             case "projects.open":var opened=await RequireAsync(args);OpenProject?.Invoke(opened.Id);return new{projectId=opened.Id,opened=true};
             case "projects.importMedia":var media=Required(args,"mediaPath");ValidateAudio(media);return Summary(await SaveAsync(await store.BindAudioAsync(await RequireAsync(args),media)));
-            case "projects.importExamDocument":try{var doc=await store.ImportExamDocumentAsync(await RequireAsync(args),Required(args,"documentPath"));ProjectChanged?.Invoke();return Exam(doc);}catch(CourseProjectDocumentException e){throw Fail("invalid_docx",e.Message);}
+            case "projects.importExamDocument":try{var doc=await store.ImportExamDocumentAsync(await RequireAsync(args),Required(args,"documentPath"));await SaveAsync(doc.Project);return Exam(doc);}catch(CourseProjectDocumentException e){throw Fail("invalid_docx",e.Message);}
             case "projects.readExamText":var exam=await store.ReadExamDocumentAsync(await RequireAsync(args))??throw Fail("exam_required","项目尚未导入 DOCX 试卷");var response=Json(Exam(exam));if(args.ContainsKey("offset")||args.ContainsKey("limit")){var page=Slice(args,exam.Text.Length,true);response["text"]=exam.Text[page.Offset..page.End];response["textPage"]=JsonSerializer.SerializeToNode(page.ToJson());}return response;
             case "projects.importText":return await ImportTextAsync(args);
             case "projects.readText":return await ReadTextAsync(args);
@@ -72,7 +73,7 @@ public sealed class AppPrivateApiService(CourseProjectStore store,string? librar
         }
     }
     private static void ValidateAudio(string path){if(!File.Exists(path))throw Fail("file_not_found","找不到指定音频");if(!IlpManifest.SupportedAudioExtensions.Contains(Path.GetExtension(path).TrimStart('.').ToLowerInvariant()))throw Fail("unsupported_audio","音频格式不受支持");}
-    private async Task<object> CreateAsync(JsonObject args){var audio=Optional(args,"audioPath");if(audio!=null)ValidateAudio(audio);var p=await store.CreateAsync(audio);if(Optional(args,"title") is{} title)p=await SaveAsync(p with{Title=title});else ProjectChanged?.Invoke();return Summary(p);}
+    private async Task<object> CreateAsync(JsonObject args){var audio=Optional(args,"audioPath");if(audio!=null)ValidateAudio(audio);var p=await store.CreateAsync(audio);p=await SaveAsync(p with { CreatorAgent = AgentName?.Invoke() ?? "未知" });if(Optional(args,"title") is{} title)p=await SaveAsync(p with{Title=title});else ProjectChanged?.Invoke();return Summary(p);}
     private async Task<object> GetAsync(JsonObject args)
     {
         var p=await RequireAsync(args);var j=Json(Summary(p));var supported=new[]{"examDocument","sourceDocuments","cues","sections","materials","questions","cloze"};HashSet<string>? fields=null;if(args["fields"]!=null){if(args["fields"] is not JsonArray raw||raw.Any(x=>x is not JsonValue v||!v.TryGetValue<string>(out var s)||!supported.Contains(s)))throw Fail("invalid_parameters","fields 包含不支持的字段");fields=raw.Select(x=>x!.GetValue<string>()).ToHashSet();}bool Includes(string field)=>fields==null||fields.Contains(field);

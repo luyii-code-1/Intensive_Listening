@@ -7,7 +7,7 @@
 [Setup]
 AppId=IntensiveListening.Luyii
 AppName=Intensive Listening 2 Resonance
-AppVersion=2.0.0
+AppVersion=2.0.1
 AppPublisher=Luyii
 DefaultDirName={autopf}\Intensive Listening
 DisableDirPage=no
@@ -16,7 +16,7 @@ DefaultGroupName=Intensive Listening
 UninstallDisplayIcon={app}\IL.App.exe
 SetupIconFile=..\assets\installer_icon.ico
 OutputDir={#OutputDirectory}
-OutputBaseFilename=Intensive-Listening-2.0.0-win-x64-Setup
+OutputBaseFilename=Intensive-Listening-2.0.1-win-x64-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -147,8 +147,23 @@ begin
     RaiseException('安装目录清理失败，请关闭占用该目录的程序后重新安装。');
 end;
 
+procedure ImportManagedConfiguration;
+var
+  Source, Target, DataDirectory: String;
+begin
+  Source := ExpandConstant('{src}\il_mdn_config.yaml');
+  DataDirectory := ExpandConstant('{localappdata}\Intensive Listening\data');
+  Target := AddBackslash(DataDirectory) + 'il_mdn_config.yaml';
+  if FileExists(Source) and not FileExists(Target) then begin
+    if not ForceDirectories(DataDirectory) or not FileCopy(Source, Target, True) then
+      RaiseException('无法复制集控配置到数据目录。');
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssPostInstall then
+    ImportManagedConfiguration;
   if CurStep = ssPostInstall then
     if not SaveStringToFile(ExpandConstant('{app}\installation-id.txt'),
       GetSHA256OfUnicodeString(GetDateTimeString('yyyymmddhhnnss', '-', ':') + ExpandConstant('{tmp}')), False) then

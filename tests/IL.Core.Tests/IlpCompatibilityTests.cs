@@ -12,7 +12,13 @@ namespace IL.Core.Tests;
 public sealed class IlpCompatibilityTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "il2-compat-" + Guid.NewGuid().ToString("N"));
-    private static string Fixture(string name) => Path.Combine(AppContext.BaseDirectory, "fixtures", name);
+    private string Fixture(string name)
+    {
+        var source = Path.Combine(AppContext.BaseDirectory, "fixtures", name);
+        if (!name.EndsWith(".ilp", StringComparison.OrdinalIgnoreCase)) return source;
+        var copy = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".ilp");
+        File.Copy(source, copy); return copy;
+    }
     public IlpCompatibilityTests() => Directory.CreateDirectory(_root);
     public void Dispose() => Directory.Delete(_root, recursive: true);
 
@@ -33,11 +39,13 @@ public sealed class IlpCompatibilityTests : IDisposable
     }
 
     [Fact]
-    public void ManifestSerializationPreservesDartJson()
+    public void ManifestSerializationPreservesDartContentAndAddsUnknownCreator()
     {
         var bytes = File.ReadAllBytes(Fixture("dart-manifest.json"));
         var manifest = IlpManifest.FromBytes(bytes);
-        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(bytes), JsonNode.Parse(manifest.ToBytes())));
+        var expected = JsonNode.Parse(bytes)!.AsObject();
+        expected["creatorMachine"] = "未知"; expected["creatorAgent"] = "未知";
+        Assert.True(JsonNode.DeepEquals(expected, JsonNode.Parse(manifest.ToBytes())));
     }
 
     [Fact]

@@ -32,6 +32,8 @@ public sealed class WorkspaceContentHost : Grid
             motion.Set(0, y: FirstRunWizard.MotionReduced() ? 0 : 12);
             _pages[Content] = incoming = new(presenter, motion);
         }
+        if (previous != incoming && !Children.Contains(incoming.Presenter))
+            incoming.Motion.Set(0, y: FirstRunWizard.MotionReduced() ? 0 : 12);
         _current = incoming;
         if (!Children.Contains(incoming.Presenter)) Children.Add(incoming.Presenter);
         incoming.Presenter.IsHitTestVisible = true;

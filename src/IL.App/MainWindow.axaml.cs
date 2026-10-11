@@ -35,11 +35,13 @@ public partial class MainWindow : Window
     private bool _initializationStarted;
     private readonly HashSet<Key> _heldPlayerKeys = new();
     private bool _playerShortcutBusy;
+    private readonly SemaphoreSlim _launchGate = new(1, 1);
     private readonly TaskCompletionSource<bool> _initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public MainWindow()
     {
         InitializeComponent();
         Icon = AppBrand.WindowIcon();
+        if (OperatingSystem.IsWindows()) WindowState = WindowState.Maximized;
         _paneMotion = new(this, 320, width => ShellGrid.ColumnDefinitions[0].Width = new GridLength(width));
         Closed += (_, _) => _paneMotion.Stop();
         var standalone=Program.Arguments.Contains("--standalone");
@@ -50,6 +52,20 @@ public partial class MainWindow : Window
         AddHandler(KeyUpEvent, OnPlayerKeyUp, RoutingStrategies.Tunnel);
         Deactivated += (_, _) => _heldPlayerKeys.Clear();
         _teacher=new(_services.Projects,_services.Queue,()=>_services.Settings,_services.LibraryDirectory,()=>Dispatcher.UIThread.Post(async()=>await _services.Student.RefreshAsync()),()=>ShowSettings(),_services.Transcriptions,_services.Server,EnableMcpAsync);
+        _student.ImportAudio = async file =>
+        {
+            var playbackFile = file;
+            if (_services.Settings.CreateProjectOnAudioImport)
+            {
+                var project = await _services.Projects.CreateAsync(file);
+                playbackFile = project.AudioPath!;
+                await _teacher.RefreshAsync();
+                WorkspaceToast.Show(this, "制作项目已建立", project.Title);
+            }
+            await _services.Student.OpenAudioAsync(playbackFile);
+            if (_services.Student.AudioPath != playbackFile || !_services.Student.HasMedia || _services.Student.DurationSeconds <= 0)
+                throw new IOException(_services.Student.Status);
+        };
         _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(_services.Server.IsRunning);},_services.Server);
         _queue=new(_services.Queue,async job=>{_taskDialog?.Hide();await _teacher.LoadJobTranscriptAsync(job);Navigate(1);},async match=>{if(match.LessonId is {} id){_taskDialog?.Hide();Navigate(0);_services.Student.SelectedLesson=_services.Student.Lessons.FirstOrDefault(l=>l.Id==id);await _services.Student.CurrentLoad;}},()=>PickAudioForQueueAsync());
         _services.ConfirmForcedCuts=()=>OnUiAsync(()=>{RestoreWorkspace();return AppDialogs.ConfirmForcedCutsAsync(this);});
@@ -145,8 +161,20 @@ public partial class MainWindow : Window
     {
         RestoreWorkspace();
         if (!await _initialized.Task) return;
-        try { foreach (var path in args.Where(p => p.EndsWith(".ilp",StringComparison.OrdinalIgnoreCase) && File.Exists(p))) { Navigate(0); await _student.ImportFileAsync(path); } }
+        await _launchGate.WaitAsync();
+        try
+        {
+            foreach (var path in args.Where(p => p.EndsWith(".ilp", StringComparison.OrdinalIgnoreCase) && File.Exists(p)))
+            {
+                if ((_services.Student.HasMedia || _teacher.HasOpenProject) &&
+                    !await AppDialogs.ConfirmAsync(this, "打开新的精听包？", "当前有正在打开的播放或制作内容。是否保存制作进度并打开新文件？", "打开文件")) continue;
+                if (_services.Server.AgentActive) { WorkspaceToast.Show(this, "请先结束智能体接管", "结束接管后可以打开精听包。"); continue; }
+                await _teacher.FlushDraftAsync(); await _services.Student.PauseAsync();
+                Navigate(0); await _student.ImportFileAsync(path);
+            }
+        }
         catch (Exception error) { AppLog.Warning("打开精听包失败",error); WorkspaceToast.Show(this,"无法打开精听包",error.Message,true); }
+        finally { _launchGate.Release(); }
     }
     internal async Task ExitAsync()
     {
@@ -172,6 +200,7 @@ public partial class MainWindow : Window
             this.GetVisualDescendants().OfType<FAContentDialog>().Any(d => d.IsVisible)) return;
         if (!PlayerShortcuts.TryGetAction(_services.Settings.PlayerKeyBindings, e.Key, e.KeyModifiers, out var action)) return;
         e.Handled = true;
+        _student.RegisterInteraction();
         if (!_heldPlayerKeys.Add(e.Key) || _playerShortcutBusy || !_services.Student.CanPlay) return;
         var player = _services.Student;
         if (action != PlayerShortcutAction.TogglePlayback && !player.HasTranscript) return;

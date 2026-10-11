@@ -6,7 +6,7 @@ namespace IL.Core.Ilp;
 public sealed class IlpCreator
 {
     public async Task<IlpManifest> CreateAsync(string title, string audioFile, string transcriptFile, string outputFile,
-        string packageUuid, int packageVersion, TimeSpan? audioDuration = null, LessonExercises? exercises = null, CancellationToken ct = default)
+        string packageUuid, int packageVersion, TimeSpan? audioDuration = null, LessonExercises? exercises = null, CancellationToken ct = default, string? creatorMachine = null, string? creatorAgent = null)
     {
         if (string.IsNullOrWhiteSpace(title)) throw new IlpException(IlpError.InvalidManifest, "请输入课程标题");
         if (!File.Exists(audioFile) || !File.Exists(transcriptFile)) throw new IlpException(IlpError.MissingFile, "请选择音频与 SRT 文件");
@@ -14,9 +14,10 @@ public sealed class IlpCreator
         if (!IlpManifest.SupportedAudioExtensions.Contains(extension)) throw new IlpException(IlpError.InvalidPath, "音频格式不在当前支持范围内");
         var cues = SrtParser.Parse(await File.ReadAllBytesAsync(transcriptFile, ct), TimeSpan.FromDays(7));
         var duration = audioDuration > cues[^1].End ? audioDuration.Value : cues[^1].End;
-        var manifest = new IlpManifest(2, title.Trim(), duration, $"audio.{extension}", "transcript.srt",
+        var manifest = new IlpManifest(IlpManifest.SupportedVersion, title.Trim(), duration, $"audio.{extension}", "transcript.srt",
             await FileHashing.Sha256Async(audioFile, ct), await FileHashing.Sha256Async(transcriptFile, ct),
-            packageUuid, packageVersion, exercises ?? LessonExercises.Empty);
+            packageUuid, packageVersion, exercises ?? LessonExercises.Empty)
+        { CreatorMachine = creatorMachine ?? Environment.MachineName, CreatorAgent = creatorAgent ?? "用户" };
         var manifestBytes = manifest.ToBytes();
         IlpManifest.FromBytes(manifestBytes);
         var destination = Path.GetFullPath(outputFile);

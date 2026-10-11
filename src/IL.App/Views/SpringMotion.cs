@@ -67,7 +67,7 @@ public sealed class SpringMotion
     private void RequestFrame(TopLevel owner, long generation) => owner.RequestAnimationFrame(time =>
     {
         if (!_running || generation != _generation) return;
-        var elapsed = _lastFrame is { } last ? Math.Max(0, (time - last).TotalSeconds) : 0;
+        var elapsed = _lastFrame is { } last ? Math.Clamp((time - last).TotalSeconds, 0, 1.0 / 30) : 0;
         _lastFrame = time;
         var done = _opacity.Step(elapsed, _response) & _x.Step(elapsed, _response) & _y.Step(elapsed, _response) & _size.Step(elapsed, _response);
         Apply(); if (done) Stop();

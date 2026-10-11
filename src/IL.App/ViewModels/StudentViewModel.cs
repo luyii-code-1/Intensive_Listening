@@ -69,6 +69,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     public string DurationLabel => FormatTime(DurationSeconds);
     public IReadOnlySet<string> RevealedCloze => _revealed;
     public event Action? PresentationChanged;
+    public event Action? NavigationRequested;
     public bool IsScrubbing { get; set; }
 
     [ObservableProperty] private LessonListItem? selectedLesson;
@@ -245,7 +246,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     [RelayCommand] private Task NextCueAsync() => StepCueAsync(1);
     private Task StepCueAsync(int delta) => RunAsync(async () =>
     {
-        if (ActiveCue is null) return;
+        if (ActiveCue is null || Cues.Count == 0) return;
         var row = Cues[Math.Clamp(ActiveCue.Index + delta, 0, Cues.Count - 1)];
         await SeekCoreAsync(PlaybackNavigation.CueNavigationPosition(row.Cue), row.Index);
     });
@@ -363,6 +364,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     {
         _repeatEnd = null; _preroll = index;
         UpdatePosition(target);
+        NavigationRequested?.Invoke();
         if (_playerSource is not null) await _player!.SeekAsync(TimeSpan.FromSeconds(PositionSeconds));
         await ConfigureLoopAsync();
         await SaveProgressAsync();
@@ -376,7 +378,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         _switching = true;
         try
         {
-            if (_player is null) { _player = _factory(); _player.StateChanged += OnPlayerChanged; }
+            if (_player is null) { _player = await Task.Run(_factory); _player.StateChanged += OnPlayerChanged; }
             await _player.OpenAsync(_audioPath);
             _playerSource = _audioPath;
             if (_player.Duration > TimeSpan.Zero) DurationSeconds = _player.Duration.TotalSeconds;

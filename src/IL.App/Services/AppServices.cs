@@ -33,6 +33,7 @@ public sealed class AppServices : IAsyncDisposable
         Queue=new(RunAsrAsync,FindDuplicateAsync,new QueueStore(Path.Combine(DataDirectory,"transcription_queue.json")),new SrtRecognitionCache(Path.Combine(DataDirectory,"cache","asr-srt")),()=>Settings.AsrCacheProfile);
         Transcriptions=new(Projects,Queue);
         Api=new(Projects,LibraryDirectory);Server=new(Api.DispatchAsync,Path.Combine(DataDirectory,"mcp","server.json"));
+        Api.AgentName = () => Server.ActiveAgentName;
         Api.ExportStandalone=ExportStandaloneAsync;
         Api.StartAsr=async project=>
         {

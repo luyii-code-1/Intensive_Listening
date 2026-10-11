@@ -26,6 +26,7 @@ public sealed record AppSettings
     public string ApplicationFontFamily { get; init; } = "";
     public int ApplicationFontWeight { get; init; } = 500;
     public bool SkipOpeningPrompts { get; init; } = true;
+    public bool CreateProjectOnAudioImport { get; init; } = true;
     public int TranscriptFontSize { get; init; } = 18;
     public IReadOnlyDictionary<PlayerShortcutAction, string> PlayerKeyBindings { get; init; } = new Dictionary<PlayerShortcutAction, string>();
     public bool DebugLogging { get; init; }
@@ -44,6 +45,7 @@ public sealed record AppSettings
     public static AppSettings FromJson(JsonObject j) => new()
     {
         CompletedInstallationId = String(j, "completedInstallationId", ""),
+        CreateProjectOnAudioImport = Bool(j, "createProjectOnAudioImport", true),
         ApplicationFontFamily = String(j, "applicationFontFamily", ""),
         ApplicationFontWeight = Math.Clamp(Integer(j, "applicationFontWeight", 500), 100, 950),
         PlayerKeyBindings = ReadPlayerKeyBindings(j["playerKeyBindings"]),

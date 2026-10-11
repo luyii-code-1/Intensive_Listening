@@ -29,6 +29,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi import FastAPI, HTTPException, Request, Form
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -36,6 +37,35 @@ ASSETS = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
 FEATURES = ["playback", "importAudio", "importIlp", "authoring", "asr", "mcp", "export", "importProject", "dataMaintenance", "apiConfiguration", "updates"]
 SCHEMA = json.loads((ASSETS / "settings-schema.json").read_text(encoding="utf-8"))
 DEFAULT_POLICY = {"settings": {}, "lockedSettings": [], "disabledFeatures": [], "lockAllSettings": False, "hideAsrConfiguration": False, "automaticOobe": False, "update": None}
+MDN_LOOP = "asyncio:SelectorEventLoop"
+
+
+def local_addresses():
+    addresses = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("192.0.2.1", 1))
+            addresses.append(probe.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        addresses.extend(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        pass
+    return list(dict.fromkeys(ip for ip in addresses if not ip.startswith(("127.", "169.254.")) and ip != "0.0.0.0"))
+
+
+def expand_web(root):
+    target = root / "web" / "templates"
+    source = ASSETS / "templates"
+    version = hashlib.sha256(b"".join(p.read_bytes() for p in sorted(source.rglob("*")) if p.is_file())).hexdigest()
+    marker = root / "web" / "bundle-version.txt"
+    if not marker.exists() or marker.read_text() != version:
+        if target.exists():
+            shutil.copytree(target, root / "web" / ("backup-" + str(time.time_ns())))
+        shutil.copytree(source, target, dirs_exist_ok=True)
+        marker.write_text(version)
+    return target
 
 
 class SecretStore:
@@ -111,8 +141,6 @@ def validate_policy(policy: dict):
     for name, bounds in {"cloudTimeoutSeconds": (30, 1800), "cloudConcurrency": (1, 10), "transcriptFontSize": (14, 28), "applicationFontWeight": (100, 1000)}.items():
         if name in settings and not bounds[0] <= settings[name] <= bounds[1]:
             raise ValueError(name + " 超出允许范围。")
-    if policy.get("hideAsrConfiguration") and not settings.get("cloudApiKey"):
-        raise ValueError("隐藏配置需要提供 cloudApiKey。")
     if policy.get("update") is not None:
         raise ValueError("请通过更新发布表单配置签名更新。")
 
@@ -170,10 +198,13 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
             CREATE TABLE IF NOT EXISTS audit(at REAL, action TEXT, target TEXT);
         """)
         conn.execute("INSERT OR IGNORE INTO policies VALUES(?,?,?)", ("all", store.encode(DEFAULT_POLICY), 1))
+        if "leave_allowed" not in {r[1] for r in conn.execute("PRAGMA table_info(devices)")}:
+            conn.execute("ALTER TABLE devices ADD COLUMN leave_allowed INTEGER NOT NULL DEFAULT 0")
     app = FastAPI(title="Intensive Listening MDN", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=True, same_site="strict", max_age=3600)
-    template_directory = root / "web" / "templates"
-    templates = Jinja2Templates(directory=str(template_directory if template_directory.exists() else ASSETS / "templates"))
+    template_directory = expand_web(root)
+    templates = Jinja2Templates(directory=str(template_directory))
+    app.mount("/assets", StaticFiles(directory=str(template_directory / "assets")), name="assets")
     login_attempts = {}
 
     @app.middleware("http")
@@ -222,6 +253,24 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
             conn.execute("INSERT INTO devices(id,name,token_hash,version,last_seen) VALUES(?,?,?,?,?)", (identifier, payload.deviceName, token_hash(credential), payload.appVersion, time.time()))
             conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), "register", identifier))
         return {"deviceToken": credential}
+
+    @app.get("/api/info")
+    def server_info():
+        private = serialization.load_pem_private_key(config["signing_key"].encode(), None)
+        return {"organizationName": config["organization_name"], "certificateSha256": config.get("certificate_sha256", ""),
+            "updatePublicKey": base64.b64encode(private.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).decode()}
+
+    @app.post("/api/leave")
+    def leave(request: Request):
+        identifier = device(request)
+        with db() as conn:
+            row = conn.execute("SELECT leave_allowed FROM devices WHERE id=?", (identifier,)).fetchone()
+            if row is None or not row[0]:
+                raise HTTPException(403, "退出尚未获得管理员授权。")
+            conn.execute("DELETE FROM devices WHERE id=?", (identifier,))
+            conn.execute("DELETE FROM policies WHERE scope=?", (identifier,))
+            conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), "leave", identifier))
+        return {"accepted": True}
 
     def policy_for(identifier):
         with db() as conn:
@@ -287,7 +336,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
     def dashboard(request: Request, scope: str = "all"):
         admin(request)
         with db() as conn:
-            clients = conn.execute("SELECT * FROM devices ORDER BY last_seen DESC").fetchall()
+            clients = [dict(r) for r in conn.execute("SELECT * FROM devices ORDER BY last_seen DESC")]
             row = conn.execute("SELECT * FROM policies WHERE scope=?", (scope,)).fetchone()
             events = conn.execute("SELECT device_id,kind,happened,version,metrics FROM events ORDER BY rowid DESC LIMIT 100").fetchall()
         payload = store.decode(row["payload"]) if row else {}
@@ -295,8 +344,11 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
         for name in ("cloudApiKey",):
             if name in payload.get("settings", {}):
                 payload["settings"][name] = "__KEEP_SECRET__"
-        payload.pop("update", None)
-        return templates.TemplateResponse(request=request, name="admin.html", context={"organization": config["organization_name"], "clients": clients, "scope": scope, "policy": json.dumps(payload, ensure_ascii=False, indent=2), "csrf": request.session["csrf"], "features": FEATURES, "settings": list(SCHEMA), "events": events, "message": request.query_params.get("message", "")})
+        current_update = payload.pop("update", None)
+        for client in clients:
+            client["online"] = bool(client["enabled"] and time.time() - client["last_seen"] < 180)
+            client["seen_text"] = datetime.fromtimestamp(client["last_seen"]).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        return templates.TemplateResponse(request=request, name="admin.html", context={"organization": config["organization_name"], "clients": clients, "scope": scope, "policy": json.dumps(payload, ensure_ascii=False, indent=2), "payload": payload, "csrf": request.session["csrf"], "features": FEATURES, "settings": SCHEMA, "events": events, "message": request.query_params.get("message", ""), "server_url": config["public_url"], "certificate": config.get("certificate_sha256", ""), "online_count": sum(c["online"] for c in clients), "current_update": current_update})
 
     def scope_exists(conn, scope):
         if scope != "all" and not conn.execute("SELECT id FROM devices WHERE id=?", (scope,)).fetchone():
@@ -318,6 +370,12 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
                 if isinstance(payload, dict) and isinstance(payload.get("settings"), dict) and payload["settings"].get("cloudApiKey") == "__KEEP_SECRET__":
                     payload["settings"]["cloudApiKey"] = old.get("settings", {}).get("cloudApiKey", "")
                 validate_policy(payload)
+                global_row = conn.execute("SELECT payload FROM policies WHERE scope='all'").fetchone()
+                global_policy = store.decode(global_row[0])
+                effective_settings = (global_policy.get("settings", {}) if scope != "all" else {}) | payload.get("settings", {})
+                effective_hidden = payload.get("hideAsrConfiguration", global_policy.get("hideAsrConfiguration", False) if scope != "all" else False)
+                if effective_hidden and not effective_settings.get("cloudApiKey"):
+                    raise ValueError("隐藏配置需要提供或继承 cloudApiKey。")
                 if scope == "all":
                     payload = DEFAULT_POLICY | payload
                 if old.get("update"):
@@ -326,7 +384,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
                 conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), "policy", scope))
         except (ValueError, TypeError) as error:
             raise HTTPException(422, str(error)) from None
-        return RedirectResponse("/admin?scope=" + scope + "&message=saved", 303)
+        return RedirectResponse("/admin?scope=" + scope + "&view=policy&message=saved", 303)
 
     @app.post("/admin/device")
     def change_device(request: Request, device_id: str = Form(...), action: str = Form(...), form_token: str = Form(...)):
@@ -337,6 +395,8 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
                 conn.execute("UPDATE devices SET enabled=? WHERE id=?", (int(action == "enable"), device_id))
             elif action == "reset":
                 conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
+            elif action in ("allow_leave", "cancel_leave"):
+                conn.execute("UPDATE devices SET leave_allowed=? WHERE id=?", (int(action == "allow_leave"), device_id))
             elif action == "inherit":
                 conn.execute("DELETE FROM policies WHERE scope=?", (device_id,))
             else:
@@ -374,7 +434,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
             payload["update"] = update
             write_policy(conn, scope, payload)
             conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), "update", scope))
-        return RedirectResponse("/admin?scope=" + scope + "&message=update", 303)
+        return RedirectResponse("/admin?scope=" + scope + "&view=updates&message=update", 303)
 
     @app.post("/admin/update/cancel")
     def cancel_update(request: Request, scope: str = Form(...), form_token: str = Form(...)):
@@ -448,7 +508,8 @@ def main():
     if not path.exists():
         print("首次运行：设置组织和管理员账号。TLS 证书与设备注册凭证将自动生成。")
         organization = input("组织名称：").strip()
-        default_url = "https://" + socket.gethostname() + ":8443/"
+        addresses = local_addresses()
+        default_url = "https://" + (addresses[0] if addresses else "127.0.0.1") + ":8443/"
         url = input("客户端访问地址 [" + default_url + "]：").strip() or default_url
         password = getpass.getpass("管理员密码（至少 12 位）：")
         if password != getpass.getpass("再次输入："):
@@ -465,9 +526,13 @@ def main():
     port = int(public.get("port", config["port"]))
     print("管理后台：" + config["public_url"])
     print("本机访问：https://localhost:" + str(port) + "/")
+    for address in local_addresses():
+        print("局域网访问：https://" + address + ":" + str(port) + "/")
+    print("服务器证书 SHA-256：" + config.get("certificate_sha256", ""))
     print("自动证书首次访问可能显示浏览器证书提示；客户端通过注册 YAML 中的证书指纹验证。")
     print("保持此控制台运行；Ctrl+C 停止服务。")
-    uvicorn.run(create_app(args.data, config, store), host=public.get("host", "0.0.0.0"), port=port,
+    # Selector avoids Proactor connection_lost callback errors on abandoned TLS connections.
+    uvicorn.run(create_app(args.data, config, store), host=public.get("host", "0.0.0.0"), port=port, loop=MDN_LOOP,
         ssl_certfile=config["cert"], ssl_keyfile=config["key"], ssl_keyfile_password=config.get("tls_password"), access_log=False)
 
 

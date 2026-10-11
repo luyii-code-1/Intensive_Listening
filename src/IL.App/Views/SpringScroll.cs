@@ -23,7 +23,13 @@ internal sealed class SpringScroll
         _viewer = viewer;
         _x = new(viewer, viewer.Offset.X, value => Apply(new(value, viewer.Offset.Y)));
         _y = new(viewer, viewer.Offset.Y, value => Apply(new(viewer.Offset.X, value)));
-        viewer.ScrollChanged += (_, _) => { if (!_applying && viewer.Offset != new Vector(_x.Value, _y.Value)) Stop(); };
+        // Offset changes are synchronous; ScrollChanged is delivered later during layout,
+        // when rounded/coerced offsets can otherwise cancel our own animation frames.
+        viewer.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == ScrollViewer.OffsetProperty && !_applying
+                && (!_moving || (_viewer.Offset - Clamp(new Vector(_x.Value, _y.Value))).Length > 1)) Stop();
+        };
         viewer.DetachedFromVisualTree += (_, _) => Stop();
         viewer.AddHandler(InputElement.PointerPressedEvent, (_, _) => Stop(), RoutingStrategies.Tunnel);
     }

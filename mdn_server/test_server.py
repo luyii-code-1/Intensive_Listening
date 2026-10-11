@@ -9,7 +9,7 @@ import uuid
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi.testclient import TestClient
-from server import SecretStore, canonical, create_app, password_hash, initialize
+from server import SecretStore, canonical, create_app, password_hash, initialize, MDN_LOOP
 
 
 class ManagementTests(unittest.TestCase):
@@ -48,6 +48,60 @@ class ManagementTests(unittest.TestCase):
         csrf = self.login()
         self.client.post("/admin/device", data={"device_id": self.identifier, "action": "disable", "form_token": csrf})
         self.assertEqual(self.client.get("/api/policy", headers=self.headers).status_code, 403)
+
+    def test_manual_discovery_and_admin_authorized_leave(self):
+        info = self.client.get("/api/info").json()
+        self.assertEqual(info["organizationName"], "测试学校")
+        self.assertNotIn("enrollmentToken", info)
+        serialization.load_der_public_key(base64.b64decode(info["updatePublicKey"]))
+        self.assertEqual(self.client.post("/api/leave", headers=self.headers).status_code, 403)
+        csrf = self.login()
+        form = {"device_id": self.identifier, "action": "allow_leave", "form_token": csrf}
+        self.assertEqual(self.client.post("/admin/device", data=form).status_code, 200)
+        self.assertIn("已授权退出", self.client.get("/admin").text)
+        form["action"] = "cancel_leave"
+        self.client.post("/admin/device", data=form)
+        self.assertEqual(self.client.post("/api/leave", headers=self.headers).status_code, 403)
+        form["action"] = "allow_leave"
+        self.client.post("/admin/device", data=form)
+        self.assertEqual(self.client.post("/api/leave", headers=self.headers).status_code, 200)
+        self.assertEqual(self.client.get("/api/policy", headers=self.headers).status_code, 403)
+        self.register(self.identifier)
+
+    def test_admin_assets_and_expanded_page_upgrade(self):
+        csrf = self.login()
+        self.assertIn('id="policy-form"', self.client.get("/admin").text)
+        self.assertEqual(self.client.get("/assets/admin.js").status_code, 200)
+        self.assertEqual(self.client.get("/assets/admin.css").status_code, 200)
+        marker = self.root / "web" / "bundle-version.txt"
+        marker.write_text("previous-version")
+        create_app(self.root, self.config)
+        self.assertNotEqual(marker.read_text(), "previous-version")
+        self.assertTrue(list((self.root / "web").glob("backup-*")))
+        self.assertEqual(self.save("all", {"lockedSettings": ["themeMode"], "disabledFeatures": ["asr"]}, csrf).status_code, 200)
+        self.assertEqual(self.client.get("/api/policy", headers=self.headers).json()["disabledFeatures"], ["asr"])
+
+    def test_legacy_database_and_inherited_asr_secret(self):
+        import sqlite3
+        from contextlib import closing
+        with closing(sqlite3.connect(self.root / "mdn.sqlite3")) as conn:
+            conn.execute("ALTER TABLE devices DROP COLUMN leave_allowed")
+            conn.commit()
+        create_app(self.root, self.config)
+        csrf = self.login()
+        self.assertEqual(self.save("all", {"settings": {"cloudApiKey": "inherited-secret"}}, csrf).status_code, 200)
+        self.assertEqual(self.save(self.identifier, {"hideAsrConfiguration": True}, csrf).status_code, 200)
+        self.assertTrue(self.client.get("/api/policy", headers=self.headers).json()["hideAsrConfiguration"])
+        self.assertNotIn("inherited-secret", self.client.get("/admin", params={"scope": self.identifier}).text)
+
+    def test_selector_loop_handles_connection_reset(self):
+        import asyncio
+        from uvicorn import Config
+        loop = Config("unused", loop=MDN_LOOP).get_loop_factory()()
+        try:
+            self.assertIsInstance(loop, asyncio.SelectorEventLoop)
+        finally:
+            loop.close()
 
     def test_global_and_device_policies_and_secret_retention(self):
         csrf = self.login()

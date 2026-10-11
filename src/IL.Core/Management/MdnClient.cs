@@ -9,13 +9,13 @@ namespace IL.Core.Management;
 public sealed class MdnClient : IAsyncDisposable
 {
     private readonly string _root, _version;
-    private readonly HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
-    private readonly CancellationTokenSource _stop = new();
+    private HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
+    private CancellationTokenSource _stop = new();
     private readonly SemaphoreSlim _request = new(1, 1);
     private readonly Channel<object> _events = Channel.CreateBounded<object>(new BoundedChannelOptions(128) { FullMode = BoundedChannelFullMode.DropOldest });
     private Task? _loop;
     private string? _token;
-    public MdnConfiguration? Configuration { get; }
+    public MdnConfiguration? Configuration { get; private set; }
     public string DeviceId { get; }
     public ManagedPolicy Policy { get; private set; } = new();
     public string Status { get; private set; } = "未加入管理";
@@ -45,6 +45,54 @@ public sealed class MdnClient : IAsyncDisposable
     private sealed record State(string Server, string DeviceId, string Token, ManagedPolicy Policy);
     private void Save() => WindowsSecretStore.Save(Path.Combine(_root, "state.bin"), JsonSerializer.Serialize(new State(Configuration!.Server.AbsoluteUri, DeviceId, _token!, Policy), ManagedPolicy.Json));
     public void Start() { if (Configuration is not null && _loop is null) _loop = LoopAsync(); }
+    public async Task JoinAsync(Uri server, MdnServerInfo identity, string enrollmentToken, CancellationToken ct = default)
+    {
+        if (Configuration is not null) throw new InvalidOperationException("已加入管理；更换组织前需要管理员授权退出。");
+        if (string.IsNullOrWhiteSpace(enrollmentToken)) throw new FormatException("请填写组织共享注册凭证。");
+        var configuration = new MdnConfiguration
+        {
+            ServerUrl = server.AbsoluteUri, OrganizationName = identity.OrganizationName,
+            EnrollmentToken = enrollmentToken.Trim(), UpdatePublicKey = identity.UpdatePublicKey,
+            ServerCertificateSha256 = identity.CertificateSha256
+        };
+        var handler = MdnConfiguration.CreateHttpHandler(configuration.ServerCertificateSha256);
+        Directory.CreateDirectory(_root);
+        var path = Path.Combine(Path.GetDirectoryName(_root)!, "il_mdn_config.yaml");
+        var yaml = new YamlDotNet.Serialization.SerializerBuilder().WithNamingConvention(YamlDotNet.Serialization.NamingConventions.UnderscoredNamingConvention.Instance).Build().Serialize(configuration);
+        File.WriteAllText(path + ".tmp", yaml); File.Move(path + ".tmp", path, true);
+        _http.Dispose(); _http = new(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        Configuration = configuration; Status = "正在连接集控服务器"; Changed?.Invoke();
+        try { await SynchronizeAsync(ct); }
+        catch
+        {
+            if (_token is null) { Configuration = null; File.Delete(path); }
+            Status = "集控连接失败，请检查地址与注册凭证后重试"; Changed?.Invoke(); throw;
+        }
+        finally { Start(); }
+    }
+    public async Task LeaveAsync(CancellationToken ct = default)
+    {
+        if (Configuration is null) return;
+        await _request.WaitAsync(ct);
+        try
+        {
+            if (_token is null) throw new InvalidOperationException("设备尚未注册，请先连接服务器。");
+            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/leave"));
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                throw new InvalidOperationException("退出尚未获得管理员授权，请联系组织管理员在后台允许此设备退出。");
+            response.EnsureSuccessStatusCode();
+            _stop.Cancel();
+        }
+        finally { _request.Release(); }
+        if (_loop is not null) await _loop;
+        File.Delete(Path.Combine(Path.GetDirectoryName(_root)!, "il_mdn_config.yaml"));
+        foreach (var file in new[] { "state.bin", "events.bin" }) File.Delete(Path.Combine(_root, file));
+        while (_events.Reader.TryRead(out _)) { }
+        _stop.Dispose(); _stop = new(); _loop = null; _token = null; Configuration = null;
+        Policy = new(); Status = "未加入管理"; Changed?.Invoke();
+    }
     public void Report(string kind, object metrics)
     {
         if (Configuration is not null) _events.Writer.TryWrite(new { id = Guid.NewGuid().ToString("N"), kind, occurredAt = DateTimeOffset.UtcNow, appVersion = _version, metrics });

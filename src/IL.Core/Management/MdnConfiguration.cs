@@ -24,6 +24,7 @@ public sealed class MdnConfiguration
         }
         return handler;
     }
+    [YamlIgnore]
     public Uri Server => new(ServerUrl.TrimEnd('/') + "/");
     public static MdnConfiguration? Load(string root)
     {

@@ -76,6 +76,7 @@ public partial class MainWindow : Window
         _services.ManagedUpdates.AutomaticInstall=()=>OnUiAsync(async()=>{await InstallManagedUpdateAsync();return true;});
         _services.Mdn.Changed+=()=>Dispatcher.UIThread.Post(async()=>
         {
+            ManagedBanner.Text=_services.Mdn.Banner;ManagedBanner.IsVisible=ManagedBanner.Text.Length>0;
             if(!await _initialized.Task)return;
             if(_managedRevision==_services.Mdn.Policy.Revision){_ = _services.ManagedUpdates.RefreshAsync();return;}
             _managedRevision=_services.Mdn.Policy.Revision;

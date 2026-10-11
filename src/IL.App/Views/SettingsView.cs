@@ -265,7 +265,8 @@ public sealed class SettingsView : UserControl
         {
             new SettingsCategory("外观与字体", "color", appearance), new SettingsCategory("播放", "play", playback),
             new SettingsCategory("制作与智能体", "robot", authoring), new SettingsCategory("数据与维护", "folder_open", maintenance),
-            new SettingsCategory("隐私与关于", "info", privacy)
+            new SettingsCategory("隐私与关于", "info", privacy),
+            new SettingsCategory("组织管理", "info", ManagedRuntime.Client is {} mdn ? new MdnSettingsView(mdn) : WorkspaceUi.Text("独立播放器不提供组织注册。"))
         };
         var navigation = new ListBox { ItemsSource = categories, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
         navigation.ItemTemplate = new FuncDataTemplate<SettingsCategory>((category, _) => category is null ? null : new StackPanel

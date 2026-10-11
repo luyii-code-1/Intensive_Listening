@@ -75,7 +75,7 @@ public sealed class StudentView : UserControl
         _transcript.SizeChanged += (_, _) => ScheduleRealization();
         _transcriptMotion = SpringScroll.For(_transcript);
         AddHandler(PointerPressedEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Tunnel);
-        AddHandler(PointerMovedEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Tunnel);
+        AddHandler(PointerMovedEvent, (_, _) => RegisterInteraction(interruptScroll: false), RoutingStrategies.Tunnel);
         AddHandler(PointerWheelChangedEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Tunnel);
         AddHandler(KeyDownEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Tunnel);
         _page.Children.Add(_header); _page.Children.Add(_body);
@@ -231,7 +231,7 @@ public sealed class StudentView : UserControl
         Grid.SetColumn(info, 1); content.Children.Add(info);
         var track = new ProgressBar { Minimum = 0, Maximum = 1, Value = fraction, Foreground = Brush.Parse("#E81123"), Width = 148, Height = 6, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(18, 0, 0, 0) };
         Grid.SetColumn(track, 2); content.Children.Add(track);
-        var open = new Button { Content = content, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = Brushes.Transparent };
+        var open = new Button { Content = content, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = Brushes.Transparent };
         open.Classes.Add("student-lesson-open");
         open.IsEnabled = _openingLessonId is null && _deletingLessonId is null;
         open.Click += async (_, _) => await OpenLessonFromHomeAsync(lesson);
@@ -544,10 +544,10 @@ public sealed class StudentView : UserControl
         else row.Background = Brushes.Transparent;
         if (row.Child is Grid grid && grid.Children[1] is Border marker) marker.IsVisible = active;
     }
-    internal void RegisterInteraction()
+    internal void RegisterInteraction(bool interruptScroll = true)
     {
         _lastInteraction = DateTimeOffset.UtcNow;
-        _transcriptMotion.Stop();
+        if (interruptScroll) _transcriptMotion.Stop();
     }
     private void FollowActiveCue(bool force = false, bool focus = false)
     {

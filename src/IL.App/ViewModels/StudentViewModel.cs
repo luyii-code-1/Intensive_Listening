@@ -156,6 +156,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     {
         try
         {
+            IL.Core.Management.ManagedRuntime.Require("importIlp");
             var imported = await _importer.ImportFileAsync(file, replace, title);
             await RefreshAsync();
             SelectedLesson = Lessons.FirstOrDefault(x => x.Id == imported.Id);
@@ -165,6 +166,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     }
     public Task OpenAudioAsync(string file) => RunAsync(async () =>
     {
+        IL.Core.Management.ManagedRuntime.Require("importAudio");
         await CloseMediaAsync();
         ClearSelectedLesson();
         _audioPath = file;
@@ -234,6 +236,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         }
         else
         {
+            IL.Core.Management.ManagedRuntime.Require("playback");
             if (PositionSeconds >= DurationSeconds) await SeekCoreAsync(TimeSpan.Zero);
             if (SingleSentenceLoop && ActiveCue is { } cue && (PositionSeconds < cue.Cue.Start.TotalSeconds || PositionSeconds >= cue.Cue.End.TotalSeconds))
                 await SeekCoreAsync(PlaybackNavigation.CueSeekPosition(cue.Cue), cue.Index);
@@ -362,6 +365,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     }
     private async Task SeekCoreAsync(TimeSpan target, int? index = null)
     {
+        IL.Core.Management.ManagedRuntime.Require("playback");
         _repeatEnd = null; _preroll = index;
         UpdatePosition(target);
         NavigationRequested?.Invoke();
@@ -373,6 +377,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         ? _player!.SetLoopAsync(PlaybackNavigation.CueSeekPosition(row.Cue), row.Cue.End) : _player!.SetLoopAsync(null, null);
     private async Task EnsurePlayerLoadedAsync()
     {
+        IL.Core.Management.ManagedRuntime.Require("playback");
         if (_audioPath is null) throw new InvalidOperationException("请先选择课程");
         if (_playerSource == _audioPath) return;
         _switching = true;

@@ -40,8 +40,56 @@ Name: "{autodesktop}\Intensive Listening"; Filename: "{app}\IL.App.exe"; Tasks: 
 [Run]
 Filename: "{app}\IL.App.exe"; Description: "启动 Intensive Listening 2 Resonance"; Flags: nowait postinstall skipifsilent
 [Code]
+type
+  TManagedGuid = record
+    D1: LongWord;
+    D2, D3: Word;
+    D4: array[0..7] of Byte;
+  end;
+function CoCreateGuid(var Value: TManagedGuid): Integer;
+  external 'CoCreateGuid@ole32.dll stdcall';
 var
   ConfirmedCleanupDirectory: String;
+
+function ManagedDataDirectory: String;
+begin
+  Result := ExpandConstant('{param:MDNDATA|{localappdata}\Intensive Listening\data}');
+end;
+
+function ValidDeviceId(Value: String): Boolean;
+var I: Integer;
+begin
+  Result := Length(Value) = 36;
+  if not Result then Exit;
+  for I := 1 to 36 do
+    if (I = 9) or (I = 14) or (I = 19) or (I = 24) then begin
+      if Value[I] <> '-' then Result := False;
+    end else if Pos(Lowercase(Value[I]), '0123456789abcdef') = 0 then Result := False;
+end;
+
+procedure RecordDeviceIdentity;
+var
+  Value: String;
+  Saved: AnsiString;
+  Device: TManagedGuid;
+  DataPath: String;
+begin
+  DataPath := ManagedDataDirectory;
+  if not ForceDirectories(DataPath) then RaiseException('无法建立应用数据目录。');
+  Value := '';
+  if LoadStringFromFile(AddBackslash(DataPath) + 'device-id.txt', Saved) then Value := Trim(String(Saved));
+  if not ValidDeviceId(Value) then RegQueryStringValue(HKLM64, 'Software\Intensive Listening', 'InstallUuid', Value);
+  if not ValidDeviceId(Value) then RegQueryStringValue(HKLM32, 'Software\Intensive Listening', 'InstallUuid', Value);
+  if not ValidDeviceId(Value) then RegQueryStringValue(HKCU, 'Software\Intensive Listening', 'InstallUuid', Value);
+  if not ValidDeviceId(Value) then begin
+    if CoCreateGuid(Device) <> 0 then RaiseException('无法生成设备 UUID。');
+    Value := Lowercase(Format('%.8x-%.4x-%.4x-%.2x%.2x-%.2x%.2x%.2x%.2x%.2x%.2x',
+      [Device.D1, Device.D2, Device.D3, Device.D4[0], Device.D4[1], Device.D4[2], Device.D4[3], Device.D4[4], Device.D4[5], Device.D4[6], Device.D4[7]]));
+  end;
+  if not SaveStringToFile(AddBackslash(DataPath) + 'device-id.txt', Value, False) then RaiseException('无法保存设备 UUID。');
+  if not RegWriteStringValue(HKLM64, 'Software\Intensive Listening', 'InstallUuid', Value) then RaiseException('无法同步设备 UUID。');
+  RegWriteStringValue(HKCU, 'Software\Intensive Listening', 'InstallUuid', Value);
+end;
 
 function NormalizedDirectory(Path: String): String;
 begin
@@ -65,7 +113,7 @@ begin
      IsSameOrParentDirectory(Target, ExpandConstant('{win}')) or
      IsSameOrParentDirectory(ExpandConstant('{win}'), Target) then
     Result := '请选择应用专用的安装文件夹。'
-  else if IsSameOrParentDirectory(Target, DataRoot) or IsSameOrParentDirectory(DataRoot, Target) then
+  else if IsSameOrParentDirectory(Target, DataRoot) or IsSameOrParentDirectory(DataRoot, Target) or IsSameOrParentDirectory(Target, ManagedDataDirectory) or IsSameOrParentDirectory(ManagedDataDirectory, Target) then
     Result := '此路径包含本机课程或设置数据，请选择单独的程序安装目录。';
 end;
 
@@ -100,7 +148,7 @@ end;
 
 function ConfirmDirectoryCleanup: Boolean;
 var
-  Target: String;
+  Target, Version: String;
 begin
   Target := ExpandConstant('{app}');
   Result := True;
@@ -108,6 +156,10 @@ begin
     Exit;
   if ConfirmedCleanupDirectory = NormalizedDirectory(Target) then
     Exit;
+  if WizardSilent and (ExpandConstant('{param:MDNUPDATE|0}') = '1') and
+     FileExists(AddBackslash(Target) + 'unins000.exe') and
+     GetVersionNumbersString(AddBackslash(Target) + 'IL.App.exe', Version) and
+     (Pos('2.', Version) = 1) then Exit;
   if WizardSilent then begin
     Log('The nonempty installation directory requires interactive deletion approval: ' + Target);
     Result := False;
@@ -152,7 +204,7 @@ var
   Source, Target, DataDirectory: String;
 begin
   Source := ExpandConstant('{src}\il_mdn_config.yaml');
-  DataDirectory := ExpandConstant('{localappdata}\Intensive Listening\data');
+  DataDirectory := ManagedDataDirectory;
   Target := AddBackslash(DataDirectory) + 'il_mdn_config.yaml';
   if FileExists(Source) and not FileExists(Target) then begin
     if not ForceDirectories(DataDirectory) or not FileCopy(Source, Target, True) then
@@ -162,10 +214,12 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssPostInstall then
+  if CurStep = ssPostInstall then begin
+    RecordDeviceIdentity;
     ImportManagedConfiguration;
+  end;
   if CurStep = ssPostInstall then
-    if not SaveStringToFile(ExpandConstant('{app}\installation-id.txt'),
+    if not SaveStringToFile(AddBackslash(ManagedDataDirectory) + 'installation-cycle.txt',
       GetSHA256OfUnicodeString(GetDateTimeString('yyyymmddhhnnss', '-', ':') + ExpandConstant('{tmp}')), False) then
       RaiseException('Unable to record installation for first-run setup.');
 end;

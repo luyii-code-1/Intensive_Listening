@@ -43,7 +43,7 @@ internal sealed class FirstRunWizard : Border
         _association = initial.EulaAcceptedVersion.Length == 0 || initial.FileAssociationEnabled;
         _mcp = initial.EulaAcceptedVersion.Length == 0 || initial.McpEnabled;
         _createProject = initial.CreateProjectOnAudioImport; _skip = initial.SkipOpeningPrompts; _telemetry = !initial.TelemetryPrompted || initial.TelemetryEnabled;
-        _font = initial.TranscriptFontSize; _theme = initial.ThemeMode; _key = initial.CloudApiKey;
+        _font = initial.TranscriptFontSize; _theme = initial.ThemeMode; _key = IL.Core.Management.ManagedRuntime.Display(initial).CloudApiKey;
         ClipToBounds = true;
         HorizontalAlignment = HorizontalAlignment.Stretch; VerticalAlignment = VerticalAlignment.Stretch;
         var layout = new Grid { RowDefinitions = new RowDefinitions(windows ? "*,Auto" : "Auto,*,Auto") };
@@ -62,7 +62,11 @@ internal sealed class FirstRunWizard : Border
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,*"), Margin = new Thickness(22, 0, 22, windows ? 12 : 16) };
         var version = CenterText(AppBuildInfo.ReleaseName, 12); version.Opacity = .75; Grid.SetColumn(version, 1); footer.Children.Add(version);
         _fraction.FontSize = 12; _fraction.Opacity = .6; _fraction.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(_fraction, 2); footer.Children.Add(_fraction); Grid.SetRow(footer, windows ? 1 : 2); layout.Children.Add(footer);
-        Child = layout; Render();
+        if (IL.Core.Management.ManagedRuntime.Client?.Configuration is {} managed)
+        {
+            var host=new Grid{RowDefinitions=new RowDefinitions("Auto,*")};
+            var banner=WorkspaceUi.Text($"当前已加入{managed.OrganizationName}的管理",12);banner.Margin=new Thickness(22,10);banner.Opacity=.7;host.Children.Add(banner);Grid.SetRow(layout,1);host.Children.Add(layout);Child=host;
+        } else Child=layout; Render();
         AttachedToVisualTree += (_, _) =>
         {
             _attached = true;
@@ -109,6 +113,7 @@ internal sealed class FirstRunWizard : Border
         foreach (var item in underlying) item.Control.IsEnabled = false;
         owner.Closed += closed;
         layer.KeyDown += (_, e) => { if (e.Key == Key.Escape) { completion.TrySetResult(null); e.Handled = true; } };
+        Grid.SetRowSpan(layer,Math.Max(1,root.RowDefinitions.Count));Grid.SetColumnSpan(layer,Math.Max(1,root.ColumnDefinitions.Count));
         root.Children.Add(layer); layer.Focus();
         try { return await completion.Task; } finally { owner.Closed -= closed; root.Children.Remove(layer); foreach (var item in underlying) item.Control.IsEnabled = item.Enabled; }
     }
@@ -145,7 +150,8 @@ internal sealed class FirstRunWizard : Border
         var card = WorkspaceUi.SettingsRow(icon, title, description, trailing);
         if (_windows && card is Border surface) surface.Padding = new Thickness(16, 10);
         if (card is Border { Child: Grid grid } && grid.Children[0] is TextBlock glyph) glyph.Foreground = WorkspaceUi.Accent;
-        return card;
+        string? setting=title switch {"关联 .ilp 文件"=>"fileAssociationEnabled","MCP 制作接口"=>"mcpEnabled","跳过题前提示"=>"skipOpeningPrompts","导入音频时同时建立项目"=>"createProjectOnAudioImport","API Key"=>"cloudApiKey",_=>null};
+        return setting is null?card:ManagedUi.Setting(card,setting);
     }
     private ToggleSwitch Toggle(bool value, Action<bool> set)
     { var toggle = new ToggleSwitch { IsChecked = value, OnContent = "", OffContent = "", MinWidth = 40 }; toggle.IsCheckedChanged += (_, _) => set(toggle.IsChecked == true); return toggle; }

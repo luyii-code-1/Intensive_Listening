@@ -38,6 +38,11 @@ public sealed class AppPrivateApiService(CourseProjectStore store,string? librar
     private static object Materials(CourseProject p)=>p.Exercises.EffectiveMaterials.Select(m=>new{id=m.Id,prompt=m.Prompt,cueIndexes=m.CueIndexes,repeatedCueIndexes=m.RepeatedCueIndexes,leadInCueIndexes=m.LeadInCueIndexes,questionIds=m.QuestionIds,questions=p.Exercises.QuestionsForMaterial(m).Select(q=>new{id=q.Id,number=q.Number,title=q.Title,options=q.Options,answerIndex=q.AnswerIndex})});
     public async Task<object?> DispatchAsync(string method,JsonObject args)
     {
+        if(method.StartsWith("projects.",StringComparison.Ordinal))
+        {
+            var feature=method=="projects.startAsr"?"asr":method is "projects.exportIlp" or "projects.exportStandalone" or "projects.addToLibrary"?"export":"authoring";
+            if(!IL.Core.Management.ManagedRuntime.Allows(feature))throw Fail("organization_managed","该功能由您的组织管理。");
+        }
         switch(method)
         {
             case "app.status":return new{ready=true,privateProtocolVersion=1};

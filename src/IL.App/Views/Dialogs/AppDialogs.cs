@@ -25,6 +25,7 @@ public static class AppDialogs
     }
     public static async Task<int> ChooseAsync(Window owner, string title, string message, params string[] choices)
     {
+        message=IL.Core.Management.ManagedRuntime.Redact(message);
         var answer = -1;
         var dialog = Create(owner, title, WorkspaceUi.Text(message));
         // ContentDialog owns the footer so keyboard actions and pointer actions share one result.

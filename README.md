@@ -26,6 +26,8 @@ Intensive Listening 是面向英语听力教学的桌面应用。教师可以整
 
 完整版本说明与附件见 [2 Resonance Release](https://github.com/luyii-code-1/Intensive_Listening/releases/tag/v2.0.0)。
 
+集控部署与组织更新见 [MDN 配置及部署说明](docs/MDN.md)。
+
 ## 2.0 的变化
 
 本节依据 `v1.0.1` 到 2.0 发布源码的 diff 整理；下面的功能章节同时列出本版完整能力。

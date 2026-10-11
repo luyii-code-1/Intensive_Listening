@@ -1,0 +1,113 @@
+# MDN 集控与更新
+
+客户端目前支持 Windows。MDN 服务端使用 FastAPI、SQLite 和内置管理页面，Windows 部署文件为 `MDN.Server.exe`。开发源文件位于 `mdn_server`。
+
+## Windows 服务端部署
+
+1. 在开发电脑安装 Python 3.13，执行 `powershell -NoProfile -ExecutionPolicy Bypass -File mdn_server\build-windows.ps1`。脚本生成 `mdn_server\dist\MDN.Server.exe`。部署服务器运行此文件即可；Python 与依赖随文件打包。
+2. 将 EXE 放到专用目录，准备 HTTPS 证书 PEM 和私钥 PEM。客户端访问地址的主机名必须与证书匹配。使用内部 CA 时，先将 CA 根证书加入客户端 Windows 信任库。
+3. 执行 `MDN.Server.exe --init`，填写组织名、公开 HTTPS 地址、管理员密码和 TLS 文件路径。共享注册凭证、会话密钥和 RSA 更新签名密钥自动生成。
+4. 执行 `MDN.Server.exe`，按显示的 HTTPS 地址访问管理页面。防火墙允许对应端口入站。服务默认监听 `0.0.0.0`，可用 Windows 任务计划程序以原账号开机启动。
+5. 登录管理后台，下载 `il_mdn_config.yaml`，将它放在客户端安装包同目录后运行安装器。
+
+默认服务数据目录位于 EXE 同目录的 `data`；可使用 `--data D:\MDN\data` 指定位置。首次初始化与后续启动须使用同一目录和 Windows 账号，DPAPI 加密数据绑定该账号。备份整个服务 data 目录并保留该账号的 Windows 密钥。初始化不会覆盖已有配置。
+
+## YAML 文件格式
+
+```yaml
+schema_version: 1
+organization_name: "示例学校"
+server_url: "https://mdn.example.edu:8443/"
+enrollment_token: "后台生成的组织共享注册凭证"
+update_public_key: "后台生成的 RSA 公钥，SPKI DER Base64"
+poll_seconds: 60
+```
+
+安装器将 YAML 复制到 `%LOCALAPPDATA%\Intensive Listening\data\il_mdn_config.yaml`；已有配置保留。应用读取 data 中的文件。组织名、HTTPS 地址和共享注册凭证必填；更新功能需要公钥。轮询间隔允许 15–3600 秒，每次网络请求超时 10 秒。
+
+YAML 含共享注册凭证，分发给组织的安装环境。注册时生成独立设备凭证，服务端仅保存其 SHA-256；客户端使用 DPAPI 保存凭证和策略缓存，之后以设备凭证请求策略和发送诊断。相同 UUID 再次注册会被拒绝，以防覆盖已有设备凭证。凭据丢失时，管理员选择“重置设备注册”，客户端退出后删除 `data\mdn\state.bin` 再启动。
+
+设备 UUID 保存在 `data\device-id.txt`，与注册表 `Software\Intensive Listening\InstallUuid`、MDN 注册和上报使用相同值。升级沿用设备 UUID；旧安装优先迁移已有 UUID。安装器更新注册表并同步 data，应用也同步 HKCU。OOBE 使用独立的 `data\installation-cycle.txt` 安装周期标记，每次安装更新此标记。
+
+OOBE 顶部显示组织名。主窗口顶部显示组织名和设备 UUID 最后一节。服务不可达时继续应用本地缓存的策略，并自动重试。
+
+## 管理策略
+
+后台支持“全部客户端”和单机范围。下发 `settings` 的字段会自动锁定；`lockedSettings` 可只锁定字段，保留其个人值。`lockAllSettings` 锁定全部可受管的设置。首次协议同意与阿里云遥测同意由用户控制，组织遥测独立运行。
+
+```json
+{
+  "settings": {
+    "themeMode": "system",
+    "createProjectOnAudioImport": true,
+    "cloudBaseUrl": "https://asr.example.edu",
+    "cloudEndpoint": "/asr",
+    "cloudModel": "model",
+    "cloudApiKey": "组织 API Key"
+  },
+  "lockedSettings": ["transcriptFontSize"],
+  "disabledFeatures": ["mcp", "export"],
+  "lockAllSettings": false,
+  "hideAsrConfiguration": true,
+  "automaticOobe": true
+}
+```
+
+支持的设置名由 `mdn_server/settings-schema.json` 定义，并显示在后台。客户端当前的识别引擎仍为云端英文 ASR；本地模型字段用于保存已有配置。
+
+单机 `settings` 按字段覆盖全局。单机明确写入的布尔值与列表覆盖全局；省略字段继承全局。选择“恢复全局策略”可移除单机覆盖。“禁用注册”阻止该设备继续访问 API；需要禁用应用功能时使用 `disabledFeatures`，客户端会接收并执行。
+
+功能名称：
+
+| 名称 | 功能 |
+|---|---|
+| playback | 播放与跳转 |
+| importAudio / importIlp | 导入音频 / 精听包 |
+| authoring | 制作界面与项目操作 |
+| asr | 转写任务，策略生效时取消在途任务 |
+| mcp | 智能体接管服务 |
+| export / importProject | 课程导出 / 工程导入 |
+| dataMaintenance | 清理缓存与日志 |
+| apiConfiguration | 修改、导入与导出 ASR 配置 |
+| updates | 组织更新安装 |
+
+受管设置与功能淡化，并显示黄色组织管理说明；实际调用也检查策略。组织配置作为运行时覆盖，个人设置仍保留。策略撤销后恢复个人值。`hideAsrConfiguration` 隐藏客户端 API 字段并阻止配置导出；密钥和配置缓存始终使用 DPAPI 加密。隐藏配置的 ASR 缓存标识只保存配置摘要；日志和错误提示过滤受管凭据。后台 API Key 使用 `__KEEP_SECRET__` 表示保持已有值，页面不回显密钥。
+
+## 遥测
+
+组织遥测强制运行，与设置中的阿里云遥测开关相互独立。报告包含设备 UUID、版本、启动与在线状态、ASR 成功状态／耗时／错误类型、崩溃异常类型与调用帧；课程音频、字幕、错误消息原文和 API Key 不在报告范围内。
+
+客户端的待发送事件保存在 DPAPI 加密队列中，保留最近 128 条；崩溃报告使用独立发送标记，组织上报不改变阿里云报告状态。服务端按事件 ID 去重，保留最近 100000 条事件，后台展示最近 100 条。策略变更与设备操作写入 SQLite audit 表。
+
+## 更新
+
+普通更新检查每次启动异步访问本仓库 GitHub `/releases/latest`，只读 Latest；10 秒超时显示失败。设置“隐私与关于”中显示结果，并提供手动检查和发布页面入口。
+
+组织更新在后台选择全局或单机范围，填写版本、HTTPS 安装包直链、SHA-256 和字节数。安装包使用本项目的 Windows 安装器。服务器以 RSA PKCS#1 v1.5 / SHA-256 签名如下 UTF-8 内容（换行分隔，无末尾换行）：
+
+```text
+id
+mode
+version
+url
+sha256
+size
+```
+
+客户端使用 YAML 公钥验签，再下载并检查字节数和 SHA-256。下载地址应直接返回安装包，客户端不跟随重定向。下载总时限为 20 分钟，上限为 2 GiB。
+
+- `cold`：自动下载校验，设置中出现“安装组织更新”，由用户点击安装。
+- `ota`：自动下载校验、保存制作草稿、退出应用、执行安装器并重启。系统需要管理员权限时显示 UAC。
+
+更新助手保存在 data 中，等待原应用退出，持有安装包只读锁并再次校验，再调用安装器。静默更新只接受已识别的本项目 2.x 安装目录。安装器保留数据和已有组织配置；通过 `/MDNDATA` 沿用原用户的数据路径。
+
+设置 `automaticOobe: true` 时，已经同意协议的组织更新会使用下发偏好并自动完成此次安装周期的 OOBE。首次协议仍需用户确认。UAC 取消或安装失败会写入结果、重新启动可用的应用，随后可在设置中重试安装；相同更新不会反复自动弹出 UAC。后台可停止尚未执行的更新下发。
+
+## 开发验证
+
+```powershell
+python -m pip install -r mdn_server\requirements.txt httpx
+python -m unittest discover -s mdn_server -p test_server.py -v
+```
+
+测试覆盖注册鉴权与撤销、全局和单机策略继承、秘密保留与 DPAPI、更新签名、遥测字段范围与去重。客户端编译、安装器运行、UAC 和界面交互需另外验收。

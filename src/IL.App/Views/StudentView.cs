@@ -115,6 +115,7 @@ public sealed class StudentView : UserControl
         ShowPage();
     }
 
+    public void ApplyManagement() { _play.IsEnabled = _vm.CanPlay && IL.Core.Management.ManagedRuntime.Allows("playback"); _play.Opacity=_play.IsEnabled?1:.45; UpdatePresentation(); }
     private static Button Command(string text, System.Windows.Input.ICommand command) => new() { Content = text, Command = command, Padding = new Thickness(8, 6) };
     private static StackPanel Row(params Control[] children)
     {
@@ -192,7 +193,7 @@ public sealed class StudentView : UserControl
             header.Children.Add(Text("学生端", 22, true));
             var openLesson = WorkspaceUi.Button("打开课程", PickLessonAsync); openLesson.Content = Row(WorkspaceUi.Icon("open_file"), Text("打开课程")); openLesson.IsEnabled = _vm.Lessons.Count > 0;
             var import = WorkspaceUi.Button("导入精听包或音频", ImportAsync, true); import.Content = Row(_importing ? new FAProgressRing { IsActive = true, Width = 16, Height = 16 } : WorkspaceUi.Icon("download"), Text("导入精听包或音频")); import.IsEnabled = !_importing;
-            var commands = Row(openLesson, import); Grid.SetColumn(commands, 1); header.Children.Add(commands);
+            var commands = Row(openLesson, import); Grid.SetColumn(commands, 1); header.Children.Add(ManagedUi.Wrap(commands,()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp")));
         }
         _header.Content = header;
     }
@@ -287,7 +288,7 @@ public sealed class StudentView : UserControl
                 strip.Children.Add(new ScrollViewer { Content = _index, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, [Grid.ColumnProperty] = 1 }); stack.Children.Add(strip);
             }
         }
-        return new Grid { Children = { stack } };
+        return ManagedUi.Feature(new Grid { Children = { stack } },"playback");
     }
     private async Task NavigateMaterialAsync(LessonMaterial material)
     {
@@ -654,6 +655,7 @@ public sealed class StudentView : UserControl
     }
     public async Task ImportFileAsync(string file, bool standalone = false)
     {
+        IL.Core.Management.ManagedRuntime.Require("importIlp");
         if (_importing) return;
         _importing = _handlingOperationStatus = true; BuildHeader();
         try

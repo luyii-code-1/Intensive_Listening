@@ -62,7 +62,7 @@ public sealed class CrashReportStore(string root)
         }
     }
     // Exception text may include request URLs or authorization headers. Never attach settings or lesson content.
-    public static string Redact(string text) => Regex.Replace(Regex.Replace(text, @"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?|api[_-]?key\s*[:=]\s*|[?&](?:key|token|api[_-]?key)=)[^\s&\""']+", "$1[redacted]"), @"\bsk-[A-Za-z0-9_-]{8,}\b", "[redacted]");
+    public static string Redact(string text) => Regex.Replace(Regex.Replace(IL.Core.Management.ManagedRuntime.Redact(text), @"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?|api[_-]?key\s*[:=]\s*|[?&](?:key|token|api[_-]?key)=)[^\s&\""']+", "$1[redacted]"), @"\bsk-[A-Za-z0-9_-]{8,}\b", "[redacted]");
 }
 
 public sealed record CrashSession(string Id, int ProcessId, string Root, DateTimeOffset StartedAt, bool CleanExit = false, bool UploadAllowed = false, string? ReportId = null);

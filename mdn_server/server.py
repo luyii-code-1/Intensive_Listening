@@ -1,0 +1,422 @@
+"""MDN Windows service and built-in administration, backed by SQLite."""
+from __future__ import annotations
+import argparse
+import base64
+import ctypes
+import getpass
+import hashlib
+import hmac
+import json
+import os
+from pathlib import Path
+import secrets
+import sqlite3
+import sys
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+
+import uvicorn
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from fastapi import FastAPI, HTTPException, Request, Form
+from fastapi.responses import RedirectResponse, Response
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field, ConfigDict
+from starlette.middleware.sessions import SessionMiddleware
+
+ASSETS = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+FEATURES = ["playback", "importAudio", "importIlp", "authoring", "asr", "mcp", "export", "importProject", "dataMaintenance", "apiConfiguration", "updates"]
+SCHEMA = json.loads((ASSETS / "settings-schema.json").read_text(encoding="utf-8"))
+DEFAULT_POLICY = {"settings": {}, "lockedSettings": [], "disabledFeatures": [], "lockAllSettings": False, "hideAsrConfiguration": False, "automaticOobe": False, "update": None}
+
+
+class SecretStore:
+    """DPAPI CurrentUser storage. Windows service must retain its original account."""
+    def protect(self, data: bytes, decrypt: bool = False) -> bytes:
+        if os.name != "nt":
+            raise RuntimeError("MDN 服务端的凭据存储需要 Windows。")
+        from ctypes import wintypes
+        class Blob(ctypes.Structure):
+            _fields_ = [("size", wintypes.DWORD), ("data", ctypes.POINTER(ctypes.c_ubyte))]
+        buffer = ctypes.create_string_buffer(data)
+        source = Blob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte)))
+        output = Blob()
+        crypt = ctypes.WinDLL("crypt32", use_last_error=True)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        crypt.CryptProtectData.argtypes = [ctypes.POINTER(Blob), wintypes.LPCWSTR, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(Blob)]
+        crypt.CryptUnprotectData.argtypes = [ctypes.POINTER(Blob), ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(Blob)]
+        kernel.LocalFree.argtypes = [ctypes.c_void_p]
+        call = crypt.CryptUnprotectData if decrypt else crypt.CryptProtectData
+        if not call(ctypes.byref(source), None, None, None, None, 1, ctypes.byref(output)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return ctypes.string_at(output.data, output.size)
+        finally:
+            kernel.LocalFree(output.data)
+
+    def encode(self, value) -> bytes:
+        return self.protect(json.dumps(value, ensure_ascii=False).encode())
+
+    def decode(self, value: bytes):
+        return json.loads(self.protect(value, True))
+
+
+def token_hash(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def password_hash(value: str, salt: str) -> str:
+    return hashlib.pbkdf2_hmac("sha256", value.encode(), bytes.fromhex(salt), 600_000).hex()
+
+
+def canonical(update: dict) -> bytes:
+    return "\n".join(str(update[k]) for k in ("id", "mode", "version", "url", "sha256", "size")).encode()
+
+
+def valid_url(value: str):
+    url = urlparse(value)
+    if url.scheme != "https" or not url.netloc or url.username or url.password or url.fragment:
+        raise ValueError("地址必须为 HTTPS URL。")
+
+
+def validate_policy(policy: dict):
+    if not isinstance(policy, dict) or set(policy) - set(DEFAULT_POLICY):
+        raise ValueError("策略包含未知字段。")
+    for key in ("lockAllSettings", "hideAsrConfiguration", "automaticOobe"):
+        if key in policy and type(policy[key]) is not bool:
+            raise ValueError(key + " 必须是布尔值。")
+    settings = policy.get("settings", {})
+    if not isinstance(settings, dict):
+        raise ValueError("settings 必须是对象。")
+    kinds = {"string": str, "number": int, "boolean": bool, "array": list, "object": dict}
+    for key, value in settings.items():
+        if key not in SCHEMA or type(value) is not kinds[SCHEMA[key]]:
+            raise ValueError("未知设置或字段类型错误：" + key)
+    for name, allowed in (("lockedSettings", SCHEMA), ("disabledFeatures", FEATURES)):
+        values = policy.get(name, [])
+        if not isinstance(values, list) or any(not isinstance(v, str) or v not in allowed for v in values):
+            raise ValueError(name + " 包含未知名称。")
+    if settings.get("asrProvider", "cloud") not in ("cloud", "local"):
+        raise ValueError("asrProvider 无效。")
+    if "themeMode" in settings and settings["themeMode"] not in ("system", "light", "dark"):
+        raise ValueError("themeMode 无效。")
+    for name, bounds in {"cloudTimeoutSeconds": (30, 1800), "cloudConcurrency": (1, 10), "transcriptFontSize": (14, 28), "applicationFontWeight": (100, 1000)}.items():
+        if name in settings and not bounds[0] <= settings[name] <= bounds[1]:
+            raise ValueError(name + " 超出允许范围。")
+    if policy.get("hideAsrConfiguration") and not settings.get("cloudApiKey"):
+        raise ValueError("隐藏配置需要提供 cloudApiKey。")
+    if policy.get("update") is not None:
+        raise ValueError("请通过更新发布表单配置签名更新。")
+
+
+class Register(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    deviceId: uuid.UUID
+    deviceName: str = Field(min_length=1, max_length=120)
+    appVersion: str = Field(max_length=64)
+    enrollmentToken: str = Field(min_length=1, max_length=256)
+
+
+class Telemetry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=80)
+    kind: str
+    occurredAt: datetime
+    appVersion: str = Field(max_length=64)
+    metrics: dict
+
+
+def sanitize_metrics(event: Telemetry):
+    fields = {"startup": {"platform", "architecture"}, "online": set(), "asr": {"durationMs", "success", "errorType"}, "crash": {"exceptionType", "component", "fatal", "exitCode", "stack"}}
+    if event.kind not in fields or set(event.metrics) - fields[event.kind]:
+        raise HTTPException(422, "遥测字段不在允许范围内。")
+    if len(json.dumps(event.metrics)) > 16000:
+        raise HTTPException(422, "遥测数据过大。")
+    for key, value in event.metrics.items():
+        if key == "stack":
+            if not isinstance(value, list) or len(value) > 40 or any(not isinstance(x, str) or len(x) > 1000 for x in value):
+                raise HTTPException(422, "调用堆栈无效。")
+        elif value is not None and (type(value) not in (str, int, bool) or isinstance(value, str) and len(value) > 200):
+            raise HTTPException(422, "遥测指标无效。")
+    return event.metrics
+
+
+def create_app(root: Path, config: dict, store: SecretStore | None = None) -> FastAPI:
+    root.mkdir(parents=True, exist_ok=True)
+    store = store or SecretStore()
+    @contextmanager
+    def db():
+        connection = sqlite3.connect(root / "mdn.sqlite3", timeout=15)
+        connection.row_factory = sqlite3.Row
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+    with db() as conn:
+        conn.executescript("""
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, version TEXT, last_seen REAL, enabled INTEGER NOT NULL DEFAULT 1);
+            CREATE TABLE IF NOT EXISTS policies(scope TEXT PRIMARY KEY, payload BLOB NOT NULL, revision INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS events(device_id TEXT, event_id TEXT, kind TEXT, happened TEXT, version TEXT, metrics TEXT, PRIMARY KEY(device_id,event_id));
+            CREATE TABLE IF NOT EXISTS audit(at REAL, action TEXT, target TEXT);
+        """)
+        conn.execute("INSERT OR IGNORE INTO policies VALUES(?,?,?)", ("all", store.encode(DEFAULT_POLICY), 1))
+    app = FastAPI(title="Intensive Listening MDN", docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=True, same_site="strict", max_age=3600)
+    templates = Jinja2Templates(directory=str(ASSETS / "templates"))
+    login_attempts = {}
+
+    @app.middleware("http")
+    async def headers(request, call_next):
+        if int(request.headers.get("content-length", "0") or 0) > 128000:
+            return Response(status_code=413)
+        # Bound streamed/chunked bodies too. Never log enrollment or device credentials.
+        if request.method == "POST" and len(await request.body()) > 128000:
+            return Response(status_code=413)
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
+        return response
+
+    def admin(request):
+        if request.session.get("admin") is not True:
+            raise HTTPException(401, "请登录管理后台。")
+
+    def csrf(request, value):
+        admin(request)
+        if not hmac.compare_digest(request.session.get("csrf", ""), value):
+            raise HTTPException(403, "表单令牌无效，请刷新页面。")
+
+    def device(request):
+        token = request.headers.get("authorization", "")
+        if not token.startswith("Bearer "):
+            raise HTTPException(401, "需要设备凭证。")
+        with db() as conn:
+            row = conn.execute("SELECT * FROM devices WHERE token_hash=?", (token_hash(token[7:]),)).fetchone()
+            if row is None or not row["enabled"]:
+                raise HTTPException(403, "设备已禁用或凭证无效。")
+            conn.execute("UPDATE devices SET last_seen=? WHERE id=?", (time.time(), row["id"]))
+            return row["id"]
+
+    @app.post("/api/register")
+    def register(payload: Register):
+        if not hmac.compare_digest(token_hash(payload.enrollmentToken), token_hash(config["enrollment_token"])):
+            raise HTTPException(403, "注册凭证无效。")
+        identifier = str(payload.deviceId)
+        credential = secrets.token_urlsafe(48)
+        with db() as conn:
+            if conn.execute("SELECT id FROM devices WHERE id=?", (identifier,)).fetchone():
+                raise HTTPException(409, "设备已注册；凭据丢失时请管理员重置设备注册。")
+            conn.execute("INSERT INTO devices(id,name,token_hash,version,last_seen) VALUES(?,?,?,?,?)", (identifier, payload.deviceName, token_hash(credential), payload.appVersion, time.time()))
+            conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), "register", identifier))
+        return {"deviceToken": credential}
+
+    def policy_for(identifier):
+        with db() as conn:
+            global_row = conn.execute("SELECT * FROM policies WHERE scope='all'").fetchone()
+            result = store.decode(global_row["payload"])
+            own = conn.execute("SELECT * FROM policies WHERE scope=?", (identifier,)).fetchone()
+            revision = global_row["revision"]
+            if own:
+                override = store.decode(own["payload"])
+                result["settings"].update(override.get("settings", {}))
+                for key, value in override.items():
+                    if key != "settings":
+                        result[key] = value
+                revision = max(revision, own["revision"])
+            result["revision"] = revision
+            return result
+
+    @app.get("/api/policy")
+    def policy(request: Request):
+        return policy_for(device(request))
+
+    @app.post("/api/telemetry")
+    def telemetry(request: Request, event: Telemetry):
+        identifier = device(request)
+        metrics = sanitize_metrics(event)
+        with db() as conn:
+            conn.execute("INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?)", (identifier, event.id, event.kind, event.occurredAt.isoformat(), event.appVersion, json.dumps(metrics, ensure_ascii=False)))
+            conn.execute("UPDATE devices SET version=? WHERE id=?", (event.appVersion, identifier))
+            # Bound diagnostic storage to the most recent 100000 events.
+            conn.execute("DELETE FROM events WHERE rowid IN (SELECT rowid FROM events ORDER BY rowid DESC LIMIT -1 OFFSET 100000)")
+        return {"accepted": True}
+
+    @app.get("/")
+    def index(request: Request):
+        if not request.session.get("admin"):
+            request.session.setdefault("login_csrf", secrets.token_urlsafe(24))
+            return templates.TemplateResponse(request=request, name="login.html", context={"csrf": request.session["login_csrf"], "organization": config["organization_name"]})
+        return RedirectResponse("/admin", 303)
+
+    @app.post("/login")
+    def login(request: Request, password: str = Form(...), form_token: str = Form(...)):
+        if not hmac.compare_digest(request.session.get("login_csrf", ""), form_token):
+            raise HTTPException(403, "请刷新登录页面。")
+        address = request.client.host
+        failures = login_attempts.get(address, [])
+        failures = [stamp for stamp in failures if stamp > time.time() - 300]
+        if len(failures) >= 8:
+            raise HTTPException(429, "请稍后重试。")
+        if not hmac.compare_digest(password_hash(password, config["password_salt"]), config["password_hash"]):
+            login_attempts[address] = failures + [time.time()]
+            raise HTTPException(401, "密码错误。")
+        login_attempts.pop(address, None)
+        request.session.clear()
+        request.session.update({"admin": True, "csrf": secrets.token_urlsafe(32)})
+        return RedirectResponse("/admin", 303)
+
+    @app.post("/logout")
+    def logout(request: Request, form_token: str = Form(...)):
+        csrf(request, form_token); request.session.clear()
+        return RedirectResponse("/", 303)
+
+    @app.get("/admin")
+    def dashboard(request: Request, scope: str = "all"):
+        admin(request)
+        with db() as conn:
+            clients = conn.execute("SELECT * FROM devices ORDER BY last_seen DESC").fetchall()
+            row = conn.execute("SELECT * FROM policies WHERE scope=?", (scope,)).fetchone()
+            events = conn.execute("SELECT device_id,kind,happened,version,metrics FROM events ORDER BY rowid DESC LIMIT 100").fetchall()
+        payload = store.decode(row["payload"]) if row else {}
+        # API keys stay out of HTML; an unchanged sentinel retains their encrypted value.
+        for name in ("cloudApiKey",):
+            if name in payload.get("settings", {}):
+                payload["settings"][name] = "__KEEP_SECRET__"
+        payload.pop("update", None)
+        return templates.TemplateResponse(request=request, name="admin.html", context={"organization": config["organization_name"], "clients": clients, "scope": scope, "policy": json.dumps(payload, ensure_ascii=False, indent=2), "csrf": request.session["csrf"], "features": FEATURES, "settings": list(SCHEMA), "events": events, "message": request.query_params.get("message", "")})
+
+    def scope_exists(conn, scope):
+        if scope != "all" and not conn.execute("SELECT id FROM devices WHERE id=?", (scope,)).fetchone():
+            raise HTTPException(404, "设备不存在。")
+
+    def write_policy(conn, scope, payload):
+        revision = time.time_ns() // 1000
+        conn.execute("INSERT INTO policies VALUES(?,?,?) ON CONFLICT(scope) DO UPDATE SET payload=excluded.payload, revision=excluded.revision", (scope, store.encode(payload), revision))
+
+    @app.post("/admin/policy")
+    def save_policy(request: Request, scope: str = Form(...), policy_json: str = Form(...), form_token: str = Form(...)):
+        csrf(request, form_token)
+        try:
+            payload = json.loads(policy_json)
+            with db() as conn:
+                scope_exists(conn, scope)
+                old_row = conn.execute("SELECT payload FROM policies WHERE scope=?", (scope,)).fetchone()
+                old = store.decode(old_row[0]) if old_row else {}
+                if isinstance(payload, dict) and isinstance(payload.get("settings"), dict) and payload["settings"].get("cloudApiKey") == "__KEEP_SECRET__":
+                    payload["settings"]["cloudApiKey"] = old.get("settings", {}).get("cloudApiKey", "")
+                validate_policy(payload)
+                if scope == "all":
+                    payload = DEFAULT_POLICY | payload
+                if old.get("update"):
+                    payload["update"] = old["update"]
+                write_policy(conn, scope, payload)
+                conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), "policy", scope))
+        except (ValueError, TypeError) as error:
+            raise HTTPException(422, str(error)) from None
+        return RedirectResponse("/admin?scope=" + scope + "&message=saved", 303)
+
+    @app.post("/admin/device")
+    def change_device(request: Request, device_id: str = Form(...), action: str = Form(...), form_token: str = Form(...)):
+        csrf(request, form_token)
+        with db() as conn:
+            scope_exists(conn, device_id)
+            if action in ("enable", "disable"):
+                conn.execute("UPDATE devices SET enabled=? WHERE id=?", (int(action == "enable"), device_id))
+            elif action == "reset":
+                conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
+            elif action == "inherit":
+                conn.execute("DELETE FROM policies WHERE scope=?", (device_id,))
+            else:
+                raise HTTPException(422, "未知操作。")
+            conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), action, device_id))
+        return RedirectResponse("/admin", 303)
+
+    @app.get("/admin/enrollment.yaml")
+    def enrollment(request: Request):
+        admin(request)
+        private = serialization.load_pem_private_key(config["signing_key"].encode(), None)
+        public = base64.b64encode(private.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).decode()
+        # JSON quoted strings are valid YAML scalars, including names containing punctuation.
+        values = {"schema_version": 1, "organization_name": config["organization_name"], "server_url": config["public_url"], "enrollment_token": config["enrollment_token"], "update_public_key": public, "poll_seconds": 60}
+        body = "\n".join(key + ": " + json.dumps(value, ensure_ascii=False) for key, value in values.items()) + "\n"
+        return Response(body, media_type="application/yaml", headers={"Content-Disposition": 'attachment; filename="il_mdn_config.yaml"'})
+
+    @app.post("/admin/update")
+    def publish_update(request: Request, scope: str = Form(...), mode: str = Form(...), version: str = Form(...), url: str = Form(...), sha256: str = Form(...), size: int = Form(...), form_token: str = Form(...)):
+        csrf(request, form_token)
+        import re
+        try:
+            valid_url(url)
+            if mode not in ("ota", "cold") or not re.fullmatch(r"\d+\.\d+\.\d+", version) or not re.fullmatch(r"[a-fA-F0-9]{64}", sha256) or not 0 < size <= 2 * 1024**3:
+                raise ValueError("更新字段无效。")
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+        update = {"id": str(uuid.uuid4()), "mode": mode, "version": version, "url": url, "sha256": sha256.lower(), "size": size}
+        private = serialization.load_pem_private_key(config["signing_key"].encode(), None)
+        update["signature"] = base64.b64encode(private.sign(canonical(update), padding.PKCS1v15(), hashes.SHA256())).decode()
+        with db() as conn:
+            scope_exists(conn, scope)
+            row = conn.execute("SELECT payload FROM policies WHERE scope=?", (scope,)).fetchone()
+            payload = store.decode(row[0]) if row else {}
+            payload["update"] = update
+            write_policy(conn, scope, payload)
+            conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), "update", scope))
+        return RedirectResponse("/admin?scope=" + scope + "&message=update", 303)
+
+    @app.post("/admin/update/cancel")
+    def cancel_update(request: Request, scope: str = Form(...), form_token: str = Form(...)):
+        csrf(request, form_token)
+        with db() as conn:
+            scope_exists(conn, scope)
+            row = conn.execute("SELECT payload FROM policies WHERE scope=?", (scope,)).fetchone()
+            payload = store.decode(row[0]) if row else {}
+            payload["update"] = None
+            write_policy(conn, scope, payload)
+        return RedirectResponse("/admin?scope=" + scope, 303)
+
+    return app
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data", type=Path, default=(Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent) / "data")
+    parser.add_argument("--init", action="store_true")
+    args = parser.parse_args()
+    path = args.data / "config.bin"
+    store = SecretStore()
+    if args.init:
+        if path.exists():
+            raise SystemExit("已有配置，请备份后处理；初始化不会覆盖。")
+        organization = input("组织名称：").strip()
+        url = input("客户端访问的 HTTPS 地址（如 https://mdn.school.edu:8443/）：").strip()
+        valid_url(url)
+        password = getpass.getpass("管理员密码（至少 12 位）：")
+        if len(password) < 12 or password != getpass.getpass("再次输入：") or not organization:
+            raise SystemExit("组织名称或密码无效。")
+        cert = str(Path(input("TLS 证书 PEM 文件路径：").strip()).resolve())
+        key = str(Path(input("TLS 私钥 PEM 文件路径：").strip()).resolve())
+        if not Path(cert).is_file() or not Path(key).is_file():
+            raise SystemExit("TLS 文件不存在。")
+        salt = secrets.token_hex(16)
+        private = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+        config = {"organization_name": organization, "public_url": url.rstrip("/") + "/", "enrollment_token": secrets.token_urlsafe(48), "password_salt": salt, "password_hash": password_hash(password, salt), "session_secret": secrets.token_urlsafe(48), "signing_key": private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode(), "cert": cert, "key": key, "port": urlparse(url).port or 443}
+        args.data.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(store.encode(config))
+        print("初始化完成。再次启动程序后，登录后台下载注册 YAML。")
+        return
+    if not path.exists():
+        raise SystemExit("请先执行 MDN.Server.exe --init。")
+    config = store.decode(path.read_bytes())
+    print("管理后台：" + config["public_url"])
+    uvicorn.run(create_app(args.data, config, store), host="0.0.0.0", port=config["port"], ssl_certfile=config["cert"], ssl_keyfile=config["key"], access_log=False)
+
+
+if __name__ == "__main__":
+    main()

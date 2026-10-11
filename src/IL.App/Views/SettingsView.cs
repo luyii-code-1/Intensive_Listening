@@ -181,7 +181,7 @@ public sealed class SettingsView : UserControl
         if (Application.Current != null) Application.Current.RequestedThemeVariant = settings.ThemeMode switch { "dark" => ThemeVariant.Dark, "light" => ThemeVariant.Light, _ => ThemeVariant.Default };
     }
     private sealed record SettingsCategory(string Title, string Icon, Control Content);
-    private static Control CategoryPage(string title, string description, params Control[] settings)
+    private static StackPanel CategoryPage(string title, string description, params Control[] settings)
     {
         var page = new StackPanel { MaxWidth = 1040, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
         page.Children.Add(new StackPanel { Spacing = 4, Children = { WorkspaceUi.Text(title, 20, true), WorkspaceUi.Text(description, 12) } });

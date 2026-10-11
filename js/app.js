@@ -193,10 +193,33 @@ class IntensiveListeningApp {
     // Navigation Back
     this.dom.backBtn.addEventListener('click', () => this.returnToHome());
 
+    // Safari / WebKit 原生文件选择器兼容性优化:
+    // macOS 与 iOS 的 Uniform Type Identifiers (UTI) 体系中，.ilp 为未经系统声明的动态类型 (dyn.ah...)，
+    // 且系统不认为其遵循 com.pkware.zip-archive。
+    // 当原生文件选择器 (NSOpenPanel / UIDocumentPicker) 接收到带有 accept 限制的文件输入框时，
+    // 会将 .ilp 文件置灰禁用导致用户无法选择。
+    // 在 Apple 平台或 Safari 环境下，移除 accept 限制以允许拾取全部文件，
+    // 并统一由客户端通过 JSZip 进行严格的文件头、manifest.json 及音轨解析校验。
+    const isApplePlatform = /Macintosh|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+                            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    const ensurePickerAcceptCompatibility = () => {
+      if ((isApplePlatform || isSafari) && this.dom.ilpFileInput) {
+        this.dom.ilpFileInput.removeAttribute('accept');
+      }
+    };
+    ensurePickerAcceptCompatibility();
+
     // File selection triggers
-    this.dom.btnImportIlp.addEventListener('click', () => this.dom.ilpFileInput.click());
+    this.dom.btnImportIlp.addEventListener('click', () => {
+      ensurePickerAcceptCompatibility();
+      this.dom.ilpFileInput.click();
+    });
     this.dom.btnOpenAudio.addEventListener('click', () => this.dom.audioFileInput.click());
-    this.dom.btnEmptyImport.addEventListener('click', () => this.dom.ilpFileInput.click());
+    this.dom.btnEmptyImport.addEventListener('click', () => {
+      ensurePickerAcceptCompatibility();
+      this.dom.ilpFileInput.click();
+    });
     this.dom.btnEmptyOpenAudio.addEventListener('click', () => this.dom.audioFileInput.click());
     this.dom.btnEmptyLoadSample.addEventListener('click', () => this.loadSampleLesson());
 
@@ -460,8 +483,45 @@ class IntensiveListeningApp {
     await this.processFile(file, type);
   }
 
+  async loadStandaloneAudio(file) {
+    const audioUrl = URL.createObjectURL(file);
+    const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+    this.reportTelemetryEvent('open_audio', { filename: file.name });
+    const standaloneRecord = {
+      id: 'audio-' + Date.now(),
+      manifest: {
+        title: nameWithoutExt,
+        packageUuid: 'audio-' + Date.now(),
+        packageVersion: 1,
+        audioPath: file.name,
+        transcriptPath: '',
+        durationMs: 0,
+        exercises: { materials: [], questions: [], clozeWordIndexes: {} }
+      },
+      cues: [],
+      audioBlob: file,
+      audioUrl,
+      lastOpenedAt: Date.now(),
+      progressPosition: 0,
+      revealedCloze: []
+    };
+    await this.loadLesson(standaloneRecord);
+  }
+
   async processFile(file, hintType = null) {
-    const isIlp = file.name.toLowerCase().endsWith('.ilp') || hintType === 'ilp';
+    const fileName = file.name || '';
+    const lowerName = fileName.toLowerCase();
+    const isAudioExt = /\.(mp3|wav|m4a|aac|ogg|flac|webm)$/i.test(lowerName) || (file.type && file.type.startsWith('audio/'));
+    const isZipOrIlp = lowerName.endsWith('.ilp') || lowerName.endsWith('.zip');
+
+    // 容错处理：若用户在“导入精听包”时误选了音频文件，给出友好提示并自动按纯音频模式播放
+    if (hintType === 'ilp' && isAudioExt && !isZipOrIlp) {
+      this.showAlert('提示', `您选择的是音频文件 “${fileName}”。已自动为您按本地音频载入播放。如需听写练习与同步字幕，请导入配套的 .ilp 精听包。`);
+      await this.loadStandaloneAudio(file);
+      return;
+    }
+
+    const isIlp = isZipOrIlp || hintType === 'ilp';
     try {
       if (isIlp) {
         const parsed = await parseIlpPackage(file);
@@ -479,32 +539,14 @@ class IntensiveListeningApp {
         this.reportTelemetryEvent('import_ilp', { title: parsed.manifest.title, cuesCount: parsed.cues.length });
         await this.loadLesson(lessonRecord);
       } else {
-        // Standalone Audio File
-        const audioUrl = URL.createObjectURL(file);
-        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
-        this.reportTelemetryEvent('open_audio', { filename: file.name });
-        const standaloneRecord = {
-          id: 'audio-' + Date.now(),
-          manifest: {
-            title: nameWithoutExt,
-            packageUuid: 'audio-' + Date.now(),
-            packageVersion: 1,
-            audioPath: file.name,
-            transcriptPath: '',
-            durationMs: 0,
-            exercises: { materials: [], questions: [], clozeWordIndexes: {} }
-          },
-          cues: [],
-          audioBlob: file,
-          audioUrl,
-          lastOpenedAt: Date.now(),
-          progressPosition: 0,
-          revealedCloze: []
-        };
-        await this.loadLesson(standaloneRecord);
+        await this.loadStandaloneAudio(file);
       }
     } catch (err) {
-      this.showAlert('文件解析失败', err.message || err);
+      let message = err.message || String(err);
+      if (message.includes("Can't find end of central directory") || message.includes("corrupted zip")) {
+        message = `选中的文件 “${fileName}” 不是有效的 .ilp 精听包（或文件已损坏）。\n请确保选择的是完整的 .ilp 格式精听包文件。`;
+      }
+      this.showAlert('文件解析失败', message);
     }
   }
 
@@ -1659,8 +1701,8 @@ class IntensiveListeningApp {
 
   reportTelemetryEvent(name, properties = {}) {
     const payload = {
-      app_version: '1.0.1+8',
-      commit_id: '6d0f5ac',
+      app_version: '1.0.1+9',
+      commit_id: '274b776',
       ...properties,
       timestamp: Date.now()
     };

@@ -1,4 +1,6 @@
 using YamlDotNet.Serialization;
+using System.Net.Security;
+using System.Security.Cryptography;
 using YamlDotNet.Serialization.NamingConventions;
 namespace IL.Core.Management;
 
@@ -10,6 +12,18 @@ public sealed class MdnConfiguration
     public string EnrollmentToken { get; set; } = "";
     public string UpdatePublicKey { get; set; } = "";
     public int PollSeconds { get; set; } = 60;
+    public string ServerCertificateSha256 { get; set; } = "";
+    public static HttpClientHandler CreateHttpHandler(string certificatePin="")
+    {
+        var handler=new HttpClientHandler{AllowAutoRedirect=false};
+        if(!string.IsNullOrWhiteSpace(certificatePin))
+        {
+            var expected=Convert.FromHexString(certificatePin);
+            if(expected.Length!=32)throw new FormatException("服务器证书指纹必须为 SHA-256。");
+            handler.ServerCertificateCustomValidationCallback=(_,certificate,_,errors)=>certificate is not null && CryptographicOperations.FixedTimeEquals(SHA256.HashData(certificate.RawData),expected);
+        }
+        return handler;
+    }
     public Uri Server => new(ServerUrl.TrimEnd('/') + "/");
     public static MdnConfiguration? Load(string root)
     {
@@ -23,6 +37,7 @@ public sealed class MdnConfiguration
             !Uri.TryCreate(configuration.ServerUrl, UriKind.Absolute, out var server) || server.Scheme != "https" ||
             !string.IsNullOrEmpty(server.UserInfo) || !string.IsNullOrEmpty(server.Query) || !string.IsNullOrEmpty(server.Fragment))
             throw new FormatException("集控配置需要组织名称、HTTPS 服务器地址和注册凭证。");
+        if(configuration.ServerCertificateSha256.Length>0 && (configuration.ServerCertificateSha256.Length!=64 || !configuration.ServerCertificateSha256.All(Uri.IsHexDigit)))throw new FormatException("服务器证书指纹无效。");
         configuration.PollSeconds = Math.Clamp(configuration.PollSeconds, 15, 3600);
         return configuration;
     }

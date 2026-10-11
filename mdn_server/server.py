@@ -15,7 +15,12 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import ipaddress
+import shutil
+import socket
+from cryptography import x509
+from cryptography.x509.oid import NameOID
 from urllib.parse import urlparse
 
 import uvicorn
@@ -167,7 +172,8 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
         conn.execute("INSERT OR IGNORE INTO policies VALUES(?,?,?)", ("all", store.encode(DEFAULT_POLICY), 1))
     app = FastAPI(title="Intensive Listening MDN", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=True, same_site="strict", max_age=3600)
-    templates = Jinja2Templates(directory=str(ASSETS / "templates"))
+    template_directory = root / "web" / "templates"
+    templates = Jinja2Templates(directory=str(template_directory if template_directory.exists() else ASSETS / "templates"))
     login_attempts = {}
 
     @app.middleware("http")
@@ -344,7 +350,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
         private = serialization.load_pem_private_key(config["signing_key"].encode(), None)
         public = base64.b64encode(private.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).decode()
         # JSON quoted strings are valid YAML scalars, including names containing punctuation.
-        values = {"schema_version": 1, "organization_name": config["organization_name"], "server_url": config["public_url"], "enrollment_token": config["enrollment_token"], "update_public_key": public, "poll_seconds": 60}
+        values = {"schema_version": 1, "organization_name": config["organization_name"], "server_url": config["public_url"], "enrollment_token": config["enrollment_token"], "update_public_key": public, "poll_seconds": 60, "server_certificate_sha256": config.get("certificate_sha256", "")}
         body = "\n".join(key + ": " + json.dumps(value, ensure_ascii=False) for key, value in values.items()) + "\n"
         return Response(body, media_type="application/yaml", headers={"Content-Disposition": 'attachment; filename="il_mdn_config.yaml"'})
 
@@ -384,39 +390,94 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
     return app
 
 
+def initialize(root: Path, organization: str, url: str, password: str, store: SecretStore):
+    valid_url(url)
+    if not organization or len(password) < 12:
+        raise ValueError("组织名称不能为空，管理员密码至少 12 位。")
+    root.mkdir(parents=True, exist_ok=True)
+    config_path = root / "config.bin"
+    if config_path.exists():
+        raise ValueError("已有配置，初始化不会覆盖。")
+    tls = root / "tls"
+    tls.mkdir(exist_ok=True)
+    hostname = urlparse(url).hostname
+    names = [x509.DNSName("localhost")]
+    try:
+        names.append(x509.IPAddress(ipaddress.ip_address(hostname)))
+    except ValueError:
+        names.append(x509.DNSName(hostname))
+    private = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
+    now = datetime.now(timezone.utc)
+    certificate = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
+        .public_key(private.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5)).not_valid_after(now + timedelta(days=3650))
+        .add_extension(x509.SubjectAlternativeName(names), critical=False)
+        .sign(private, hashes.SHA256()))
+    tls_password = secrets.token_urlsafe(48)
+    (tls / "server.crt").write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    (tls / "server.key").write_bytes(private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.BestAvailableEncryption(tls_password.encode())))
+    signing = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    salt = secrets.token_hex(16)
+    config = {"organization_name": organization, "public_url": url.rstrip("/") + "/",
+        "enrollment_token": secrets.token_urlsafe(48), "password_salt": salt,
+        "password_hash": password_hash(password, salt), "session_secret": secrets.token_urlsafe(48),
+        "signing_key": signing.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode(),
+        "tls_password": tls_password, "certificate_sha256": certificate.fingerprint(hashes.SHA256()).hex(),
+        "cert": str((tls / "server.crt").resolve()), "key": str((tls / "server.key").resolve()),
+        "port": urlparse(url).port or 443}
+    shutil.copytree(ASSETS / "templates", root / "web" / "templates", dirs_exist_ok=True)
+    (root / "settings-schema.json").write_bytes((ASSETS / "settings-schema.json").read_bytes())
+    (root / "server.json").write_text(json.dumps({"public_url": config["public_url"], "host": "0.0.0.0", "port": config["port"]}, ensure_ascii=False, indent=2), encoding="utf-8")
+    config_path.write_bytes(store.encode(config))
+    return config
+
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=Path, default=(Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent) / "data")
-    parser.add_argument("--init", action="store_true")
+    parser = argparse.ArgumentParser(description="MDN 集控服务：运行目录中自动建立 data，控制台持续运行。")
+    parser.add_argument("--data", type=Path, default=Path.cwd() / "data")
+    parser.add_argument("--init", action="store_true", help="完成首次配置后退出")
     args = parser.parse_args()
+    args.data = args.data.resolve()
     path = args.data / "config.bin"
     store = SecretStore()
-    if args.init:
-        if path.exists():
-            raise SystemExit("已有配置，请备份后处理；初始化不会覆盖。")
-        organization = input("组织名称：").strip()
-        url = input("客户端访问的 HTTPS 地址（如 https://mdn.school.edu:8443/）：").strip()
-        valid_url(url)
-        password = getpass.getpass("管理员密码（至少 12 位）：")
-        if len(password) < 12 or password != getpass.getpass("再次输入：") or not organization:
-            raise SystemExit("组织名称或密码无效。")
-        cert = str(Path(input("TLS 证书 PEM 文件路径：").strip()).resolve())
-        key = str(Path(input("TLS 私钥 PEM 文件路径：").strip()).resolve())
-        if not Path(cert).is_file() or not Path(key).is_file():
-            raise SystemExit("TLS 文件不存在。")
-        salt = secrets.token_hex(16)
-        private = rsa.generate_private_key(public_exponent=65537, key_size=3072)
-        config = {"organization_name": organization, "public_url": url.rstrip("/") + "/", "enrollment_token": secrets.token_urlsafe(48), "password_salt": salt, "password_hash": password_hash(password, salt), "session_secret": secrets.token_urlsafe(48), "signing_key": private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode(), "cert": cert, "key": key, "port": urlparse(url).port or 443}
-        args.data.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(store.encode(config))
-        print("初始化完成。再次启动程序后，登录后台下载注册 YAML。")
-        return
+    print("Intensive Listening MDN")
+    print("数据目录：" + str(args.data))
+    if args.init and path.exists():
+        raise ValueError("已有配置，初始化不会覆盖。")
     if not path.exists():
-        raise SystemExit("请先执行 MDN.Server.exe --init。")
+        print("首次运行：设置组织和管理员账号。TLS 证书与设备注册凭证将自动生成。")
+        organization = input("组织名称：").strip()
+        default_url = "https://" + socket.gethostname() + ":8443/"
+        url = input("客户端访问地址 [" + default_url + "]：").strip() or default_url
+        password = getpass.getpass("管理员密码（至少 12 位）：")
+        if password != getpass.getpass("再次输入："):
+            raise ValueError("两次密码不一致。")
+        initialize(args.data, organization, url, password, store)
+        print("初始化完成。配置与管理页面已展开到 data。")
+        if args.init:
+            return
     config = store.decode(path.read_bytes())
+    public_path = args.data / "server.json"
+    public = json.loads(public_path.read_text(encoding="utf-8-sig")) if public_path.exists() else {}
+    config["public_url"] = public.get("public_url", config["public_url"])
+    valid_url(config["public_url"])
+    port = int(public.get("port", config["port"]))
     print("管理后台：" + config["public_url"])
-    uvicorn.run(create_app(args.data, config, store), host="0.0.0.0", port=config["port"], ssl_certfile=config["cert"], ssl_keyfile=config["key"], access_log=False)
+    print("本机访问：https://localhost:" + str(port) + "/")
+    print("自动证书首次访问可能显示浏览器证书提示；客户端通过注册 YAML 中的证书指纹验证。")
+    print("保持此控制台运行；Ctrl+C 停止服务。")
+    uvicorn.run(create_app(args.data, config, store), host=public.get("host", "0.0.0.0"), port=port,
+        ssl_certfile=config["cert"], ssl_keyfile=config["key"], ssl_keyfile_password=config.get("tls_password"), access_log=False)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("服务已停止。")
+    except Exception as error:
+        print("启动失败：" + str(error))
+        if sys.stdin.isatty():
+            input("按 Enter 退出。")
+        raise SystemExit(1)

@@ -83,8 +83,7 @@ begin
   if not ValidDeviceId(Value) then RegQueryStringValue(HKCU, 'Software\Intensive Listening', 'InstallUuid', Value);
   if not ValidDeviceId(Value) then begin
     if CoCreateGuid(Device) <> 0 then RaiseException('无法生成设备 UUID。');
-    Value := Lowercase(Format('%.8x-%.4x-%.4x-%.2x%.2x-%.2x%.2x%.2x%.2x%.2x%.2x',
-      [Device.D1, Device.D2, Device.D3, Device.D4[0], Device.D4[1], Device.D4[2], Device.D4[3], Device.D4[4], Device.D4[5], Device.D4[6], Device.D4[7]]));
+    Value := Lowercase(Format('%.8x-%.4x-%.4x-%.2x%.2x-%.2x%.2x%.2x%.2x%.2x%.2x', [Device.D1, Device.D2, Device.D3, Device.D4[0], Device.D4[1], Device.D4[2], Device.D4[3], Device.D4[4], Device.D4[5], Device.D4[6], Device.D4[7]]));
   end;
   if not SaveStringToFile(AddBackslash(DataPath) + 'device-id.txt', Value, False) then RaiseException('无法保存设备 UUID。');
   if not RegWriteStringValue(HKLM64, 'Software\Intensive Listening', 'InstallUuid', Value) then RaiseException('无法同步设备 UUID。');

@@ -9,7 +9,7 @@ import uuid
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi.testclient import TestClient
-from server import SecretStore, canonical, create_app, password_hash
+from server import SecretStore, canonical, create_app, password_hash, initialize
 
 
 class ManagementTests(unittest.TestCase):
@@ -88,6 +88,17 @@ class ManagementTests(unittest.TestCase):
         from contextlib import closing
         with closing(sqlite3.connect(self.root / "mdn.sqlite3")) as connection:
             self.assertEqual(connection.execute("SELECT count(*) FROM events").fetchone()[0], 1)
+
+    def test_first_run_expands_assets_and_keeps_existing_identity(self):
+        bootstrap=self.root/"bootstrap"
+        config=initialize(bootstrap,"Test school","https://127.0.0.1:8443/","test-password-123",SecretStore())
+        self.assertTrue((bootstrap/"web/templates/admin.html").is_file())
+        self.assertTrue((bootstrap/"tls/server.crt").is_file())
+        self.assertTrue((bootstrap/"server.json").is_file())
+        self.assertEqual(len(config["certificate_sha256"]),64)
+        encrypted=(bootstrap/"config.bin").read_bytes()
+        with self.assertRaises(ValueError):initialize(bootstrap,"Other school","https://127.0.0.1:8443/","test-password-123",SecretStore())
+        self.assertEqual(encrypted,(bootstrap/"config.bin").read_bytes())
 
     def test_dpapi_roundtrip(self):
         store = SecretStore()

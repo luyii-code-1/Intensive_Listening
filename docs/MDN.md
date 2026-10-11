@@ -4,13 +4,17 @@
 
 ## Windows 服务端部署
 
-1. 在开发电脑安装 Python 3.13，执行 `powershell -NoProfile -ExecutionPolicy Bypass -File mdn_server\build-windows.ps1`。脚本生成 `mdn_server\dist\MDN.Server.exe`。部署服务器运行此文件即可；Python 与依赖随文件打包。
-2. 将 EXE 放到专用目录，准备 HTTPS 证书 PEM 和私钥 PEM。客户端访问地址的主机名必须与证书匹配。使用内部 CA 时，先将 CA 根证书加入客户端 Windows 信任库。
-3. 执行 `MDN.Server.exe --init`，填写组织名、公开 HTTPS 地址、管理员密码和 TLS 文件路径。共享注册凭证、会话密钥和 RSA 更新签名密钥自动生成。
-4. 执行 `MDN.Server.exe`，按显示的 HTTPS 地址访问管理页面。防火墙允许对应端口入站。服务默认监听 `0.0.0.0`，可用 Windows 任务计划程序以原账号开机启动。
-5. 登录管理后台，下载 `il_mdn_config.yaml`，将它放在客户端安装包同目录后运行安装器。
+1. 将 `MDN.Server.exe` 放到专用工作目录并直接运行。程序保持控制台（conhost）运行，在**当前工作目录**建立 `data`；运行环境随 EXE 打包。
+2. 首次运行在控制台填写组织名、客户端访问地址和管理员密码。地址默认 `https://计算机名:8443/`，也可以填写服务器局域网 IP 或域名。
+3. 程序自动生成 HTTPS 证书、注册凭证、签名密钥、SQLite 数据库，并展开管理页面，初始化后直接启动服务。
+4. 按控制台显示的地址登录后台。自动证书首次访问可能显示浏览器证书提示；客户端使用注册 YAML 中的证书指纹验证该证书。
+5. 下载 `il_mdn_config.yaml`，放到客户端安装包同目录后运行安装器。防火墙允许对应端口入站。
 
-默认服务数据目录位于 EXE 同目录的 `data`；可使用 `--data D:\MDN\data` 指定位置。首次初始化与后续启动须使用同一目录和 Windows 账号，DPAPI 加密数据绑定该账号。备份整个服务 data 目录并保留该账号的 Windows 密钥。初始化不会覆盖已有配置。
+关闭控制台或 Ctrl+C 可停止服务；再次运行沿用同目录配置和数据。公开监听参数在 `data/server.json`，页面在 `data/web/templates`，TLS 文件在 `data/tls`，秘密配置在 DPAPI 加密的 `data/config.bin`。TLS 私钥也使用随机密码加密，密码保存在 DPAPI 配置中。
+
+`--data D:\MDN\data` 可指定数据目录；`--init` 只执行首次初始化。服务默认监听 `0.0.0.0`，可用任务计划程序以原账号、原工作目录开机启动。备份整个 data，并保留运行账号的 Windows 密钥；初始化不会覆盖已有配置。
+
+开发电脑打包命令：`powershell -NoProfile -ExecutionPolicy Bypass -File mdn_server\build-windows.ps1`，生成 `mdn_server/dist/MDN.Server.exe`。
 
 ## YAML 文件格式
 
@@ -21,9 +25,10 @@ server_url: "https://mdn.example.edu:8443/"
 enrollment_token: "后台生成的组织共享注册凭证"
 update_public_key: "后台生成的 RSA 公钥，SPKI DER Base64"
 poll_seconds: 60
+server_certificate_sha256: "后台生成的服务器证书 SHA-256 指纹"
 ```
 
-安装器将 YAML 复制到 `%LOCALAPPDATA%\Intensive Listening\data\il_mdn_config.yaml`；已有配置保留。应用读取 data 中的文件。组织名、HTTPS 地址和共享注册凭证必填；更新功能需要公钥。轮询间隔允许 15–3600 秒，每次网络请求超时 10 秒。
+安装器将 YAML 复制到 `%LOCALAPPDATA%\Intensive Listening\data\il_mdn_config.yaml`；已有配置保留。应用读取 data 中的文件。组织名、HTTPS 地址和共享注册凭证必填；更新功能需要公钥。自动证书通过 `server_certificate_sha256` 固定指纹验证，错误指纹会拒绝连接；省略该字段时使用系统证书信任。轮询间隔允许 15–3600 秒，每次网络请求超时 10 秒。
 
 YAML 含共享注册凭证，分发给组织的安装环境。注册时生成独立设备凭证，服务端仅保存其 SHA-256；客户端使用 DPAPI 保存凭证和策略缓存，之后以设备凭证请求策略和发送诊断。相同 UUID 再次注册会被拒绝，以防覆盖已有设备凭证。凭据丢失时，管理员选择“重置设备注册”，客户端退出后删除 `data\mdn\state.bin` 再启动。
 

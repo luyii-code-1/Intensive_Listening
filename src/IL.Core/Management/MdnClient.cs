@@ -28,6 +28,7 @@ public sealed class MdnClient : IAsyncDisposable
         {
             Configuration = MdnConfiguration.Load(root);
             if (Configuration is null) return;
+            _http.Dispose();_http=new(MdnConfiguration.CreateHttpHandler(Configuration.ServerCertificateSha256)){Timeout=TimeSpan.FromSeconds(10)};
             Status = "等待连接集控服务器";
             Directory.CreateDirectory(_root);
             var saved = Path.Combine(_root, "state.bin");

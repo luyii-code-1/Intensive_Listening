@@ -26,7 +26,7 @@ public sealed class ManagedUpdater(MdnClient client, string data) : IDisposable
             var attempt = Path.Combine(Root, update.Id + ".attempt");
             if (_ready?.Id == update.Id) return;
             Status = "正在下载并校验组织更新…"; Changed?.Invoke();
-            var download = new ManagedUpdateDownloader(Root, client.Configuration.UpdatePublicKey);
+            var download = new ManagedUpdateDownloader(Root, client.Configuration.UpdatePublicKey,client.Configuration.ServerCertificateSha256);
             var file = await download.DownloadAsync(update, _stop.Token);
             if(update.Id!=client.Policy.Update?.Id||!ManagedRuntime.Allows("updates"))return;
             _file=file; _ready = update;
@@ -41,7 +41,7 @@ public sealed class ManagedUpdater(MdnClient client, string data) : IDisposable
     {
         ManagedRuntime.Require("updates");
         if (_ready is null || _file is null || _ready.Id != client.Policy.Update?.Id) throw new InvalidOperationException("没有已校验的安装包。");
-        await new ManagedUpdateDownloader(Root, client.Configuration!.UpdatePublicKey).VerifyAsync(_file, _ready, _stop.Token);
+        await new ManagedUpdateDownloader(Root, client.Configuration!.UpdatePublicKey,client.Configuration.ServerCertificateSha256).VerifyAsync(_file, _ready, _stop.Token);
         var helper = Path.Combine(Root, "install-update.ps1");
         File.Copy(Path.Combine(AppContext.BaseDirectory, "tools", "install-update.ps1"), helper, true);
         var plan = Path.Combine(Root, "plan.json");

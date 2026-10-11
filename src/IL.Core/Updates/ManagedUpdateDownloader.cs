@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 using IL.Core.Management;
 namespace IL.Core.Updates;
 
-public sealed class ManagedUpdateDownloader(string root, string publicKey)
+public sealed class ManagedUpdateDownloader(string root, string publicKey, string certificatePin="")
 {
     public void Validate(ManagedUpdate update)
     {
@@ -18,7 +18,7 @@ public sealed class ManagedUpdateDownloader(string root, string publicKey)
         Validate(update); Directory.CreateDirectory(root);
         var path = Path.Combine(root, Guid.Parse(update.Id).ToString("N") + ".exe");
         if (File.Exists(path)) { try { await VerifyAsync(path, update, ct); return path; } catch (InvalidOperationException) { File.Delete(path); } }
-        using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
+        using var http = new HttpClient(MdnConfiguration.CreateHttpHandler(certificatePin)) { Timeout = Timeout.InfiniteTimeSpan };
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(TimeSpan.FromMinutes(20));
         var part = path + ".part";
         try

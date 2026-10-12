@@ -24,6 +24,14 @@
 
 ## YAML 文件格式
 
+### HTTP 模式
+
+默认使用 HTTPS。可信内网可运行 `MDN.Server.exe --disable_ssl`，或在现有 `data/server.json` 中加入 `"disable_ssl": true` 后重启。启动参数优先开启 HTTP，本次启动沿用配置中的端口（默认 8443）；控制台和后台导出的连接地址自动使用 HTTP。HTTP 模式无需读取 TLS 证书或私钥，管理员登录会使用适用于 HTTP 的会话 Cookie。
+
+客户端可在“设置 → 组织管理”勾选“使用 HTTP（禁用 SSL）”。已加入管理的客户端可点击“应用连接方式并重连”，沿用设备 UUID、凭证和策略缓存。切回 HTTPS 时重新核对证书指纹；签名公钥必须与原组织一致。
+
+HTTP 模式导出的 YAML 包含 `disable_ssl: true`、`server_url: "http://IP:端口/"` 和空的 `server_certificate_sha256`。客户端明确选择 HTTP 后确认明文传输风险。注册凭证、策略、遥测与 API 配置的传输不加密；本地敏感缓存仍使用 DPAPI。组织更新允许 HTTP 或 HTTPS 下载，签名、大小和 SHA-256 校验始终执行。
+
 ```yaml
 schema_version: 1
 organization_name: "示例学校"
@@ -32,9 +40,10 @@ enrollment_token: "后台生成的组织共享注册凭证"
 update_public_key: "后台生成的 RSA 公钥，SPKI DER Base64"
 poll_seconds: 60
 server_certificate_sha256: "后台生成的服务器证书 SHA-256 指纹"
+disable_ssl: false
 ```
 
-安装器将 YAML 复制到 `%LOCALAPPDATA%\Intensive Listening\data\il_mdn_config.yaml`；已有配置保留。应用读取 data 中的文件。组织名、HTTPS 地址和共享注册凭证必填；更新功能需要公钥。自动证书通过 `server_certificate_sha256` 固定指纹验证，错误指纹会拒绝连接；省略该字段时使用系统证书信任。轮询间隔允许 15–3600 秒，每次网络请求超时 10 秒。
+安装器将 YAML 复制到 `%LOCALAPPDATA%\Intensive Listening\data\il_mdn_config.yaml`；已有配置保留。应用读取 data 中的文件。组织名、服务器地址和共享注册凭证必填；协议需与 disable_ssl 一致，省略时默认 HTTPS。更新功能需要公钥。自动证书通过 `server_certificate_sha256` 固定指纹验证，错误指纹会拒绝连接；省略该字段时使用系统证书信任。轮询间隔允许 15–3600 秒，每次网络请求超时 10 秒。
 
 YAML 含共享注册凭证，分发给组织的安装环境。注册时生成独立设备凭证，服务端仅保存其 SHA-256；客户端使用 DPAPI 保存凭证和策略缓存，之后以设备凭证请求策略和发送诊断。相同 UUID 再次注册会被拒绝，以防覆盖已有设备凭证。凭据丢失时，管理员选择“重置设备注册”，客户端退出后删除 `data\mdn\state.bin` 再启动。
 
@@ -94,7 +103,7 @@ OOBE 顶部显示组织名。主窗口顶部显示组织名和设备 UUID 最后
 
 普通更新检查每次启动异步访问本仓库 GitHub `/releases/latest`，只读 Latest；10 秒超时显示失败。设置“隐私与关于”中显示结果，并提供手动检查和发布页面入口。
 
-组织更新在后台选择全局或单机范围，填写版本、HTTPS 安装包直链、SHA-256 和字节数。安装包使用本项目的 Windows 安装器。服务器以 RSA PKCS#1 v1.5 / SHA-256 签名如下 UTF-8 内容（换行分隔，无末尾换行）：
+组织更新在后台选择全局或单机范围，填写版本、HTTP/HTTPS 安装包直链、SHA-256 和字节数。安装包使用本项目的 Windows 安装器。服务器以 RSA PKCS#1 v1.5 / SHA-256 签名如下 UTF-8 内容（换行分隔，无末尾换行）：
 
 ```text
 id

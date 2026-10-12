@@ -53,7 +53,7 @@ public sealed class MdnClient : IAsyncDisposable
         {
             ServerUrl = server.AbsoluteUri, OrganizationName = identity.OrganizationName,
             EnrollmentToken = enrollmentToken.Trim(), UpdatePublicKey = identity.UpdatePublicKey,
-            ServerCertificateSha256 = identity.CertificateSha256
+            ServerCertificateSha256 = identity.CertificateSha256, DisableSsl = server.Scheme == "http"
         };
         var handler = MdnConfiguration.CreateHttpHandler(configuration.ServerCertificateSha256);
         Directory.CreateDirectory(_root);
@@ -69,6 +69,27 @@ public sealed class MdnClient : IAsyncDisposable
             Status = "集控连接失败，请检查地址与注册凭证后重试"; Changed?.Invoke(); throw;
         }
         finally { Start(); }
+    }
+    public async Task ChangeTransportAsync(bool disableSsl, string certificatePin = "", CancellationToken ct = default)
+    {
+        await _request.WaitAsync(ct);
+        try
+        {
+            var current = Configuration ?? throw new InvalidOperationException("请先加入组织管理。");
+            var server = new UriBuilder(current.Server) { Scheme = disableSsl ? "http" : "https", Port = current.Server.IsDefaultPort ? -1 : current.Server.Port }.Uri;
+            var next = new MdnConfiguration { OrganizationName = current.OrganizationName, ServerUrl = server.AbsoluteUri,
+                EnrollmentToken = current.EnrollmentToken, UpdatePublicKey = current.UpdatePublicKey, PollSeconds = current.PollSeconds,
+                DisableSsl = disableSsl, ServerCertificateSha256 = disableSsl ? "" : certificatePin };
+            var handler = MdnConfiguration.CreateHttpHandler(next.ServerCertificateSha256);
+            var path = Path.Combine(Path.GetDirectoryName(_root)!, "il_mdn_config.yaml");
+            var yaml = new YamlDotNet.Serialization.SerializerBuilder().WithNamingConvention(YamlDotNet.Serialization.NamingConventions.UnderscoredNamingConvention.Instance).Build().Serialize(next);
+            File.WriteAllText(path + ".tmp", yaml); File.Move(path + ".tmp", path, true);
+            _http.Dispose(); _http = new(handler) { Timeout = TimeSpan.FromSeconds(10) }; Configuration = next;
+            if (_token is not null) Save();
+            Status = "连接方式已保存，正在重连"; Changed?.Invoke();
+        }
+        finally { _request.Release(); }
+        await SynchronizeAsync(ct);
     }
     public async Task LeaveAsync(CancellationToken ct = default)
     {

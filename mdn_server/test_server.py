@@ -9,7 +9,7 @@ import uuid
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi.testclient import TestClient
-from server import SecretStore, canonical, create_app, password_hash, initialize, MDN_LOOP
+from server import SecretStore, canonical, create_app, password_hash, initialize, MDN_LOOP, apply_transport
 
 
 class ManagementTests(unittest.TestCase):
@@ -160,6 +160,30 @@ class ManagementTests(unittest.TestCase):
         encrypted = store.encode(value)
         self.assertNotIn(b"private-test-value", encrypted)
         self.assertEqual(store.decode(encrypted), value)
+
+    def test_http_mode_login_enrollment_policy_and_updates(self):
+        config = apply_transport(self.config, {}, True)
+        with TestClient(create_app(self.root, config), base_url="http://mdn.example.edu") as http:
+            page = http.get("/").text
+            csrf = re.search(r'name="form_token" value="([^"]+)"', page)[1]
+            self.assertNotIn("secure", http.cookies.get("session", ""))
+            self.assertEqual(http.post("/login", data={"password": "test-password-123", "form_token": csrf}).status_code, 200)
+            page = http.get("/admin").text
+            csrf = re.search(r'name="form_token" value="([^"]+)"', page)[1]
+            enrollment = http.get("/admin/enrollment.yaml").text
+            self.assertIn('disable_ssl: true', enrollment)
+            self.assertIn('server_url: "http://', enrollment)
+            self.assertIn('server_certificate_sha256: ""', enrollment)
+            for value in (True, False):
+                self.assertEqual(http.post("/admin/policy", data={"scope": "all", "policy_json": json.dumps({"settings": {"fileAssociationEnabled": value}}), "form_token": csrf}).status_code, 200)
+                self.assertEqual(http.get("/api/policy", headers=self.headers).json()["settings"]["fileAssociationEnabled"], value)
+            self.assertEqual(http.post("/admin/update", data={"scope": "all", "mode": "cold", "version": "2.0.2", "url": "http://mdn.example.edu/setup.exe", "sha256": "a"*64, "size": 4, "form_token": csrf}).status_code, 200)
+
+    def test_transport_configuration_and_cli_override(self):
+        self.assertFalse(apply_transport(self.config, {})["disable_ssl"])
+        self.assertTrue(apply_transport(self.config, {"disable_ssl": True})["disable_ssl"])
+        self.assertTrue(apply_transport(self.config, {"disable_ssl": False}, True)["disable_ssl"])
+        with self.assertRaises(ValueError): apply_transport(self.config, {"disable_ssl": "false"})
 
 
 if __name__ == "__main__":

@@ -29,10 +29,11 @@ public sealed record ManagedPolicy
         var defaults = AppSettings.Defaults().ToJson(); var allowed = SettingNames;
         if (Revision < 0 || LockedSettings.Any(s => !allowed.Contains(s)) || DisabledFeatures.Any(s => !Features.Contains(s))) throw new FormatException("集控策略包含未知设置或功能。");
         foreach (var pair in Settings)
-            if (!allowed.Contains(pair.Key) || pair.Value is null || defaults[pair.Key]?.GetValueKind() != pair.Value.GetValueKind()) throw new FormatException("集控策略字段类型无效：" + pair.Key);
+            if (!allowed.Contains(pair.Key) || pair.Value is null || JsonType(defaults[pair.Key]) != JsonType(pair.Value)) throw new FormatException("集控策略字段类型无效：" + pair.Key);
         if (HideAsrConfiguration && !Settings.ContainsKey("cloudApiKey")) throw new FormatException("隐藏 API 配置需要下发 API Key。");
         _ = Apply(AppSettings.Defaults());
     }
+    private static JsonValueKind? JsonType(JsonNode? value) => value?.GetValueKind() is JsonValueKind.True or JsonValueKind.False ? JsonValueKind.True : value?.GetValueKind();
     public AppSettings Apply(AppSettings personal)
     {
         var json = personal.ToJson(); foreach (var pair in Settings) json[pair.Key] = pair.Value?.DeepClone();

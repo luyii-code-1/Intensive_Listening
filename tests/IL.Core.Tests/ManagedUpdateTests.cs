@@ -12,15 +12,17 @@ namespace IL.Core.Tests;
 
 public sealed class ManagedUpdateTests
 {
-    [Fact]
-    public async Task SignedUpdateRejectsChangedManifestAndChangedInstaller()
+    [Theory]
+    [InlineData("http")]
+    [InlineData("https")]
+    public async Task SignedUpdateRejectsChangedManifestAndChangedInstaller(string scheme)
     {
         var root=Path.Combine(Path.GetTempPath(),"il-update-test-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
         try
         {
             var path=Path.Combine(root,"installer.exe");await File.WriteAllBytesAsync(path,[1,2,3]);
             using var key=RSA.Create(2048);
-            var update=new ManagedUpdate(Guid.NewGuid().ToString(),"cold","2.0.2","https://example.edu/setup.exe",Convert.ToHexString(SHA256.HashData([1,2,3])),3,"");
+            var update=new ManagedUpdate(Guid.NewGuid().ToString(),"cold","2.0.2",scheme+"://example.edu/setup.exe",Convert.ToHexString(SHA256.HashData([1,2,3])),3,"");
             update=update with{Signature=Convert.ToBase64String(key.SignData(Encoding.UTF8.GetBytes(update.SignedContent),HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1))};
             var downloader=new ManagedUpdateDownloader(root,Convert.ToBase64String(key.ExportSubjectPublicKeyInfo()));
             await downloader.VerifyAsync(path,update,CancellationToken.None);

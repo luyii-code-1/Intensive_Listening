@@ -7,4 +7,5 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup><None Include="../fixtures/*" Link="fixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><None Include="../../mdn_server/settings-schema.json" Link="fixtures/mdn-settings-schema.json" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

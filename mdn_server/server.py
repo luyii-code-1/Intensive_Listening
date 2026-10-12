@@ -111,10 +111,22 @@ def canonical(update: dict) -> bytes:
     return "\n".join(str(update[k]) for k in ("id", "mode", "version", "url", "sha256", "size")).encode()
 
 
-def valid_url(value: str):
+def valid_url(value: str, allow_http: bool = False):
     url = urlparse(value)
-    if url.scheme != "https" or not url.netloc or url.username or url.password or url.fragment:
-        raise ValueError("地址必须为 HTTPS URL。")
+    if url.scheme not in (("http", "https") if allow_http else ("https",)) or not url.netloc or url.username or url.password or url.fragment:
+        raise ValueError("地址必须为有效的 HTTP/HTTPS URL。")
+
+
+def apply_transport(config, public, disable_ssl=False):
+    setting = public.get("disable_ssl", False)
+    if type(setting) is not bool:
+        raise ValueError("server.json 的 disable_ssl 必须为 true 或 false。")
+    disabled = disable_ssl or setting
+    address = public.get("public_url", config["public_url"])
+    valid_url(address, allow_http=True)
+    address = urlparse(address)._replace(scheme="http" if disabled else "https").geturl()
+    return config | {"disable_ssl": disabled, "public_url": address,
+        "certificate_sha256": "" if disabled else config.get("certificate_sha256", "")}
 
 
 def validate_policy(policy: dict):
@@ -201,7 +213,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
         if "leave_allowed" not in {r[1] for r in conn.execute("PRAGMA table_info(devices)")}:
             conn.execute("ALTER TABLE devices ADD COLUMN leave_allowed INTEGER NOT NULL DEFAULT 0")
     app = FastAPI(title="Intensive Listening MDN", docs_url=None, redoc_url=None, openapi_url=None)
-    app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=True, same_site="strict", max_age=3600)
+    app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=not config.get("disable_ssl", False), same_site="strict", max_age=3600)
     template_directory = expand_web(root)
     templates = Jinja2Templates(directory=str(template_directory))
     app.mount("/assets", StaticFiles(directory=str(template_directory / "assets")), name="assets")
@@ -410,7 +422,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
         private = serialization.load_pem_private_key(config["signing_key"].encode(), None)
         public = base64.b64encode(private.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).decode()
         # JSON quoted strings are valid YAML scalars, including names containing punctuation.
-        values = {"schema_version": 1, "organization_name": config["organization_name"], "server_url": config["public_url"], "enrollment_token": config["enrollment_token"], "update_public_key": public, "poll_seconds": 60, "server_certificate_sha256": config.get("certificate_sha256", "")}
+        values = {"schema_version": 1, "organization_name": config["organization_name"], "server_url": config["public_url"], "enrollment_token": config["enrollment_token"], "update_public_key": public, "poll_seconds": 60, "server_certificate_sha256": config.get("certificate_sha256", ""), "disable_ssl": config.get("disable_ssl", False)}
         body = "\n".join(key + ": " + json.dumps(value, ensure_ascii=False) for key, value in values.items()) + "\n"
         return Response(body, media_type="application/yaml", headers={"Content-Disposition": 'attachment; filename="il_mdn_config.yaml"'})
 
@@ -419,7 +431,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
         csrf(request, form_token)
         import re
         try:
-            valid_url(url)
+            valid_url(url, allow_http=True)
             if mode not in ("ota", "cold") or not re.fullmatch(r"\d+\.\d+\.\d+", version) or not re.fullmatch(r"[a-fA-F0-9]{64}", sha256) or not 0 < size <= 2 * 1024**3:
                 raise ValueError("更新字段无效。")
         except ValueError as error:
@@ -450,8 +462,8 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
     return app
 
 
-def initialize(root: Path, organization: str, url: str, password: str, store: SecretStore):
-    valid_url(url)
+def initialize(root: Path, organization: str, url: str, password: str, store: SecretStore, disable_ssl=False):
+    valid_url(url, allow_http=disable_ssl)
     if not organization or len(password) < 12:
         raise ValueError("组织名称不能为空，管理员密码至少 12 位。")
     root.mkdir(parents=True, exist_ok=True)
@@ -485,10 +497,10 @@ def initialize(root: Path, organization: str, url: str, password: str, store: Se
         "signing_key": signing.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode(),
         "tls_password": tls_password, "certificate_sha256": certificate.fingerprint(hashes.SHA256()).hex(),
         "cert": str((tls / "server.crt").resolve()), "key": str((tls / "server.key").resolve()),
-        "port": urlparse(url).port or 443}
+        "port": urlparse(url).port or (80 if disable_ssl else 443)}
     shutil.copytree(ASSETS / "templates", root / "web" / "templates", dirs_exist_ok=True)
     (root / "settings-schema.json").write_bytes((ASSETS / "settings-schema.json").read_bytes())
-    (root / "server.json").write_text(json.dumps({"public_url": config["public_url"], "host": "0.0.0.0", "port": config["port"]}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (root / "server.json").write_text(json.dumps({"public_url": config["public_url"], "host": "0.0.0.0", "port": config["port"], "disable_ssl": disable_ssl}, ensure_ascii=False, indent=2), encoding="utf-8")
     config_path.write_bytes(store.encode(config))
     return config
 
@@ -497,6 +509,7 @@ def main():
     parser = argparse.ArgumentParser(description="MDN 集控服务：运行目录中自动建立 data，控制台持续运行。")
     parser.add_argument("--data", type=Path, default=Path.cwd() / "data")
     parser.add_argument("--init", action="store_true", help="完成首次配置后退出")
+    parser.add_argument("--disable_ssl", action="store_true", help="以 HTTP 模式运行，仅用于可信内网")
     args = parser.parse_args()
     args.data = args.data.resolve()
     path = args.data / "config.bin"
@@ -509,31 +522,34 @@ def main():
         print("首次运行：设置组织和管理员账号。TLS 证书与设备注册凭证将自动生成。")
         organization = input("组织名称：").strip()
         addresses = local_addresses()
-        default_url = "https://" + (addresses[0] if addresses else "127.0.0.1") + ":8443/"
+        default_url = ("http://" if args.disable_ssl else "https://") + (addresses[0] if addresses else "127.0.0.1") + ":8443/"
         url = input("客户端访问地址 [" + default_url + "]：").strip() or default_url
         password = getpass.getpass("管理员密码（至少 12 位）：")
         if password != getpass.getpass("再次输入："):
             raise ValueError("两次密码不一致。")
-        initialize(args.data, organization, url, password, store)
+        initialize(args.data, organization, url, password, store, args.disable_ssl)
         print("初始化完成。配置与管理页面已展开到 data。")
         if args.init:
             return
     config = store.decode(path.read_bytes())
     public_path = args.data / "server.json"
     public = json.loads(public_path.read_text(encoding="utf-8-sig")) if public_path.exists() else {}
-    config["public_url"] = public.get("public_url", config["public_url"])
-    valid_url(config["public_url"])
+    config = apply_transport(config, public, args.disable_ssl)
     port = int(public.get("port", config["port"]))
+    scheme = "http" if config["disable_ssl"] else "https"
     print("管理后台：" + config["public_url"])
-    print("本机访问：https://localhost:" + str(port) + "/")
+    print("本机访问：" + scheme + "://localhost:" + str(port) + "/")
     for address in local_addresses():
-        print("局域网访问：https://" + address + ":" + str(port) + "/")
-    print("服务器证书 SHA-256：" + config.get("certificate_sha256", ""))
-    print("自动证书首次访问可能显示浏览器证书提示；客户端通过注册 YAML 中的证书指纹验证。")
+        print("局域网访问：" + scheme + "://" + address + ":" + str(port) + "/")
+    if config["disable_ssl"]:
+        print("HTTP 模式：连接未加密，请仅用于可信内网；客户端请使用新的注册 YAML 或开启 HTTP 选项。")
+    else:
+        print("服务器证书 SHA-256：" + config.get("certificate_sha256", ""))
+        print("自动证书首次访问可能显示浏览器证书提示；客户端通过注册 YAML 中的证书指纹验证。")
     print("保持此控制台运行；Ctrl+C 停止服务。")
     # Selector avoids Proactor connection_lost callback errors on abandoned TLS connections.
-    uvicorn.run(create_app(args.data, config, store), host=public.get("host", "0.0.0.0"), port=port, loop=MDN_LOOP,
-        ssl_certfile=config["cert"], ssl_keyfile=config["key"], ssl_keyfile_password=config.get("tls_password"), access_log=False)
+    ssl_options = {} if config["disable_ssl"] else {"ssl_certfile": config["cert"], "ssl_keyfile": config["key"], "ssl_keyfile_password": config.get("tls_password")}
+    uvicorn.run(create_app(args.data, config, store), host=public.get("host", "0.0.0.0"), port=port, loop=MDN_LOOP, access_log=False, **ssl_options)
 
 
 if __name__ == "__main__":

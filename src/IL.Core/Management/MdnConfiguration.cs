@@ -13,6 +13,7 @@ public sealed class MdnConfiguration
     public string UpdatePublicKey { get; set; } = "";
     public int PollSeconds { get; set; } = 60;
     public string ServerCertificateSha256 { get; set; } = "";
+    public bool DisableSsl { get; set; }
     public static HttpClientHandler CreateHttpHandler(string certificatePin="")
     {
         var handler=new HttpClientHandler{AllowAutoRedirect=false};
@@ -35,9 +36,10 @@ public sealed class MdnConfiguration
             .Deserialize<MdnConfiguration>(File.ReadAllText(path)) ?? throw new FormatException("集控配置为空。");
         if (configuration.SchemaVersion != 1 || string.IsNullOrWhiteSpace(configuration.OrganizationName) ||
             string.IsNullOrWhiteSpace(configuration.EnrollmentToken) ||
-            !Uri.TryCreate(configuration.ServerUrl, UriKind.Absolute, out var server) || server.Scheme != "https" ||
+            !Uri.TryCreate(configuration.ServerUrl, UriKind.Absolute, out var server) ||
+            server.Scheme != (configuration.DisableSsl ? "http" : "https") ||
             !string.IsNullOrEmpty(server.UserInfo) || !string.IsNullOrEmpty(server.Query) || !string.IsNullOrEmpty(server.Fragment))
-            throw new FormatException("集控配置需要组织名称、HTTPS 服务器地址和注册凭证。");
+            throw new FormatException("集控配置需要组织名称、注册凭证以及与 disable_ssl 匹配的 HTTP/HTTPS 地址。");
         if(configuration.ServerCertificateSha256.Length>0 && (configuration.ServerCertificateSha256.Length!=64 || !configuration.ServerCertificateSha256.All(Uri.IsHexDigit)))throw new FormatException("服务器证书指纹无效。");
         configuration.PollSeconds = Math.Clamp(configuration.PollSeconds, 15, 3600);
         return configuration;

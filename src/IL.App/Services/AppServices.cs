@@ -56,7 +56,7 @@ public sealed class AppServices : IAsyncDisposable
         CrashMonitor.SetConsent(settings.TelemetryEnabled && !Standalone);
         Student.TranscriptFontSize=settings.TranscriptFontSize;
         if(!ManagedRuntime.Allows("asr"))foreach(var job in Queue.Jobs.Where(j=>j.IsActive))Queue.Cancel(job.Id);
-        if(!Standalone){if(settings.FileAssociationPrompted)await new IlpFileAssociation().ApplyAsync(settings.FileAssociationEnabled);if(settings.McpEnabled)await Server.StartAsync();else await Server.StopAsync();}
+        if(!Standalone){if(settings.FileAssociationPrompted || ManagedRuntime.Policy.Settings.ContainsKey("fileAssociationEnabled"))await new IlpFileAssociation().ApplyAsync(settings.FileAssociationEnabled);if(settings.McpEnabled)await Server.StartAsync();else await Server.StopAsync();}
         await Telemetry.ApplyConsentAsync(settings.TelemetryEnabled,!Standalone);
         if (!Standalone) await new CrashReportStore(DataDirectory).FlushAsync(settings.TelemetryEnabled, Telemetry.ReportCrashAsync);
     }

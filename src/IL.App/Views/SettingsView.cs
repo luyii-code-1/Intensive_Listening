@@ -26,13 +26,15 @@ public sealed class SettingsView : UserControl
     private GitHubUpdateChecker? _updates;
         private readonly TextBlock _updateStatus = WorkspaceUi.Text("尚未检查更新",12);
     private readonly TextBlock _managedUpdateStatus = WorkspaceUi.Text("",12);
-    private readonly Button _installButton = new(){Content="安装组织更新",IsVisible=false};
+    private readonly Button _installButton = new(){Content="更新",IsVisible=false};
+    private ListBox? _categoryNavigation;
+    public void ShowUpdates() { if (_categoryNavigation is not null) _categoryNavigation.SelectedItem = _categoryNavigation.Items.OfType<SettingsCategory>().FirstOrDefault(c => c.Title == "更新"); }
     public void ConfigureUpdates(GitHubUpdateChecker updates,ManagedUpdater managed,Func<Task> install)
     {
         _updates=updates;
-        void Refresh(){_updateStatus.Text=updates.Result.Message;_managedUpdateStatus.Text=managed.Status;_installButton.IsVisible=managed.CanInstall;}
+        void Refresh(){_updateStatus.Text=updates.Result.Message;_managedUpdateStatus.Text=managed.Status;_installButton.IsVisible=managed.HasUpdate;_installButton.IsEnabled=managed.CanUpdate;}
         updates.Changed+=()=>Dispatcher.UIThread.Post(Refresh);managed.Changed+=()=>Dispatcher.UIThread.Post(Refresh);
-        _installButton.Click+=async(_,_)=>await RunAsync(install); Refresh();
+        _installButton.Click+=async(_,_)=>{_installButton.IsEnabled=false;await RunAsync(install);Refresh();}; Refresh();
     }
     private readonly AppPrivateApiServer? _mcpServer;
     private readonly StackPanel _agents = new() { Spacing = 8 };
@@ -248,12 +250,12 @@ public sealed class SettingsView : UserControl
             Card("delete", "缓存", "释放可重新生成的临时文件，课程和制作数据保留", ActionButton("清理", ClearCacheAsync)),
             Card("folder_open", "日志", "警告和错误保存在数据目录的 logs 文件夹中", Actions(ActionButton("打开目录", () => LaunchAsync(AppLog.DirectoryPath)), ActionButton("清理", ClearLogsAsync))),
             Card("info", "调试模式", "开启后记录详细诊断信息", _debug));
-        var privacy = CategoryPage("隐私与关于", "查看数据使用选项、协议与版本信息",
+        var privacy = CategoryPage("隐私", "查看数据使用选项与协议",
             Card("chart", "匿名使用情况分析", "向阿里云发送匿名设备 ID、ASR 指标与 API 主机名、系统与硬件信息、红色错误提示原文及运行元数据，可随时关闭", _telemetry),
-            Card("document", "用户协议与隐私", "查看协议或撤回此前的同意", Actions(ActionButton("查看隐私说明", () => ShowLegalAsync("privacy_zh_cn.txt", "隐私说明")), ActionButton("撤回同意", WithdrawAsync))),
-            Card("info", "关于", "查看应用版本、作者与最终用户许可协议", ActionButton("查看", AboutAsync)),
+            Card("document", "用户协议与隐私", "查看协议或撤回此前的同意", Actions(ActionButton("查看隐私说明", () => ShowLegalAsync("privacy_zh_cn.txt", "隐私说明")), ActionButton("撤回同意", WithdrawAsync))));
+        var updatesPage = CategoryPage("更新", "检查应用版本，查看组织更新状态",
             Card("download","检查更新","启动时异步读取 GitHub Latest，10 秒超时",Actions(_updateStatus,ActionButton("检查更新",()=>_updates?.CheckAsync(AppBuildInfo.Version)??Task.CompletedTask),ActionButton("查看发布",()=>LaunchAsync(_updates?.Result.ReleaseUrl??"https://github.com/luyii-code-1/Intensive_Listening/releases/latest")))),
-            ManagedUi.Feature(Card("download","组织更新","安装时可能需要确认 Windows 权限提示",Actions(_managedUpdateStatus,_installButton)),"updates"));
+            ManagedUi.Feature(Card("download","组织更新","冷更新需点击更新开始下载；OTA 自动执行。安装时可能显示 UAC",Actions(_managedUpdateStatus,_installButton)),"updates"));
         if(ManagedRuntime.Client is {} organization && organization.Status!="未加入管理")
         {
             var status=WorkspaceUi.Text(organization.Status,12);
@@ -265,10 +267,11 @@ public sealed class SettingsView : UserControl
         {
             new SettingsCategory("外观与字体", "color", appearance), new SettingsCategory("播放", "play", playback),
             new SettingsCategory("制作与智能体", "robot", authoring), new SettingsCategory("数据与维护", "folder_open", maintenance),
-            new SettingsCategory("隐私与关于", "info", privacy),
-            new SettingsCategory("组织管理", "info", ManagedRuntime.Client is {} mdn ? new MdnSettingsView(mdn) : WorkspaceUi.Text("独立播放器不提供组织注册。"))
+            new SettingsCategory("隐私", "document", privacy), new SettingsCategory("更新", "download", updatesPage),
+            new SettingsCategory("组织管理", "info", ManagedRuntime.Client is {} mdn ? new MdnSettingsView(mdn) : WorkspaceUi.Text("独立播放器不提供组织注册。")),
+            new SettingsCategory("关于", "info", new AboutSettingsView(ShowUpdates))
         };
-        var navigation = new ListBox { ItemsSource = categories, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
+        var navigation = _categoryNavigation = new ListBox { ItemsSource = categories, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
         navigation.ItemTemplate = new FuncDataTemplate<SettingsCategory>((category, _) => category is null ? null : new StackPanel
         {
             Orientation = Orientation.Horizontal, Spacing = 10, Margin = new Thickness(4, 6),
@@ -377,12 +380,6 @@ public sealed class SettingsView : UserControl
     private async Task ClearLogsAsync() { ManagedRuntime.Require("dataMaintenance"); if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "清理日志？", "将删除日志目录中的现有日志文件。", "清理日志")) return; var bytes = await AppLog.ClearAsync(); WorkspaceToast.Show(this, $"日志已清理，已释放 {bytes / 1024d:0.0} KB。"); }
     private async Task ClearCacheAsync() { ManagedRuntime.Require("dataMaintenance"); var bytes = await AppDirectories.ClearCacheAsync(); WorkspaceToast.Show(this, $"缓存已清理，已释放 {bytes / (1024d * 1024):0.0} MB。"); }
     private async Task ShowLegalAsync(string filename, string title) => await AppDialogs.DocumentAsync(WorkspaceUi.Owner(this), title, (await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "assets", "legal", filename))).TrimEnd('\0'));
-    private async Task AboutAsync()
-    {
-        var choice = await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "关于 Intensive Listening", AppBuildInfo.Display + "\n数据格式 1\nBy Luyii\n界面字体：HarmonyOS Sans SC\nCopyright 2021 Huawei Device Co., Ltd.", "关闭", "字体许可", "用户协议");
-        if (choice == 1) await ShowLegalAsync("HarmonyOS-Sans-LICENSE.txt", "HarmonyOS Sans 字体许可");
-        if (choice == 2) await ShowLegalAsync("eula_zh_cn.txt", "用户协议");
-    }
     private async Task WithdrawAsync()
     {
         if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "撤回同意", "撤回用户协议与匿名数据分析同意后，应用会停止上报、清理待发送缓存并退出。课程与本机设置会保留；下次启动需重新确认协议和遥测选择。", "撤回并退出")) return;

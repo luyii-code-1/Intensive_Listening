@@ -34,10 +34,12 @@ public partial class MainWindow : Window
     private readonly SpringScalar _paneMotion;
     private readonly DesktopResidence? _residence;
     private WindowsApprovalNotification? _approvalNotification;
+    private WindowsSystemNotification? _updateNotification;
     private bool _initializationStarted;
     private long _managedRevision=-1;
     private readonly HashSet<Key> _heldPlayerKeys = new();
     private bool _playerShortcutBusy;
+    private bool _installingUpdate;
     private readonly SemaphoreSlim _launchGate = new(1, 1);
     private readonly TaskCompletionSource<bool> _initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public MainWindow()
@@ -84,6 +86,19 @@ public partial class MainWindow : Window
         _settings.ConfigureUpdates(_services.Updates, _services.ManagedUpdates, InstallManagedUpdateAsync);
         ManagedBanner.Text=_services.Mdn.Banner;ManagedBanner.IsVisible=ManagedBanner.Text.Length>0;
         _services.ManagedUpdates.AutomaticInstall=()=>OnUiAsync(async()=>{await InstallManagedUpdateAsync();return true;});
+        _services.ManagedUpdates.NotificationRequested += update => Dispatcher.UIThread.Post(() =>
+        {
+            var title = update.Mode == "ota" ? "您的组织正在更新您的应用" : "您的组织发布了新版本";
+            var message = update.Mode == "ota"
+                ? $"{_services.Mdn.Configuration?.OrganizationName} 正在更新 Intensive Listening 至 {update.Version}，应用将自动安装并重新启动。"
+                : $"{_services.Mdn.Configuration?.OrganizationName} 发布了版本 {update.Version}。请在设置 → 更新查看状态，点击更新开始下载并安装。";
+            WorkspaceToast.Show(this, title, message);
+            if (OperatingSystem.IsWindows())
+            {
+                _updateNotification ??= new WindowsSystemNotification(this, 0x494D, 0x8422);
+                _updateNotification.Show(title, message, () => { RestoreWorkspace(); ShowSettings(); _settings.ShowUpdates(); });
+            }
+        });
         _services.Mdn.Changed+=()=>Dispatcher.UIThread.Post(async()=>
         {
             ManagedBanner.Text=_services.Mdn.Banner;ManagedBanner.IsVisible=ManagedBanner.Text.Length>0;
@@ -100,6 +115,7 @@ public partial class MainWindow : Window
         _services.ConfirmForcedCuts=()=>OnUiAsync(()=>{RestoreWorkspace();return AppDialogs.ConfirmForcedCutsAsync(this);});
         _services.Server.ApprovalRequested=name=>OnUiAsync(()=>RequestAgentApprovalAsync(name));
         Closed += (_, _) => _approvalNotification?.Dispose();
+        Closed += (_, _) => _updateNotification?.Dispose();
         _services.Server.AgentStateChanged+=active=>Dispatcher.UIThread.Post(async()=>{AgentTakeoverText.Text=$"当前 {_services.Server.ActiveAgentName ?? "未命名智能体"} 正在接管本应用";AgentOverlay.IsVisible=active;ShellGrid.IsEnabled=!active;ShellGrid.Effect=active?new BlurEffect{Radius=12}:null;_teacher.SetAgentMode(active);if(active)Navigate(1);else await _teacher.FinishAgentSessionAsync();});
         _services.Api.ProjectChanged=()=>Dispatcher.UIThread.Post(async()=>await _teacher.RefreshAsync());
         _services.Api.OpenProject=id=>Dispatcher.UIThread.Post(async()=>{RestoreWorkspace();await _teacher.OpenProjectAsync(id);Navigate(1);});
@@ -216,8 +232,11 @@ public partial class MainWindow : Window
     }
     private async Task InstallManagedUpdateAsync()
     {
-        try { await _teacher.FlushDraftAsync();WorkspaceToast.Show(this,"正在安装组织更新","如系统请求权限，请确认 UAC 提示。");await _services.ManagedUpdates.LaunchInstallerAsync();await ExitAsync(); }
+        if (_installingUpdate) return;
+        _installingUpdate = true;
+        try { if (!await _services.ManagedUpdates.PrepareAsync()) return; await _teacher.FlushDraftAsync();WorkspaceToast.Show(this,"正在安装组织更新","如系统请求权限，请确认 UAC 提示。");await _services.ManagedUpdates.LaunchInstallerAsync();await ExitAsync(); }
         catch(Exception e){WorkspaceToast.Show(this,"更新未完成",e.Message,true);}
+        finally { _installingUpdate = false; }
     }
     private void ShowSettings(){if(_destination==2)return;if(_destination!=2)_settingsBack=_destination;_settings.Populate(_services.Settings);Navigate(2);}
     private void Navigate(int destination)
@@ -335,6 +354,7 @@ public partial class MainWindow : Window
             if(File.Exists(updateResult))
             {
                 var result=JsonNode.Parse(await File.ReadAllTextAsync(updateResult));
+                _services.ManagedUpdates.RecordResult(result?["id"]?.ToString() ?? "", result?["version"]?.ToString(), result?["success"]?.GetValue<bool>() == true);
                 if(result?["success"]?.GetValue<bool>()==true && result?["version"]?.ToString()==AppBuildInfo.Version && result?["automaticOobe"]?.GetValue<bool>()==true && _services.Settings.EulaAcceptedVersion.Length>0 && ManagedRuntime.IsManaged)
                 { var completed=_services.Settings with{CompletedInstallationId=installationId};await _services.SettingsStore.SaveAsync(completed);await _services.ApplySettingsAsync(completed); }
                 else if(result?["success"]?.GetValue<bool>()==false)WorkspaceToast.Show(this,"组织更新未完成",result?["message"]?.ToString()??"请在设置中重试安装。",true);

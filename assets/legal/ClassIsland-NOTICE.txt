@@ -1,0 +1,9 @@
+ClassIsland 2 design and code acknowledgement
+
+Parts of Intensive Listening's design and code draw on ClassIsland 2 (Ci2), including welcome onboarding, application notifications and settings page organization. The Intensive Listening implementation adapts these ideas and code to its own playback and course-authoring workflows.
+
+ClassIsland copyright: HelloWRC and ClassIsland contributors.
+License: GNU General Public License v3.0.
+Source: https://github.com/ClassIsland/ClassIsland
+License: https://github.com/ClassIsland/ClassIsland/blob/master/LICENSE.txt
+About page reference: https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Views/SettingPages/AboutSettingsPage.axaml

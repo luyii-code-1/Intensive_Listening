@@ -33,6 +33,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from starlette.middleware.sessions import SessionMiddleware
+from lesson_distribution import LessonDistribution
 
 ASSETS = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
 FEATURES = ["playback", "importAudio", "importIlp", "authoring", "asr", "mcp", "export", "importProject", "dataMaintenance", "apiConfiguration", "updates"]
@@ -181,7 +182,7 @@ def validate_policy(policy: dict):
         raise ValueError("asrProvider 无效。")
     if "themeMode" in settings and settings["themeMode"] not in ("system", "light", "dark"):
         raise ValueError("themeMode 无效。")
-    for name, bounds in {"cloudTimeoutSeconds": (30, 1800), "cloudConcurrency": (1, 10), "transcriptFontSize": (14, 28), "applicationFontWeight": (100, 1000)}.items():
+    for name, bounds in {"cloudTimeoutSeconds": (30, 1800), "cloudConcurrency": (1, 10), "transcriptFontSize": (14, 28), "transcriptBlurIntensity": (1, 8), "applicationFontWeight": (100, 1000)}.items():
         if name in settings and not bounds[0] <= settings[name] <= bounds[1]:
             raise ValueError(name + " 超出允许范围。")
     if policy.get("update") is not None:
@@ -264,7 +265,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
 
     @app.middleware("http")
     async def headers(request, call_next):
-        upload = request.url.path == "/admin/update/upload"
+        upload = request.url.path in ("/admin/update/upload", "/admin/lessons/upload")
         limit = 2 * 1024**3 if upload else 128000
         if int(request.headers.get("content-length", "0") or 0) > limit:
             return Response(status_code=413)
@@ -377,11 +378,16 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
                         result[key] = value
                 revision = max(revision, own["revision"])
             result["revision"] = revision
+            result["lessons"] = lesson_distribution.available(identifier)
             return result
 
     @app.get("/api/policy")
     def policy(request: Request):
-        return policy_for(device(request))
+        result = policy_for(device(request))
+        if "transcriptBlurIntensity" not in request.headers.get("x-il-capabilities", "").split(","):
+            result["settings"].pop("transcriptBlurIntensity", None)
+            result["lockedSettings"] = [name for name in result.get("lockedSettings", []) if name != "transcriptBlurIntensity"]
+        return result
 
     @app.post("/api/telemetry")
     def telemetry(request: Request, event: Telemetry):
@@ -439,7 +445,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
         for client in clients:
             client["online"] = is_online(client)
             client["seen_text"] = datetime.fromtimestamp(client["last_seen"]).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        return templates.TemplateResponse(request=request, name="admin.html", context={"organization": config["organization_name"], "clients": clients, "scope": scope, "policy": json.dumps(payload, ensure_ascii=False, indent=2), "payload": payload, "csrf": request.session["csrf"], "features": FEATURES, "settings": SCHEMA, "events": events, "message": request.query_params.get("message", ""), "server_url": config["public_url"], "certificate": config.get("certificate_sha256", ""), "online_count": sum(c["online"] for c in clients), "current_update": current_update})
+        return templates.TemplateResponse(request=request, name="admin.html", context={"organization": config["organization_name"], "clients": clients, "scope": scope, "policy": json.dumps(payload, ensure_ascii=False, indent=2), "payload": payload, "csrf": request.session["csrf"], "features": FEATURES, "settings": SCHEMA, "events": events, "message": request.query_params.get("message", ""), "server_url": config["public_url"], "certificate": config.get("certificate_sha256", ""), "online_count": sum(c["online"] for c in clients), "current_update": current_update, "lesson_tasks": lesson_distribution.dashboard()})
 
     def is_online(row):
         return bool(row["enabled"] and (row["id"] in connections.peers if row["realtime"] else time.time() - row["last_seen"] < 90))
@@ -603,6 +609,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
         await connections.notify(scope)
         return RedirectResponse("/admin?scope=" + scope, 303)
 
+    lesson_distribution = LessonDistribution(app, root, config, db, csrf, device, scope_exists, connections)
     return app
 
 

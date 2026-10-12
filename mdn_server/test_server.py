@@ -1,4 +1,6 @@
 import base64
+import io
+import zipfile
 import hashlib
 import json
 from pathlib import Path
@@ -24,7 +26,7 @@ class ManagementTests(unittest.TestCase):
         self.client = TestClient(create_app(self.root, self.config), base_url="https://mdn.example.edu")
         self.identifier = str(uuid.uuid4())
         self.token = self.register(self.identifier)
-        self.headers = {"Authorization": "Bearer " + self.token}
+        self.headers = {"Authorization": "Bearer " + self.token, "X-IL-Capabilities": "transcriptBlurIntensity,lessonDistribution"}
 
     def tearDown(self):
         self.client.close(); self.temp.cleanup()
@@ -264,6 +266,71 @@ class ManagementTests(unittest.TestCase):
         self.assertFalse(self.client.get("/api/policy", headers=self.headers).json()["lockManagement"])
         self.assertEqual(self.save("all", {"lockManagement": "true"}, csrf).status_code, 422)
 
+
+    def lesson_zip(self, version=1, corrupt=False):
+        audio, transcript = b'RIFF-test-audio', b'1\n00:00:00,000 --> 00:00:01,000\nHello world.\n'
+        manifest = {"formatVersion": 3, "title": "组织精听课程", "packageUuid": str(uuid.uuid4()), "packageVersion": version, "audioPath": "audio.wav", "transcriptPath": "transcript.srt", "durationMs": 1000, "sha256": {"audio.wav": hashlib.sha256(audio).hexdigest(), "transcript.srt": hashlib.sha256(transcript).hexdigest()}}
+        body = io.BytesIO()
+        with zipfile.ZipFile(body, "w") as archive:
+            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False))
+            archive.writestr("audio.wav", b'corrupt' if corrupt else audio)
+            archive.writestr("transcript.srt", transcript)
+        return body.getvalue(), manifest
+
+    def upload_lesson(self, csrf, scopes="all", body=None):
+        body = body if body is not None else self.lesson_zip()[0]
+        return self.client.post("/admin/lessons/upload", params={"scopes": scopes, "filename": "course.ilp"}, content=body, headers={"X-CSRF-Token": csrf, "Content-Type": "application/octet-stream"})
+
+    def test_lesson_upload_auth_scoping_signature_receipts_and_withdraw(self):
+        from lesson_distribution import lesson_content
+        csrf = self.login(); second = str(uuid.uuid4()); second_token = self.register(second)
+        third = str(uuid.uuid4()); third_token = self.register(third)
+        body, manifest = self.lesson_zip()
+        self.assertEqual(self.upload_lesson("invalid", body=body).status_code, 403)
+        self.assertEqual(self.upload_lesson(csrf, self.identifier + "," + second, body).status_code, 200)
+        policy = self.client.get("/api/policy", headers=self.headers).json()
+        item = policy["lessons"][0]
+        self.assertEqual(item["packageUuid"], manifest["packageUuid"])
+        self.private.public_key().verify(base64.b64decode(item["signature"]), lesson_content(item), padding.PKCS1v15(), hashes.SHA256())
+        url = "/api/lessons/" + item["id"]
+        self.assertEqual(self.client.get(url).status_code, 401)
+        self.assertEqual(self.client.get(url, headers={"Authorization":"Bearer " + third_token}).status_code, 403)
+        self.assertEqual(self.client.get(url, headers={"Authorization":"Bearer " + second_token}).content, body)
+        self.assertEqual(self.client.post(url + "/receipt", headers=self.headers, json={"status":"imported","message":"已导入"}).status_code, 200)
+        self.assertIn("导入完成", self.client.get("/admin?view=lessons").text)
+        self.assertEqual(self.client.post(url + "/receipt", headers={"Authorization":"Bearer " + third_token}, json={"status":"imported"}).status_code, 403)
+        self.assertEqual(self.client.post(url + "/receipt", headers=self.headers, json={"status":"invalid"}).status_code, 422)
+        self.assertEqual(self.client.post("/admin/lessons/withdraw", data={"lesson_id":item["id"],"form_token":csrf}).status_code, 200)
+        self.assertEqual(self.client.get(url, headers=self.headers).status_code, 403)
+        self.assertEqual(self.client.get("/api/policy", headers=self.headers).json()["lessons"], [])
+
+    def test_lesson_global_distribution_reaches_future_registration_and_realtime_push(self):
+        with self.client:
+            csrf = self.login()
+            with self.client.websocket_connect("/api/connect", headers=self.headers) as ws:
+                self.assertEqual(ws.receive_json()["type"], "ready")
+                self.assertEqual(self.upload_lesson(csrf).status_code, 200)
+                self.assertEqual(ws.receive_json()["type"], "policy")
+            future = str(uuid.uuid4()); token = self.register(future)
+            self.assertEqual(len(self.client.get("/api/policy", headers={"Authorization":"Bearer " + token}).json()["lessons"]), 1)
+
+    def test_lesson_rejects_invalid_packages_and_targets_without_leaving_files(self):
+        csrf = self.login()
+        for body in (b'not-a-zip', self.lesson_zip(corrupt=True)[0]):
+            self.assertEqual(self.upload_lesson(csrf, body=body).status_code, 422)
+        self.assertEqual(self.upload_lesson(csrf, "all," + self.identifier).status_code, 422)
+        self.assertEqual(self.upload_lesson(csrf, str(uuid.uuid4())).status_code, 404)
+        self.assertEqual(list((self.root / "lessons").iterdir()), [])
+
+    def test_blur_policy_accepts_range_and_locks_shared_setting(self):
+        csrf = self.login()
+        for value in (1, 8):
+            self.assertEqual(self.save("all", {"settings":{"transcriptBlurIntensity":value}}, csrf).status_code, 200)
+            self.assertEqual(self.client.get("/api/policy", headers=self.headers).json()["settings"]["transcriptBlurIntensity"], value)
+        for value in (0, 9):
+            self.assertEqual(self.save("all", {"settings":{"transcriptBlurIntensity":value}}, csrf).status_code, 422)
+        legacy = self.client.get("/api/policy", headers={"Authorization":"Bearer " + self.token}).json()
+        self.assertNotIn("transcriptBlurIntensity", legacy["settings"])
 
 if __name__ == "__main__":
     unittest.main()

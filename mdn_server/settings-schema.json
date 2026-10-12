@@ -19,6 +19,7 @@
   "skipOpeningPrompts": "boolean",
   "createProjectOnAudioImport": "boolean",
   "transcriptFontSize": "number",
+  "transcriptBlurIntensity": "number",
   "playerKeyBindings": "object",
   "debugLogging": "boolean"
 }

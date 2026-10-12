@@ -20,7 +20,7 @@ public sealed class IlpLibrary(string directory)
         return found.OrderBy(x => x.Manifest.Title, StringComparer.OrdinalIgnoreCase).ToArray();
     }
     public async Task<LessonRef?> FindByAudioSha256Async(string hash, CancellationToken ct = default) => (await ScanManifestsAsync(ct)).FirstOrDefault(x => x.Manifest.AudioSha256 == hash);
-    public async Task<LessonRef?> FindByUuidAsync(string uuid, CancellationToken ct = default) => (await ScanManifestsAsync(ct)).FirstOrDefault(x => x.Manifest.PackageUuid == uuid);
+    public async Task<LessonRef?> FindByUuidAsync(string uuid, CancellationToken ct = default) => (await ScanManifestsAsync(ct)).FirstOrDefault(x => string.Equals(x.Manifest.PackageUuid, uuid, StringComparison.OrdinalIgnoreCase));
     public async Task<LessonRef?> FindByTitleAsync(string title, CancellationToken ct = default) => (await ScanManifestsAsync(ct)).FirstOrDefault(x => string.Equals(x.Manifest.Title.Trim(), title.Trim(), StringComparison.OrdinalIgnoreCase));
     public Task RemoveAsync(string id)
     {

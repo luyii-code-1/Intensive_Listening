@@ -18,6 +18,7 @@ public sealed record ManagedPolicy
     public bool HideAsrConfiguration { get; init; }
     public bool AutomaticOobe { get; init; }
     public ManagedUpdate? Update { get; init; }
+    public ManagedLesson[] Lessons { get; init; } = [];
     public static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     public static readonly string[] Features = ["playback", "importAudio", "importIlp", "authoring", "asr", "mcp", "export", "importProject", "dataMaintenance", "apiConfiguration", "updates"];
     // Legal consent and optional Aliyun consent remain personal; MDN telemetry has a separate transport.
@@ -31,7 +32,7 @@ public sealed record ManagedPolicy
     public void Validate()
     {
         var defaults = AppSettings.Defaults().ToJson(); var allowed = SettingNames;
-        if (Revision < 0 || LockedSettings.Any(s => !allowed.Contains(s)) || DisabledFeatures.Any(s => !Features.Contains(s))) throw new FormatException("集控策略包含未知设置或功能。");
+        if (Revision < 0 || Lessons is null || Lessons.Length > 1000 || Lessons.Any(l => l is null || !Guid.TryParse(l.Id, out _) || !Guid.TryParse(l.PackageUuid, out _) || l.PackageVersion < 1) || LockedSettings.Any(s => !allowed.Contains(s)) || DisabledFeatures.Any(s => !Features.Contains(s))) throw new FormatException("集控策略包含未知设置或功能。");
         foreach (var pair in Settings)
             if (!allowed.Contains(pair.Key) || pair.Value is null || JsonType(defaults[pair.Key]) != JsonType(pair.Value)) throw new FormatException("集控策略字段类型无效：" + pair.Key);
         if (HideAsrConfiguration && !Settings.ContainsKey("cloudApiKey")) throw new FormatException("隐藏 API 配置需要下发 API Key。");

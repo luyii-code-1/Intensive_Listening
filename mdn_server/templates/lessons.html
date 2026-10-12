@@ -1,0 +1,23 @@
+<section data-panel="lessons" hidden>
+  <h2>下发精听包</h2>
+  <p class="muted">客户端自动下载、校验并导入。相同 UUID 的高版本会自动更新并保留学习记录；正在使用的课程退出后更新。</p>
+  <form id="lesson-upload-form">
+    <input type="hidden" name="form_token" value="{{ csrf }}">
+    <label>分发范围<select name="audience" id="lesson-audience"><option value="all">全部设备（含以后加入的设备）</option><option value="selected">选定设备</option></select></label>
+    <label id="lesson-target-label" hidden>选择接收设备（可多选）<select name="targets" multiple size="5" id="lesson-targets" disabled>{% for device in clients %}<option value="{{ device.id }}">{{ device.name }} · {{ device.id[-12:] }}</option>{% endfor %}</select></label>
+    <label>精听包文件<input type="file" name="package" accept=".ilp" required></label>
+    <button type="submit">上传并下发</button><progress id="lesson-upload-progress" max="1" value="0" hidden></progress>
+    <p id="lesson-upload-status" role="status"></p>
+  </form>
+  <div class="toolbar"><h2>分发任务与接收结果</h2><a class="button secondary" href="/admin?view=lessons">刷新接收结果</a></div>
+  {% set states = {'pending':'等待接收','downloading':'正在下载','deferred':'等待课程退出','imported':'导入完成','skipped':'已存在同版或高版本','failed':'接收失败'} %}
+  {% for task in lesson_tasks %}
+  <article class="update-task">
+    <strong>{{ task.title }} · 版本 {{ task.packageVersion }}</strong>
+    <span>{{ '正在下发' if task.active else '已撤回' }} · {{ '全部设备' if 'all' in task.targets else '选定 ' ~ task.targets|length ~ ' 台设备' }}</span>
+    <small class="mono">课程 UUID：{{ task.packageUuid }} · 任务 ID：{{ task.id }}</small>
+    {% if task.active %}<form action="/admin/lessons/withdraw" method="post" data-confirm="撤回此精听包分发？已导入的本地课程会保留。"><input type="hidden" name="form_token" value="{{ csrf }}"><input type="hidden" name="lesson_id" value="{{ task.id }}"><button class="secondary">撤回分发</button></form>{% endif %}
+    <div class="table-scroll"><table><thead><tr><th>设备</th><th>接收状态</th><th>说明</th></tr></thead><tbody>{% for receipt in task.receipts %}<tr><td>{{ receipt.name }}<small class="mono">{{ receipt.id[-12:] }}</small></td><td>{{ states.get(receipt.status,receipt.status) }}</td><td>{{ receipt.message }}</td></tr>{% else %}<tr><td colspan="3" class="empty">当前范围暂无注册设备。</td></tr>{% endfor %}</tbody></table></div>
+  </article>
+  {% else %}<p class="empty">还没有下发精听包。</p>{% endfor %}
+</section>

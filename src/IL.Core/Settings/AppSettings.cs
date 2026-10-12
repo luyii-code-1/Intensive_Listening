@@ -28,6 +28,8 @@ public sealed record AppSettings
     public bool SkipOpeningPrompts { get; init; } = true;
     public bool CreateProjectOnAudioImport { get; init; } = true;
     public int TranscriptFontSize { get; init; } = 18;
+    public const int MinTranscriptBlurIntensity = 1, MaxTranscriptBlurIntensity = 8;
+    public int TranscriptBlurIntensity { get; init; } = MaxTranscriptBlurIntensity;
     public IReadOnlyDictionary<PlayerShortcutAction, string> PlayerKeyBindings { get; init; } = DefaultPlayerBindings(new Dictionary<PlayerShortcutAction, string>());
     public bool DebugLogging { get; init; }
     public bool TelemetryEnabled { get; init; }
@@ -48,6 +50,7 @@ public sealed record AppSettings
     {
         CompletedInstallationId = String(j, "completedInstallationId", ""),
         CreateProjectOnAudioImport = Bool(j, "createProjectOnAudioImport", true),
+        TranscriptBlurIntensity = Math.Clamp(Integer(j, "transcriptBlurIntensity", MaxTranscriptBlurIntensity), MinTranscriptBlurIntensity, MaxTranscriptBlurIntensity),
         ApplicationFontFamily = String(j, "applicationFontFamily", ""),
         ApplicationFontWeight = Math.Clamp(Integer(j, "applicationFontWeight", 500), 100, 950),
         PlayerKeyBindings = ReadPlayerKeyBindings(j["playerKeyBindings"]),

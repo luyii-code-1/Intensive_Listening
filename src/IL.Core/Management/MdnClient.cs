@@ -222,6 +222,7 @@ public sealed class MdnClient : IAsyncDisposable
             }
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(Configuration.Server, "api/policy"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+            request.Headers.Add("X-IL-Capabilities", "transcriptBlurIntensity,lessonDistribution");
             using var response = await _http.SendAsync(request, ct); response.EnsureSuccessStatusCode();
             var policy = await response.Content.ReadFromJsonAsync<ManagedPolicy>(ManagedPolicy.Json, ct) ?? throw new FormatException(); policy.Validate();
             var different = JsonSerializer.Serialize(Policy, ManagedPolicy.Json) != JsonSerializer.Serialize(policy, ManagedPolicy.Json);
@@ -229,6 +230,19 @@ public sealed class MdnClient : IAsyncDisposable
             Report("online", new { });
             await FlushEventsAsync(ct);
             await FlushCrashesAsync(ct); Changed?.Invoke();
+        }
+        finally { _request.Release(); }
+    }
+    public async Task<bool> ReportLessonAsync(string id, string status, string message, CancellationToken ct)
+    {
+        await _request.WaitAsync(ct);
+        try
+        {
+            if (Configuration is null || _token is null) return false;
+            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/lessons/" + Guid.Parse(id).ToString("D") + "/receipt"));
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+            request.Content = JsonContent.Create(new { status, message }, options: ManagedPolicy.Json);
+            using var response = await _http.SendAsync(request, ct); return response.IsSuccessStatusCode;
         }
         finally { _request.Release(); }
     }

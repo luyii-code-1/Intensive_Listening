@@ -27,6 +27,10 @@ public sealed class SettingsView : UserControl
         private readonly TextBlock _updateStatus = WorkspaceUi.Text("尚未检查更新",12);
     private readonly TextBlock _managedUpdateStatus = WorkspaceUi.Text("",12);
     private readonly Button _installButton = new(){Content="更新",IsVisible=false};
+    private readonly TextBlock _lessonStatus = WorkspaceUi.Text("尚无组织精听包任务", 12);
+    private ManagedLessonReceiver? _managedLessons;
+    public void ConfigureManagedLessons(ManagedLessonReceiver lessons)
+    { _managedLessons = lessons; _lessonStatus.Text = lessons.Status; lessons.Changed += () => Dispatcher.UIThread.Post(() => _lessonStatus.Text = lessons.Status); }
     private ListBox? _categoryNavigation;
     public void ShowUpdates() { if (_categoryNavigation is not null) _categoryNavigation.SelectedItem = _categoryNavigation.Items.OfType<SettingsCategory>().FirstOrDefault(c => c.Title == "更新"); }
     public void ConfigureUpdates(GitHubUpdateChecker updates,ManagedUpdater managed,Func<Task> install)
@@ -47,6 +51,9 @@ public sealed class SettingsView : UserControl
     private readonly NumericUpDown _timeout = new() { Minimum = 30, Maximum = 1800, Increment = 30 }, _concurrency = new() { Minimum = 1, Maximum = 10 };
     private readonly Slider _font = new() { Minimum = 14, Maximum = 28, TickFrequency = 1, IsSnapToTickEnabled = true, Width = 200 };
     private readonly TextBlock _fontValue = WorkspaceUi.Text("18");
+    private readonly Slider _blur = new() { Minimum = AppSettings.MinTranscriptBlurIntensity, Maximum = AppSettings.MaxTranscriptBlurIntensity, Value = AppSettings.MaxTranscriptBlurIntensity, TickFrequency = 1, IsSnapToTickEnabled = true, Width = 200 };
+    private readonly TextBlock _blurValue = WorkspaceUi.Text("8 / 8");
+    private readonly DispatcherTimer _blurSave = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly ComboBox _theme = new() { MinWidth = 145 };
     private sealed record FontChoice(string Value, string Label, FontFamily Family);
     private sealed record WeightChoice(FontWeight Weight, string Label);
@@ -91,7 +98,7 @@ public sealed class SettingsView : UserControl
             if (_mcpServer is not null) { _mcpServer.AgentsChanged += OnAgentsChanged; _mcpServer.AgentStateChanged += OnAgentStateChanged; }
             await RunAsync(ReloadAsync);
         };
-        DetachedFromVisualTree += (_, _) => { if (_mcpServer is not null) { _mcpServer.AgentsChanged -= OnAgentsChanged; _mcpServer.AgentStateChanged -= OnAgentStateChanged; } _fontSave.Stop(); if (!_populating && (int)Math.Round(_font.Value) != _settings.TranscriptFontSize) _ = ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); };
+        DetachedFromVisualTree += (_, _) => { if (_mcpServer is not null) { _mcpServer.AgentsChanged -= OnAgentsChanged; _mcpServer.AgentStateChanged -= OnAgentStateChanged; } _fontSave.Stop(); _blurSave.Stop(); if (!_populating && (int)Math.Round(_font.Value) != _settings.TranscriptFontSize) _ = ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); if (!_populating && (int)Math.Round(_blur.Value) != _settings.TranscriptBlurIntensity) _ = ChangePreferenceAsync(s => s with { TranscriptBlurIntensity = (int)Math.Round(_blur.Value) }, "高速模糊强度"); };
     }
     public async Task ReloadAsync() { await _preferenceSaves; Populate(await _store.LoadAsync()); await RefreshAgentsAsync(); }
     public void Populate(AppSettings settings)
@@ -103,6 +110,7 @@ public sealed class SettingsView : UserControl
             _baseUrl.Text = settings.CloudBaseUrl; _endpoint.Text = settings.CloudEndpoint; _model.Text = settings.CloudModel; _key.Text = settings.CloudApiKey;
             _timeout.Value = settings.CloudTimeoutSeconds; _concurrency.Value = settings.CloudConcurrency;
             _font.Value = settings.TranscriptFontSize; _fontValue.Text = settings.TranscriptFontSize.ToString();
+            _blur.Value = settings.TranscriptBlurIntensity; _blurValue.Text = $"{settings.TranscriptBlurIntensity} / {AppSettings.MaxTranscriptBlurIntensity}";
             _theme.SelectedItem = _theme.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string?)i.Tag == settings.ThemeMode);
             PopulateTypography(settings);
             _playerShortcuts.Populate(settings.PlayerKeyBindings);
@@ -145,6 +153,8 @@ public sealed class SettingsView : UserControl
         };
         _font.ValueChanged += (_, _) => { _fontValue.Text = ((int)Math.Round(_font.Value)).ToString(); if (!_populating) { _fontSave.Stop(); _fontSave.Start(); } };
         _fontSave.Tick += async (_, _) => { _fontSave.Stop(); await ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); };
+        _blur.ValueChanged += (_, _) => { _blurValue.Text = $"{(int)Math.Round(_blur.Value)} / {AppSettings.MaxTranscriptBlurIntensity}"; if (!_populating) { _blurSave.Stop(); _blurSave.Start(); } };
+        _blurSave.Tick += async (_, _) => { _blurSave.Stop(); await ChangePreferenceAsync(s => s with { TranscriptBlurIntensity = (int)Math.Round(_blur.Value) }, "高速模糊强度"); };
     }
     private void PopulateTypography(AppSettings settings)
     {
@@ -217,6 +227,8 @@ public sealed class SettingsView : UserControl
             Card("music_note", "导入音频时同时建立项目", "导入音频后自动创建制作工程并绑定音频副本", _createProject),
             Card("forward", "跳过题前提示", "首次打开课程时定位到第一题前并暂停，保留已有播放进度", _skip),
             Card("font", "字幕字体大小", "调整播放页逐句列表的文字大小", transcriptSize),
+            ManagedUi.Setting(Card("font", "高速模糊强度", "同步调整隐藏字幕和挖空文字的模糊程度，默认最大", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Children = { _blur, _blurValue } }), "transcriptBlurIntensity"),
+            Card("download", "组织精听包", "自动接收组织下发的课程并保留已有学习记录", Actions(_lessonStatus, ActionButton("重试接收", () => _managedLessons?.RefreshAsync() ?? Task.CompletedTask))),
             shortcutSettings, Card("open_file", "关联文件格式", "双击 .ilp 精听包直接进入播放界面", _association));
 
         var mcpBody = new StackPanel { Spacing = 10, Margin = new Thickness(18, 8, 18, 10) };

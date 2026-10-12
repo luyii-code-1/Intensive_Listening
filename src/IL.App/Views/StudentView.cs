@@ -21,8 +21,7 @@ namespace IL.App.Views;
 
 public sealed class StudentView : UserControl
 {
-    private static readonly BlurEffect SubtitleBlur = new() { Radius = 8 };
-    private static readonly BlurEffect ClozeBlur = new() { Radius = 4.5 };
+    private BlurEffect _transcriptBlur = new() { Radius = IL.Core.Settings.AppSettings.MaxTranscriptBlurIntensity };
     public Action<DictionaryQuery>? LookupWord { get; set; }
     private readonly StudentViewModel _vm;
     private readonly Grid _page = new() { RowDefinitions = new RowDefinitions("auto,*") };
@@ -66,6 +65,7 @@ public sealed class StudentView : UserControl
     public StudentView(StudentViewModel vm)
     {
         _vm = vm; DataContext = vm;
+        _transcriptBlur = new() { Radius = vm.TranscriptBlurIntensity };
         _lessonMotion = new(_lessons, _lessons.Children, frame => frame, _lessons.Children.Move);
         _materialCloze = WorkspaceUi.Button("显示本段挖空", () => { vm.ToggleMaterialCloze(); return Task.CompletedTask; });
         _allCloze = WorkspaceUi.Button("显示全部挖空", () => { vm.ShowAllCloze = !vm.ShowAllCloze; return Task.CompletedTask; });
@@ -505,7 +505,7 @@ public sealed class StudentView : UserControl
         }
         _words[row.Index] = words;
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("auto,*"), Margin = new Thickness(14, 12), MinHeight = 50 };
-        grid.Effect = _vm.ShowSubtitles ? null : SubtitleBlur;
+        grid.Effect = _vm.ShowSubtitles ? null : _transcriptBlur;
         var time = Text(row.Time, 12); time.VerticalAlignment = VerticalAlignment.Center; time.Margin = new Thickness(0, 0, 16, 0); grid.Children.Add(time);
         Grid.SetColumn(text, 1); grid.Children.Add(text);
         // Cache each realized sentence, including word blur effects; scrolling and
@@ -540,7 +540,7 @@ public sealed class StudentView : UserControl
         // blur surface for the entire transcript's full scrollable height.
         foreach (var row in _cueRows.Values)
             if (row.Child is Grid visual && visual.Children[0] is Control sentence)
-                sentence.Effect = _vm.ShowSubtitles ? null : SubtitleBlur;
+                sentence.Effect = _vm.ShowSubtitles ? null : _transcriptBlur;
         foreach (var cue in _words.Keys) UpdateCuePresentation(cue);
         UpdatePresentationButtons();
         ScheduleRealization();
@@ -554,7 +554,7 @@ public sealed class StudentView : UserControl
                 {
                     label.FontSize = _vm.TranscriptFontSize; label.LineHeight = _vm.TranscriptFontSize * 1.4;
                     var hidden = _vm.IsClozeHidden(cue, part.WordIndex!.Value);
-                    label.Effect = hidden ? ClozeBlur : null;
+                    label.Effect = hidden ? _transcriptBlur : null;
                     var cloze = _vm.CurrentLesson?.Manifest.Exercises.ClozeWordIndexes.GetValueOrDefault(cue)?.Contains(part.WordIndex.Value) == true;
                     word.Background = cloze ? Brush.Parse(hidden ? "#1FE81123" : "#0FE81123") : Brushes.Transparent;
                     word.BorderThickness = new Thickness(0, 0, 0, hidden ? 2 : 0); word.BorderBrush = Brush.Parse("#B90D1C");
@@ -616,6 +616,7 @@ public sealed class StudentView : UserControl
         if (e.PropertyName is nameof(_vm.HasMedia) or nameof(_vm.HasTranscript)) ShowPage();
         if (e.PropertyName == nameof(_vm.ActiveCue)) UpdateActiveCue();
         if (e.PropertyName == nameof(_vm.TranscriptFontSize)) UpdatePresentation();
+        if (e.PropertyName == nameof(_vm.TranscriptBlurIntensity)) { _transcriptBlur = new() { Radius = _vm.TranscriptBlurIntensity }; UpdatePresentation(); }
         if (e.PropertyName == nameof(_vm.Status) && !_handlingOperationStatus && !string.IsNullOrWhiteSpace(_vm.Status)
             && !_vm.Status.StartsWith("选择课程") && !_vm.Status.Contains(" 条字幕 · ") && _vm.Status != "音频已打开")
         {

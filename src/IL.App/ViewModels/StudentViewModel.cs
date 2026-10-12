@@ -89,6 +89,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty] private bool followTranscript = true;
     [ObservableProperty] private bool revealAnswer;
     [ObservableProperty] private int transcriptFontSize = 18;
+    [ObservableProperty] private int transcriptBlurIntensity = AppSettings.MaxTranscriptBlurIntensity;
 
     partial void OnSelectedLessonChanged(LessonListItem? value)
     {
@@ -135,7 +136,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         });
     }
 
-    public async Task RefreshAsync()
+    public async Task RefreshAsync(bool preservePlayback = false)
     {
         try
         {
@@ -143,10 +144,10 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
             _progress = await _progressStore.LoadAsync();
             var id = SelectedLesson?.Id;
             var loaded = await _library.LoadAsync();
-            Lessons.Clear();
-            foreach (var lesson in loaded.Lessons) Lessons.Add(new(lesson));
-            SelectedLesson = Lessons.FirstOrDefault(x => x.Id == id);
-            await CurrentLoad;
+            if (preservePlayback) _clearingSelection = true;
+            try { Lessons.Clear(); foreach (var lesson in loaded.Lessons) Lessons.Add(new(lesson)); SelectedLesson = Lessons.FirstOrDefault(x => x.Id == id); }
+            finally { _clearingSelection = false; }
+            if (!preservePlayback) await CurrentLoad;
             if (loaded.Issues.Count > 0) Status = $"{loaded.Issues.Count} 个课程无法读取";
         }
         catch (Exception ex) { Status = $"读取课库失败：{ex.Message}"; }

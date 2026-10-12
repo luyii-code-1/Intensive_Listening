@@ -29,6 +29,7 @@ public sealed class AppServices : IAsyncDisposable
     public MdnClient Mdn { get; }
     public GitHubUpdateChecker Updates { get; } = new();
     public ManagedUpdater ManagedUpdates { get; }
+    public ManagedLessonReceiver ManagedLessons { get; }
     public Func<Task<bool>>? ConfirmForcedCuts {get;set;}
     public bool Standalone {get;}
     public string? PreconfigurationError { get; private set; }
@@ -36,6 +37,7 @@ public sealed class AppServices : IAsyncDisposable
     {
         Standalone=standalone; Mdn=new(DataDirectory,AppBuildInfo.Version); if(!standalone)ManagedRuntime.Client=Mdn; ManagedUpdates=new(Mdn,DataDirectory); Projects=new(Path.Combine(DataDirectory,"projects"));
         Student=new(()=>new LibVlcAudioPlayer(),LibraryDirectory,new LessonProgressStore(Path.Combine(DataDirectory,"lesson_progress.json")),SettingsStore,dispatch);
+        ManagedLessons = new(Mdn, LibraryDirectory, DataDirectory);
         Queue=new(RunAsrAsync,FindDuplicateAsync,new QueueStore(Path.Combine(DataDirectory,"transcription_queue.json")),new SrtRecognitionCache(Path.Combine(DataDirectory,"cache","asr-srt")),()=>Settings.AsrCacheProfile);
         Transcriptions=new(Projects,Queue);
         Api=new(Projects,LibraryDirectory);Server=new(Api.DispatchAsync,Path.Combine(DataDirectory,"mcp","server.json"));
@@ -68,6 +70,7 @@ public sealed class AppServices : IAsyncDisposable
         settings=await SettingsStore.NormalizeAsync(settings); Settings=settings;AppLog.DebugEnabled=settings.DebugLogging;
         CrashMonitor.SetConsent(settings.TelemetryEnabled && !Standalone);
         Student.TranscriptFontSize=settings.TranscriptFontSize;
+        Student.TranscriptBlurIntensity=settings.TranscriptBlurIntensity;
         if(!ManagedRuntime.Allows("asr"))foreach(var job in Queue.Jobs.Where(j=>j.IsActive))Queue.Cancel(job.Id);
         if(!Standalone){if(settings.FileAssociationPrompted || ManagedRuntime.Policy.Settings.ContainsKey("fileAssociationEnabled"))await new IlpFileAssociation().ApplyAsync(settings.FileAssociationEnabled);if(settings.McpEnabled)await Server.StartAsync();else await Server.StopAsync();}
         await Telemetry.ApplyConsentAsync(settings.TelemetryEnabled,!Standalone);
@@ -96,5 +99,5 @@ public sealed class AppServices : IAsyncDisposable
         try{await new ProjectDelivery().CreateIlpAsync(project,temp);return await new StandaloneLessonExporter(AppContext.BaseDirectory,Path.Combine(AppContext.BaseDirectory,"tools","lesson_player_launcher.exe")).ExportAsync(temp,output);}
         finally{if(File.Exists(temp))File.Delete(temp);}
     }
-    public async ValueTask DisposeAsync(){ManagedUpdates.Dispose();Updates.Dispose();await Mdn.DisposeAsync();await Server.DisposeAsync();await Queue.DisposeAsync();await Transcriptions.DisposeAsync();await Student.DisposeAsync();await Telemetry.ShutdownAsync();}
+    public async ValueTask DisposeAsync(){ManagedLessons.Dispose();ManagedUpdates.Dispose();Updates.Dispose();await Mdn.DisposeAsync();await Server.DisposeAsync();await Queue.DisposeAsync();await Transcriptions.DisposeAsync();await Student.DisposeAsync();await Telemetry.ShutdownAsync();}
 }

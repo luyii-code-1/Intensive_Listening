@@ -84,6 +84,14 @@ public partial class MainWindow : Window
         };
         _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(_services.Server.IsRunning);},_services.Server);
         _settings.ConfigureUpdates(_services.Updates, _services.ManagedUpdates, InstallManagedUpdateAsync);
+        _settings.ConfigureManagedLessons(_services.ManagedLessons);
+        _services.ManagedLessons.IsInUse = uuid => OnUiAsync(() => Task.FromResult(_services.Student.CurrentLesson?.Id.Equals(uuid, StringComparison.OrdinalIgnoreCase) == true || _teacher.HasOpenProject));
+        _services.ManagedLessons.LibraryChanged = () => OnUiAsync(async () => { await _services.Student.RefreshAsync(preservePlayback: true); return true; });
+        _services.ManagedLessons.Imported += lesson => Dispatcher.UIThread.Post(() =>
+        {
+            var manifest = _services.Student.Lessons.FirstOrDefault(l => l.Id.Equals(lesson.PackageUuid, StringComparison.OrdinalIgnoreCase))?.Lesson.Manifest;
+            WorkspaceToast.Show(this, "组织精听包已导入", $"{manifest?.Title ?? lesson.Title} · 版本 {lesson.PackageVersion}\n{manifest?.CreatorDescription}");
+        });
         ManagedBanner.Text=_services.Mdn.Banner;ManagedBanner.IsVisible=ManagedBanner.Text.Length>0;
         _services.ManagedUpdates.AutomaticInstall=()=>OnUiAsync(async()=>{await InstallManagedUpdateAsync();return true;});
         _services.ManagedUpdates.NotificationRequested += update => Dispatcher.UIThread.Post(() =>
@@ -103,6 +111,7 @@ public partial class MainWindow : Window
         {
             ManagedBanner.Text=_services.Mdn.Banner;ManagedBanner.IsVisible=ManagedBanner.Text.Length>0;
             if(!await _initialized.Task)return;
+            _ = _services.ManagedLessons.RefreshAsync();
             if(_managedRevision==_services.Mdn.Policy.Revision){_ = _services.ManagedUpdates.RefreshAsync();return;}
             _managedRevision=_services.Mdn.Policy.Revision;
             var settings=await _services.SettingsStore.LoadAsync();await _services.ApplySettingsAsync(settings);ApplyTheme(settings);_settings.Populate(settings);
@@ -130,6 +139,7 @@ public partial class MainWindow : Window
         _settings.BackRequested=()=>Navigate(_settingsBack);
         _teacher.ProjectOpened=CollapsePane;
         _services.Student.PresentationChanged+=()=>{var path=_services.Student.AudioPath;if(path!=_openedAudioPath){_openedAudioPath=path;if(path!=null)CollapsePane();}};
+        _services.Student.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(_services.Student.HasMedia) && !_services.Student.HasMedia) _ = _services.ManagedLessons.RefreshAsync(); };
         _settings.WithdrawAgreementRequested=async()=>
         {
             var reset=_services.Settings with{EulaAcceptedVersion="",TelemetryEnabled=false,TelemetryPrompted=false};
@@ -379,7 +389,7 @@ public partial class MainWindow : Window
             if(_services.Queue.InterruptedCount>0&&await AppDialogs.ConfirmAsync(this,"恢复转写任务",$"发现 {_services.Queue.InterruptedCount} 个未完成的任务，继续处理？","恢复"))_services.Queue.ResumeInterrupted();
             _initialized.TrySetResult(true);
             _teacher.ApplyManagement();_student.ApplyManagement();
-            if(!_services.Standalone){_services.Mdn.Start();_ = _services.ManagedUpdates.RefreshAsync();}
+            if(!_services.Standalone){_services.Mdn.Start();_ = _services.ManagedUpdates.RefreshAsync();_ = _services.ManagedLessons.RefreshAsync();}
         }
         catch(Exception ex){AppLog.Warning("初始化失败",ex);_services.Student.Status=$"初始化失败：{ex.Message}";}
         finally { _initialized.TrySetResult(false); }

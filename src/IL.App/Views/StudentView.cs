@@ -322,6 +322,8 @@ public sealed class StudentView : UserControl
         if (_questionMaterialId == id && _questions.Content is not null) return;
         _questionMaterialId = id;
         _selectedAnswers.Clear(); _revealedAnswers.Clear();
+        if (_vm.CurrentLesson is { } lesson && _vm.ProgressFor(lesson.Id) is { } progress)
+        { foreach (var answer in progress.SelectedAnswers) _selectedAnswers[answer.Key] = answer.Value; _revealedAnswers.UnionWith(progress.RevealedAnswers); }
         if (_vm.Questions.Count == 0)
         { _questions.Content = new TextBlock { Text = "当前题目未设置", FontSize = 17, HorizontalAlignment = HorizontalAlignment.Center }; return; }
         var panel = new StackPanel { Spacing = 14 };
@@ -330,17 +332,18 @@ public sealed class StudentView : UserControl
     }
     private Control QuestionTemplate(LessonQuestion question)
     {
+        var lessonId = _vm.CurrentLesson?.Id;
         var panel = new StackPanel { Spacing = 7 };
         panel.Children.Add(Text($"第 {question.Number} 题  {question.Title}", 20, true));
         var options = new ListBox { SelectionMode = SelectionMode.Single, Background = Brushes.Transparent, BorderThickness = new Thickness(0), ItemsSource = question.Options.Select((option, index) => $"{(char)('A' + index)}. {option}").ToArray() };
-        if (_selectedAnswers.TryGetValue(question.Id, out var selected)) options.SelectedIndex = selected;
-        options.SelectionChanged += (_, _) => { if (options.SelectedIndex >= 0) _selectedAnswers[question.Id] = options.SelectedIndex; };
+        if (_selectedAnswers.TryGetValue(question.Id, out var selected) && selected < question.Options.Count) options.SelectedIndex = selected;
+        options.SelectionChanged += async (_, _) => { if (options.SelectedIndex >= 0 && lessonId is not null) { _selectedAnswers[question.Id] = options.SelectedIndex; await _vm.SaveAnswerStateAsync(lessonId, question.Id, selected: options.SelectedIndex); } };
         if (question.Options.Count > 0) panel.Children.Add(options);
         if (question.AnswerIndex is { } answer)
         {
             var answerText = Text($"答案：{(char)('A' + answer)}", 14, true); answerText.IsVisible = _revealedAnswers.Contains(question.Id);
             var reveal = new Button { Content = answerText.IsVisible ? "隐藏答案" : "显示答案", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 1, 0, 0) };
-            reveal.Click += (_, _) => { if (!_revealedAnswers.Add(question.Id)) _revealedAnswers.Remove(question.Id); answerText.IsVisible = _revealedAnswers.Contains(question.Id); reveal.Content = answerText.IsVisible ? "隐藏答案" : "显示答案"; };
+            reveal.Click += async (_, _) => { if (!_revealedAnswers.Add(question.Id)) _revealedAnswers.Remove(question.Id); answerText.IsVisible = _revealedAnswers.Contains(question.Id); reveal.Content = answerText.IsVisible ? "隐藏答案" : "显示答案"; if (lessonId is not null) await _vm.SaveAnswerStateAsync(lessonId, question.Id, revealed: answerText.IsVisible); };
             panel.Children.Add(reveal); panel.Children.Add(answerText);
         }
         return panel;

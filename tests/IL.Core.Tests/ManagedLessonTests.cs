@@ -55,12 +55,14 @@ public sealed class ManagedLessonTests : IDisposable
     {
         var old = Course(1); await new IlpImporter(Library).ImportFileAsync(old.Path);
         var progressPath = Path.Combine(_root, "lesson_progress.json");
-        await new LessonProgressStore(progressPath).SaveAsync(new Dictionary<string, LessonProgress> { [_uuid] = new(_uuid, 1000, DateTimeOffset.UtcNow, new HashSet<string> { "0:2" }) });
+        await new LessonProgressStore(progressPath).SaveAsync(new Dictionary<string, LessonProgress> { [_uuid] = new(_uuid, 1000, DateTimeOffset.UtcNow, new HashSet<string> { "0:2" }) { SelectedAnswers = new Dictionary<string, int> { ["q-1"] = 1 }, RevealedAnswers = new HashSet<string> { "q-1" } } });
         var before = await File.ReadAllBytesAsync(progressPath);
         var next = Course(2); _policy = new() { Lessons = [next.Item], DisabledFeatures = ["importIlp"] };
         using (var receiver = Receiver((_, _) => Task.FromResult(next.Path))) await receiver.RefreshAsync();
         Assert.Equal(2, (await new IlpLibrary(Library).FindByUuidAsync(_uuid))!.Manifest.PackageVersion);
         Assert.Equal(before, await File.ReadAllBytesAsync(progressPath)); Assert.Contains("imported", _receipts);
+        var progress = (await new LessonProgressStore(progressPath).LoadAsync())[_uuid];
+        Assert.Equal(1, progress.SelectedAnswers["q-1"]); Assert.Contains("q-1", progress.RevealedAnswers);
         using (var restarted = Receiver((_, _) => throw new Exception("must not download again"))) await restarted.RefreshAsync();
         Assert.Equal(1, _downloads); Assert.Equal(1, _refreshes);
     }

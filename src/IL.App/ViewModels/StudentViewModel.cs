@@ -418,9 +418,23 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     {
         if (_lesson is null) return;
         _lastProgressSave = DateTimeOffset.UtcNow;
-        _progress[_lesson.Id] = new(_lesson.Id, (long)(PositionSeconds * 1000), DateTimeOffset.Now, _revealed.ToHashSet());
+        var previous = _progress.GetValueOrDefault(_lesson.Id);
+        _progress[_lesson.Id] = new(_lesson.Id, (long)(PositionSeconds * 1000), DateTimeOffset.Now, _revealed.ToHashSet())
+        { SelectedAnswers = previous?.SelectedAnswers ?? new Dictionary<string, int>(), RevealedAnswers = previous?.RevealedAnswers ?? new HashSet<string>() };
         await _progressStore.SaveAsync(new Dictionary<string, LessonProgress>(_progress));
     }
+    public Task SaveAnswerStateAsync(string lessonId, string questionId, int? selected = null, bool? revealed = null) => RunAsync(async () =>
+    {
+        if (_lesson?.Id != lessonId) return;
+        var question = _lesson.Manifest.Exercises.Questions.FirstOrDefault(q => q.Id == questionId);
+        if (question is null || selected is int value && (value < 0 || value >= question.Options.Count)) return;
+        var previous = _progress.GetValueOrDefault(lessonId) ?? new(lessonId, 0, null, new HashSet<string>());
+        var answers = new Dictionary<string, int>(previous.SelectedAnswers); var shown = previous.RevealedAnswers.ToHashSet();
+        if (selected is int index) answers[questionId] = index;
+        if (revealed is true) shown.Add(questionId); else if (revealed is false) shown.Remove(questionId);
+        _progress[lessonId] = previous with { SelectedAnswers = answers, RevealedAnswers = shown };
+        await SaveProgressAsync();
+    });
     private async Task CloseMediaAsync()
     {
         await SaveProgressAsync();

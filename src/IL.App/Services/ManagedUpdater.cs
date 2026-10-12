@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text;
 using IL.Core.Management;
 using IL.Core.Updates;
 namespace IL.App.Services;
@@ -116,16 +117,44 @@ public sealed class ManagedUpdater : IDisposable
         {
             await Downloader(_ready).VerifyAsync(_file, _ready, _stop.Token);
             var helper = Path.Combine(Root, "install-update.ps1");
-            File.Copy(Path.Combine(AppContext.BaseDirectory, "tools", "install-update.ps1"), helper, true);
+            await File.WriteAllTextAsync(helper, await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "tools", "install-update.ps1")), new UTF8Encoding(true), _stop.Token);
             var plan = Path.Combine(Root, "plan.json");
-            File.WriteAllText(plan, JsonSerializer.Serialize(new { id = _ready.Id, version = _ready.Version, installer = _file, sha256 = _ready.Sha256, size = _ready.Size, processId = Environment.ProcessId, startedAt = Process.GetCurrentProcess().StartTime.ToUniversalTime(), executable = Environment.ProcessPath, appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar), dataDirectory = _data, automaticOobe = _policy().AutomaticOobe }));
-            var start = new ProcessStartInfo("powershell.exe") { UseShellExecute = false, CreateNoWindow = true };
-            foreach (var argument in new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", helper, "-Plan", plan }) start.ArgumentList.Add(argument);
-            using var process = Process.Start(start) ?? throw new IOException("无法启动更新助手。");
+            File.WriteAllText(plan, JsonSerializer.Serialize(new { id = _ready.Id, version = _ready.Version, organization = _configuration()?.OrganizationName, installer = _file, sha256 = _ready.Sha256, size = _ready.Size, processId = Environment.ProcessId, startedAt = Process.GetCurrentProcess().StartTime.ToUniversalTime(), executable = Environment.ProcessPath, appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar), dataDirectory = _data, automaticOobe = _policy().AutomaticOobe }));
+            await StartHelperAsync(helper, plan, Path.Combine(Root, Guid.NewGuid().ToString("N") + ".ready"), _stop.Token);
             _journal.AttemptOnce(_ready.Id); Status = "正在安装组织更新，应用即将重新启动";
         }
-        catch { _busy = false; throw; }
+        catch { _busy = false; Status = "更新助手启动失败，应用已保留；请查看 data/updates/install-update.log 并重试"; throw; }
         finally { Changed?.Invoke(); }
+    }
+    internal static async Task StartHelperAsync(string helper, string plan, string ready, CancellationToken ct, TimeSpan? timeout = null)
+    {
+        var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"))
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+        foreach (var argument in new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", helper, "-Plan", plan, "-Ready", ready }) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start) ?? throw new IOException("无法启动更新助手。");
+        var errors = process.StandardError.ReadToEndAsync();
+        var output = process.StandardOutput.ReadToEndAsync();
+        var deadline = Stopwatch.StartNew();
+        try
+        {
+            bool IsReady()
+            {
+                try { return File.Exists(ready) && File.ReadAllText(ready).Trim() == "ready"; }
+                catch (IOException) { return false; }
+            }
+            while (!IsReady())
+            {
+                if (process.HasExited)
+                {
+                    await File.AppendAllTextAsync(Path.Combine(Path.GetDirectoryName(plan)!, "install-update.log"), $"{DateTimeOffset.Now:O} helper exit {process.ExitCode}\n{await errors}\n{await output}\n", ct);
+                    throw new IOException("更新助手未能启动，应用已保留。请查看 data/updates/install-update.log。");
+                }
+                if (deadline.Elapsed >= (timeout ?? TimeSpan.FromSeconds(10))) throw new TimeoutException("更新助手启动超时，应用已保留。请重试更新。");
+                await Task.Delay(50, ct);
+            }
+        }
+        catch { if (!process.HasExited) process.Kill(); throw; }
+        finally { if (File.Exists(ready)) File.Delete(ready); }
     }
     public void Dispose() => _stop.Cancel();
 }

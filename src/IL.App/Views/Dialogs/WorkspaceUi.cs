@@ -89,8 +89,10 @@ internal static class WorkspaceUi
     public static Window Owner(Control control) => TopLevel.GetTopLevel(control) as Window ?? throw new InvalidOperationException("窗口尚未打开。");
     public static async Task<string?> Pick(Control control, string title, params string[] extensions)
     {
+        var patterns = extensions.Select(e => "*." + e).ToArray();
+        var supported = patterns.Length == 0 ? null : new FilePickerFileType($"{title} ({string.Join(";", patterns)})") { Patterns = patterns };
         var files = await Owner(control).StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = title, AllowMultiple = false,
-            FileTypeFilter = extensions.Length == 0 ? null : [new FilePickerFileType(title) { Patterns = extensions.Select(e => "*." + e).ToArray() }] });
+            FileTypeFilter = supported is null ? null : [supported], SuggestedFileType = supported });
         return files.FirstOrDefault()?.TryGetLocalPath();
     }
     public static async Task<string?> Save(Control control, string title, string filename, string extension)

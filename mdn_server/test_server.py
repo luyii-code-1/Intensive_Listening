@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -9,6 +10,7 @@ import uuid
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 from server import SecretStore, canonical, create_app, password_hash, initialize, MDN_LOOP, apply_transport
 
 
@@ -48,6 +50,75 @@ class ManagementTests(unittest.TestCase):
         csrf = self.login()
         self.client.post("/admin/device", data={"device_id": self.identifier, "action": "disable", "form_token": csrf})
         self.assertEqual(self.client.get("/api/policy", headers=self.headers).status_code, 403)
+
+    def test_expired_admin_session_returns_login_and_preserves_api_auth(self):
+        response = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/?message=login")
+        csrf = self.login()
+        self.client.cookies.clear()
+        response = self.save("all", {"lockAllSettings": True}, csrf)
+        self.assertIn("登录状态失效", response.text)
+        self.assertNotIn('id="policy-form"', response.text)
+        self.assertFalse(self.client.get("/api/policy", headers=self.headers).json()["lockAllSettings"])
+        self.assertEqual(self.client.get("/api/policy").status_code, 401)
+
+    def test_realtime_heartbeat_scoped_push_online_disconnect_and_revocation(self):
+        with self.client:
+            csrf = self.login()
+            second = str(uuid.uuid4())
+            token = self.register(second)
+            with self.client.websocket_connect("/api/connect", headers=self.headers) as ws:
+                self.assertEqual(ws.receive_json()["type"], "ready")
+                ws.send_json({"type": "heartbeat"})
+                self.assertEqual(ws.receive_json()["type"], "heartbeat")
+                self.assertTrue(next(d for d in self.client.get("/admin/status").json()["devices"] if d["id"] == self.identifier)["online"])
+                with self.client.websocket_connect("/api/connect", headers={"Authorization": "Bearer " + token}) as other:
+                    self.assertEqual(other.receive_json()["type"], "ready")
+                    self.save(second, {"settings": {"themeMode": "dark"}}, csrf)
+                    self.assertEqual(other.receive_json()["type"], "policy")
+                    ws.send_json({"type": "heartbeat"})
+                    self.assertEqual(ws.receive_json()["type"], "heartbeat")
+                    self.save("all", {"settings": {"fileAssociationEnabled": True}}, csrf)
+                    self.assertEqual(ws.receive_json()["type"], "policy")
+                    self.assertEqual(other.receive_json()["type"], "policy")
+                self.client.post("/admin/device", data={"device_id": self.identifier, "action": "disable", "form_token": csrf})
+                with self.assertRaises(WebSocketDisconnect):
+                    ws.receive_json()
+            self.assertFalse(next(d for d in self.client.get("/admin/status").json()["devices"] if d["id"] == self.identifier)["online"])
+            with self.assertRaises(WebSocketDisconnect):
+                with self.client.websocket_connect("/api/connect", headers=self.headers):
+                    pass
+            with self.assertRaises(WebSocketDisconnect):
+                with self.client.websocket_connect("/api/connect"):
+                    pass
+
+    def test_uploaded_package_signature_scope_download_and_cancellation(self):
+        csrf = self.login()
+        content = b"MZ" + b"installer-test" * 20000
+        query = {"scope": self.identifier, "mode": "cold", "version": "2.0.2", "filename": "setup.exe"}
+        response = self.client.post("/admin/update/upload", params=query, content=content, headers={"X-CSRF-Token": csrf})
+        self.assertEqual(response.status_code, 200)
+        update = self.client.get("/api/policy", headers=self.headers).json()["update"]
+        self.assertEqual(update["size"], len(content))
+        self.assertEqual(update["sha256"], hashlib.sha256(content).hexdigest())
+        self.private.public_key().verify(base64.b64decode(update["signature"]), canonical(update), padding.PKCS1v15(), hashes.SHA256())
+        self.assertEqual(self.client.get(update["url"], headers=self.headers).content, content)
+        self.assertEqual(self.client.get(update["url"]).status_code, 401)
+        other_token = self.register(str(uuid.uuid4()))
+        self.assertEqual(self.client.get(update["url"], headers={"Authorization": "Bearer " + other_token}).status_code, 403)
+        self.client.post("/admin/update/cancel", data={"scope": self.identifier, "form_token": csrf})
+        self.assertEqual(self.client.get(update["url"], headers=self.headers).status_code, 403)
+        self.assertFalse(list((self.root / "packages").glob("*.part")))
+
+    def test_upload_rejects_bad_package_and_does_not_change_policy(self):
+        csrf = self.login()
+        query = {"scope": "all", "mode": "ota", "version": "2.0.2", "filename": "bad.exe"}
+        self.assertEqual(self.client.post("/admin/update/upload", params=query, content=b"bad", headers={"X-CSRF-Token": csrf}).status_code, 422)
+        self.assertEqual(self.client.post("/admin/update/upload", params=query, content=b"MZ", headers={"X-CSRF-Token": "wrong"}).status_code, 403)
+        self.assertEqual(self.client.post("/admin/update/upload", params=query, content=b"MZ", headers={"X-CSRF-Token": csrf, "Content-Length": "2147483649"}).status_code, 413)
+        self.assertEqual(list((self.root / "packages").iterdir()), [])
+        self.assertIsNone(self.client.get("/api/policy", headers=self.headers).json()["update"])
 
     def test_manual_discovery_and_admin_authorized_leave(self):
         info = self.client.get("/api/info").json()

@@ -1,4 +1,39 @@
 "use strict";
+async function refreshOnline(){
+ try{
+  const response=await fetch("/admin/status");
+  if(response.redirected){location.assign(response.url);return;}
+  if(!response.ok)return;
+  const {devices}=await response.json();let count=0;
+  for(const device of devices){
+   const row=document.querySelector(`[data-id="${device.id}"]`);if(!row)continue;
+   const state=!device.enabled?"disabled":device.online?"online":"offline";
+   row.dataset.status=state;const badge=row.querySelector(".badge");badge.classList.toggle("online",state==="online");badge.textContent=state==="disabled"?"已禁用":state==="online"?"在线":"离线";
+   if(device.online)count++;
+  }
+  document.getElementById("online-count").textContent=count;
+  document.getElementById("offline-count").textContent=devices.length-count;
+  filterDevices();
+ }catch{ /* Retry on the next status refresh. */ }
+}
+setInterval(refreshOnline,5000);
+document.getElementById("upload-form").addEventListener("submit",event=>{
+ event.preventDefault();const form=event.currentTarget,file=form.elements.package.files[0],status=document.getElementById("upload-status"),button=form.querySelector("button"),progress=document.getElementById("upload-progress");
+ if(!file||file.size>2147483648){status.textContent="请选择不超过 2 GiB 的 EXE 安装包。";return;}
+ if(!confirm("向当前范围上传并发布此安装包？"))return;
+ const params=new URLSearchParams({scope:form.elements.scope.value,mode:form.elements.mode.value,version:form.elements.version.value,filename:file.name});
+ const request=new XMLHttpRequest();request.open("POST","/admin/update/upload?"+params);
+ request.setRequestHeader("X-CSRF-Token",form.elements.form_token.value);request.setRequestHeader("Content-Type","application/octet-stream");
+ button.disabled=true;progress.hidden=false;progress.value=0;status.textContent="正在上传安装包…";
+ request.upload.onprogress=event=>{if(event.lengthComputable){progress.value=event.loaded/event.total;status.textContent=`正在上传：${Math.round(progress.value*100)}%`;}};
+ request.onload=()=>{
+  if(new URL(request.responseURL).pathname==="/"){location.assign(request.responseURL);return;}
+  try{const result=JSON.parse(request.responseText);if(request.status>=200&&request.status<300){location.assign(result.redirect);return;}status.textContent=result.detail||"上传失败，请重试。";}catch{status.textContent="上传失败，请检查服务器连接。";}
+  button.disabled=false;
+ };
+ request.onerror=()=>{status.textContent="连接中断，上传失败，请重试。";button.disabled=false;};
+ request.send(file);
+});
 const labels={asrProvider:"识别引擎",cloudBaseUrl:"ASR 服务地址",cloudEndpoint:"ASR 路径",cloudModel:"ASR 模型",cloudApiKey:"ASR API Key",cloudTimeoutSeconds:"ASR 超时（秒）",cloudConcurrency:"ASR 并发数",cloudLanguage:"识别语言",translateChineseToEnglish:"中文翻译为英文",fileAssociationEnabled:"ILP 文件关联",mcpEnabled:"智能体 MCP 服务",localModelsDirectory:"本地模型目录",selectedLocalModel:"本地模型",detectedLocalModels:"已发现模型",themeMode:"应用主题",applicationFontFamily:"应用字体",applicationFontWeight:"字体字重",skipOpeningPrompts:"跳过打开提示",createProjectOnAudioImport:"导入音频时建立项目",transcriptFontSize:"字幕字号",playerKeyBindings:"播放器快捷键",debugLogging:"调试日志"};
 const featureLabels={playback:"播放与跳转",importAudio:"导入音频",importIlp:"导入精听包",authoring:"课程制作",asr:"音频转写",mcp:"智能体接管",export:"课程导出",importProject:"导入工程",dataMaintenance:"数据维护",apiConfiguration:"API 配置操作",updates:"组织更新"};
 const payload=JSON.parse(document.getElementById("initial-policy").textContent),schema=JSON.parse(document.getElementById("settings-schema").textContent),features=JSON.parse(document.getElementById("features-schema").textContent),query=new URLSearchParams(location.search);

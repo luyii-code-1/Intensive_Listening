@@ -1,5 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using IL.Core.Infrastructure;
@@ -14,6 +16,8 @@ public sealed class MdnClient : IAsyncDisposable
     private readonly SemaphoreSlim _request = new(1, 1);
     private readonly Channel<object> _events = Channel.CreateBounded<object>(new BoundedChannelOptions(128) { FullMode = BoundedChannelFullMode.DropOldest });
     private Task? _loop;
+    private Task? _realtime;
+    private ClientWebSocket? _socket;
     private string? _token;
     public MdnConfiguration? Configuration { get; private set; }
     public string DeviceId { get; }
@@ -44,8 +48,18 @@ public sealed class MdnClient : IAsyncDisposable
     }
     private sealed record State(string Server, string DeviceId, string Token, ManagedPolicy Policy);
     private void Save() => WindowsSecretStore.Save(Path.Combine(_root, "state.bin"), JsonSerializer.Serialize(new State(Configuration!.Server.AbsoluteUri, DeviceId, _token!, Policy), ManagedPolicy.Json));
-    public void Start() { if (Configuration is not null && _loop is null) _loop = LoopAsync(); }
-    public async Task JoinAsync(Uri server, MdnServerInfo identity, string enrollmentToken, CancellationToken ct = default)
+    public void Start()
+    {
+        if (Configuration is null || _loop is not null) return;
+        _loop = LoopAsync(); _realtime = RealtimeLoopAsync();
+    }
+    public async Task JoinYamlAsync(string path, CancellationToken ct = default)
+    {
+        if (Configuration is not null) throw new InvalidOperationException("已加入组织管理，无法导入注册配置。");
+        var config = MdnConfiguration.LoadFile(path);
+        await JoinAsync(config.Server, new MdnServerInfo(config.OrganizationName, config.UpdatePublicKey, config.ServerCertificateSha256), config.EnrollmentToken, ct, config.PollSeconds);
+    }
+    public async Task JoinAsync(Uri server, MdnServerInfo identity, string enrollmentToken, CancellationToken ct = default, int pollSeconds = 60)
     {
         if (Configuration is not null) throw new InvalidOperationException("已加入管理；更换组织前需要管理员授权退出。");
         if (string.IsNullOrWhiteSpace(enrollmentToken)) throw new FormatException("请填写组织共享注册凭证。");
@@ -53,7 +67,7 @@ public sealed class MdnClient : IAsyncDisposable
         {
             ServerUrl = server.AbsoluteUri, OrganizationName = identity.OrganizationName,
             EnrollmentToken = enrollmentToken.Trim(), UpdatePublicKey = identity.UpdatePublicKey,
-            ServerCertificateSha256 = identity.CertificateSha256, DisableSsl = server.Scheme == "http"
+            ServerCertificateSha256 = identity.CertificateSha256, DisableSsl = server.Scheme == "http", PollSeconds = Math.Clamp(pollSeconds, 15, 3600)
         };
         var handler = MdnConfiguration.CreateHttpHandler(configuration.ServerCertificateSha256);
         Directory.CreateDirectory(_root);
@@ -87,6 +101,7 @@ public sealed class MdnClient : IAsyncDisposable
             _http.Dispose(); _http = new(handler) { Timeout = TimeSpan.FromSeconds(10) }; Configuration = next;
             if (_token is not null) Save();
             Status = "连接方式已保存，正在重连"; Changed?.Invoke();
+            _socket?.Abort();
         }
         finally { _request.Release(); }
         await SynchronizeAsync(ct);
@@ -108,10 +123,11 @@ public sealed class MdnClient : IAsyncDisposable
         }
         finally { _request.Release(); }
         if (_loop is not null) await _loop;
+        if (_realtime is not null) await _realtime;
         File.Delete(Path.Combine(Path.GetDirectoryName(_root)!, "il_mdn_config.yaml"));
         foreach (var file in new[] { "state.bin", "events.bin" }) File.Delete(Path.Combine(_root, file));
         while (_events.Reader.TryRead(out _)) { }
-        _stop.Dispose(); _stop = new(); _loop = null; _token = null; Configuration = null;
+        _stop.Dispose(); _stop = new(); _loop = null; _realtime = null; _token = null; Configuration = null;
         Policy = new(); Status = "未加入管理"; Changed?.Invoke();
     }
     public void Report(string kind, object metrics)
@@ -130,6 +146,67 @@ public sealed class MdnClient : IAsyncDisposable
             catch (OperationCanceledException) { break; }
         }
     }
+    private async Task RealtimeLoopAsync()
+    {
+        var delay = 1;
+        while (!_stop.IsCancellationRequested)
+        {
+            try
+            {
+                if (_token is null) { await Task.Delay(1000, _stop.Token); continue; }
+                var config = Configuration!;
+                using var socket = new ClientWebSocket();
+                using var transport = new HttpMessageInvoker(MdnConfiguration.CreateHttpHandler(config.ServerCertificateSha256));
+                _socket = socket;
+                socket.Options.SetRequestHeader("Authorization", "Bearer " + _token);
+                var endpoint = new UriBuilder(new Uri(config.Server, "api/connect")) { Scheme = config.DisableSsl ? "ws" : "wss" }.Uri;
+                using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token))
+                { deadline.CancelAfter(TimeSpan.FromSeconds(10)); await socket.ConnectAsync(endpoint, transport, deadline.Token); }
+                delay = 1; Status = "已实时连接集控服务器"; Changed?.Invoke();
+                using var session = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+                var heartbeat = HeartbeatAsync(socket, session.Token);
+                try
+                {
+                    var buffer = new byte[4096];
+                    while (socket.State == WebSocketState.Open)
+                    {
+                        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(session.Token);
+                        timeout.CancelAfter(TimeSpan.FromSeconds(75));
+                        var count = 0;
+                        ValueWebSocketReceiveResult message;
+                        do
+                        {
+                            message = await socket.ReceiveAsync(buffer.AsMemory(count), timeout.Token);
+                            count += message.Count;
+                            if (message.MessageType == WebSocketMessageType.Close) break;
+                            if (message.MessageType != WebSocketMessageType.Text || count == buffer.Length && !message.EndOfMessage)
+                                throw new FormatException("实时消息无效。");
+                        } while (!message.EndOfMessage);
+                        if (message.MessageType == WebSocketMessageType.Close) break;
+                        using var json = JsonDocument.Parse(buffer.AsMemory(0, count));
+                        var kind = json.RootElement.GetProperty("type").GetString();
+                        if (kind is "ready" or "policy") await SynchronizeAsync(session.Token);
+                    }
+                }
+                finally { session.Cancel(); socket.Abort(); try { await heartbeat; } catch (OperationCanceledException) { } catch (WebSocketException) { } }
+                if (!_stop.IsCancellationRequested) { Status = "实时连接断开，将自动重连并轮询配置"; Changed?.Invoke(); }
+            }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested) { break; }
+            catch (Exception e) when (e is not OutOfMemoryException) { Status = "实时连接断开，将自动重连并轮询配置"; Changed?.Invoke(); }
+            finally { _socket = null; }
+            try { await Task.Delay(TimeSpan.FromSeconds(delay), _stop.Token); } catch (OperationCanceledException) { break; }
+            delay = Math.Min(30, delay * 2);
+        }
+    }
+    private static async Task HeartbeatAsync(ClientWebSocket socket, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(25), ct);
+            await socket.SendAsync(Encoding.UTF8.GetBytes("{\"type\":\"heartbeat\"}"), WebSocketMessageType.Text, true, ct);
+        }
+    }
+    public string? DownloadCredential(Uri target) => Configuration is {} config && target.Scheme == config.Server.Scheme && target.Authority == config.Server.Authority ? _token : null;
     public async Task SynchronizeAsync(CancellationToken ct = default)
     {
         if (Configuration is null) return;
@@ -148,7 +225,7 @@ public sealed class MdnClient : IAsyncDisposable
             using var response = await _http.SendAsync(request, ct); response.EnsureSuccessStatusCode();
             var policy = await response.Content.ReadFromJsonAsync<ManagedPolicy>(ManagedPolicy.Json, ct) ?? throw new FormatException(); policy.Validate();
             var different = JsonSerializer.Serialize(Policy, ManagedPolicy.Json) != JsonSerializer.Serialize(policy, ManagedPolicy.Json);
-            Policy = policy; Save(); Status = "已连接集控服务器"; if (different) Changed?.Invoke();
+            Policy = policy; Save(); Status = _socket?.State == WebSocketState.Open ? "已实时连接集控服务器" : "已连接集控服务器（轮询）"; if (different) Changed?.Invoke();
             Report("online", new { });
             await FlushEventsAsync(ct);
             await FlushCrashesAsync(ct); Changed?.Invoke();
@@ -193,6 +270,7 @@ public sealed class MdnClient : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _stop.Cancel(); if (_loop is not null) await _loop;
+        if (_realtime is not null) await _realtime;
         if (Configuration is not null) { try { using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)); await FlushEventsAsync(timeout.Token); } catch (Exception) { } }
         _http.Dispose(); _stop.Dispose();
     }

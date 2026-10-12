@@ -31,6 +31,10 @@ public sealed class MdnConfiguration
     {
         var path = Path.Combine(root, "il_mdn_config.yaml");
         if (!File.Exists(path) || !OperatingSystem.IsWindows()) return null;
+        return LoadFile(path);
+    }
+    public static MdnConfiguration LoadFile(string path)
+    {
         if (new FileInfo(path).Length > 32 * 1024) throw new FormatException("集控配置文件过大。");
         var configuration = new DeserializerBuilder().WithNamingConvention(UnderscoredNamingConvention.Instance).Build()
             .Deserialize<MdnConfiguration>(File.ReadAllText(path)) ?? throw new FormatException("集控配置为空。");

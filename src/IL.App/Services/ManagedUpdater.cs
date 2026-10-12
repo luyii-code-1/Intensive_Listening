@@ -26,7 +26,7 @@ public sealed class ManagedUpdater(MdnClient client, string data) : IDisposable
             var attempt = Path.Combine(Root, update.Id + ".attempt");
             if (_ready?.Id == update.Id) return;
             Status = "正在下载并校验组织更新…"; Changed?.Invoke();
-            var download = new ManagedUpdateDownloader(Root, client.Configuration.UpdatePublicKey,client.Configuration.ServerCertificateSha256);
+            var download = new ManagedUpdateDownloader(Root, client.Configuration.UpdatePublicKey,client.Configuration.ServerCertificateSha256,client.Configuration.Server,client.DownloadCredential(new Uri(update.Url)));
             var file = await download.DownloadAsync(update, _stop.Token);
             if(update.Id!=client.Policy.Update?.Id||!ManagedRuntime.Allows("updates"))return;
             _file=file; _ready = update;

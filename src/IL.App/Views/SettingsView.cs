@@ -274,11 +274,12 @@ public sealed class SettingsView : UserControl
             Orientation = Orientation.Horizontal, Spacing = 10, Margin = new Thickness(4, 6),
             Children = { WorkspaceUi.Icon(category.Icon), WorkspaceUi.Text(category.Title) }
         });
-        var scroll = new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+        var categoryHost = new WorkspaceContentHost();
+        var scroll = new ScrollViewer { Content = categoryHost, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
         navigation.SelectionChanged += (_, _) =>
         {
             if (navigation.SelectedItem is not SettingsCategory category) return;
-            scroll.Content = category.Content; scroll.Offset = default;
+            categoryHost.Content = category.Content; scroll.Offset = default;
         };
         navigation.SelectedIndex = 0;
         var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("180,*"), Margin = new Thickness(20, 0, 24, 24) };

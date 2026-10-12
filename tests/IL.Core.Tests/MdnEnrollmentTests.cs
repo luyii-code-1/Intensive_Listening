@@ -5,6 +5,25 @@ namespace IL.Core.Tests;
 
 public sealed class MdnEnrollmentTests
 {
+    [Fact]
+    public async Task SelectedYamlSupportsCustomFilenameAndRejectsManagedClient()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "il-mdn-selected-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "school.yml");
+            await File.WriteAllTextAsync(path, "schema_version: 1\norganization_name: Test\nserver_url: http://127.0.0.1:8443/\nenrollment_token: test-token\ndisable_ssl: true\npoll_seconds: 120\n");
+            var selected = MdnConfiguration.LoadFile(path);
+            Assert.True(selected.DisableSsl); Assert.Equal(120, selected.PollSeconds);
+            File.Copy(path, Path.Combine(root, "il_mdn_config.yaml"));
+            await using var client = new MdnClient(root, "2.0.1");
+            await Assert.ThrowsAsync<InvalidOperationException>(() => client.JoinYamlAsync(path));
+            Assert.Equal("Test", client.Configuration!.OrganizationName);
+        }
+        finally { Directory.Delete(root, true); }
+    }
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

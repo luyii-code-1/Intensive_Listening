@@ -43,6 +43,16 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        WindowDecorations = WindowDecorations.BorderOnly;
+        TitleDragArea.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+            if (e.ClickCount == 2) ToggleMaximize(); else BeginMoveDrag(e);
+        };
+        MinimizeWindow.Click += (_, _) => WindowState = WindowState.Minimized;
+        MaximizeWindow.Click += (_, _) => ToggleMaximize();
+        CloseWindow.Click += (_, _) => Close();
+        PropertyChanged += (_, e) => { if (e.Property == WindowStateProperty) MaximizeWindow.Content = WindowState == WindowState.Maximized ? "\uE923" : "\uE922"; };
         Icon = AppBrand.WindowIcon();
         if (OperatingSystem.IsWindows()) WindowState = WindowState.Maximized;
         _paneMotion = new(this, 320, width => ShellGrid.ColumnDefinitions[0].Width = new GridLength(width));
@@ -130,6 +140,7 @@ public partial class MainWindow : Window
         else
             Closing+=async(_,e)=>{if(_closing)return;e.Cancel=true;await ExitAsync();};
     }
+    private void ToggleMaximize() => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
     private void RestoreWorkspace() { if (_residence != null) _residence.Restore(); else { Show(); if(WindowState==WindowState.Minimized)WindowState=WindowState.Normal;Activate(); } }
     private async Task<IL.Core.Mcp.AgentApprovalDecision> RequestAgentApprovalAsync(string name)
     {

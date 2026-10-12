@@ -14,13 +14,14 @@ internal sealed class MdnSettingsView : UserControl
     private readonly TextBox _credential = new() { PasswordChar = '●', PlaceholderText = "组织共享注册凭证", MaxWidth = 420, HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly CheckBox _http = new() { Content = "使用 HTTP（禁用 SSL，仅用于可信内网）" };
     private readonly TextBlock _status = WorkspaceUi.Text("", 12), _organization = WorkspaceUi.Text("", 14);
-    private readonly Button _connect, _retry, _leave, _transport;
+    private readonly Button _connect, _retry, _leave, _transport, _yaml;
     private string? _shownServer;
     private bool _busy;
     public MdnSettingsView(MdnClient client)
     {
         _client = client;
         _connect = WorkspaceUi.Button("连接并加入管理", () => RunAsync(JoinAsync), true);
+        _yaml = WorkspaceUi.Button("选择 YAML 加入管理", () => RunAsync(JoinYamlAsync));
         _retry = WorkspaceUi.Button("立即重试连接", () => RunAsync(() => client.SynchronizeAsync()));
         _leave = WorkspaceUi.Button("退出组织管理", () => RunAsync(LeaveAsync));
         _transport = WorkspaceUi.Button("应用连接方式并重连", () => RunAsync(ChangeTransportAsync));
@@ -31,7 +32,7 @@ internal sealed class MdnSettingsView : UserControl
         panel.Children.Add(WorkspaceUi.Text("服务器 IP 或 HTTP/HTTPS 地址")); panel.Children.Add(_address); panel.Children.Add(_http);
         panel.Children.Add(WorkspaceUi.Text("注册凭证")); panel.Children.Add(_credential);
         panel.Children.Add(_status);
-        panel.Children.Add(new WrapPanel { Orientation = Orientation.Horizontal, Children = { _connect, _transport, _retry, _leave } });
+        panel.Children.Add(new WrapPanel { Orientation = Orientation.Horizontal, Children = { _connect, _yaml, _transport, _retry, _leave } });
         panel.Children.Add(WorkspaceUi.Text("退出管理需由管理员在后台授权。连接失败时保留已生效的组织策略。", 12));
         Content = panel;
         client.Changed += () => Dispatcher.UIThread.Post(Refresh);
@@ -51,6 +52,7 @@ internal sealed class MdnSettingsView : UserControl
         _address.IsEnabled = _credential.IsEnabled = !_busy && !managed;
         _http.IsEnabled = !_busy; _transport.IsVisible = managed; _transport.IsEnabled = !_busy;
         _connect.IsVisible = !managed; _connect.IsEnabled = !_busy;
+        _yaml.IsVisible = !managed; _yaml.IsEnabled = !_busy;
         _retry.IsVisible = _leave.IsVisible = managed;
         _retry.IsEnabled = _leave.IsEnabled = !_busy;
     }
@@ -70,6 +72,15 @@ internal sealed class MdnSettingsView : UserControl
         var identity = await MdnEnrollment.DiscoverAsync(server);
         if (!await ConfirmTransportAsync(server, identity)) return;
         await _client.JoinAsync(server, identity, credential); _credential.Text = "";
+    }
+    private async Task JoinYamlAsync()
+    {
+        if (_client.Configuration is not null) throw new InvalidOperationException("已加入组织管理，无法导入注册配置。");
+        var path = await WorkspaceUi.Pick(this, "选择组织注册配置", "yaml", "yml");
+        if (path is null) return;
+        var config = MdnConfiguration.LoadFile(path);
+        var identity = new MdnServerInfo(config.OrganizationName, config.UpdatePublicKey, config.ServerCertificateSha256);
+        if (await ConfirmTransportAsync(config.Server, identity)) await _client.JoinYamlAsync(path);
     }
     private async Task<bool> ConfirmTransportAsync(Uri server, MdnServerInfo identity)
     {

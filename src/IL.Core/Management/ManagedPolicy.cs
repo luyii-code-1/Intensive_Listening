@@ -24,6 +24,9 @@ public sealed record ManagedPolicy
     private static readonly string[] LocalOnly = ["eulaAcceptedVersion", "completedInstallationId", "telemetryEnabled", "telemetryPrompted", "fileAssociationPrompted"];
     public static string[] SettingNames => AppSettings.Defaults().ToJson().Select(p => p.Key).Except(LocalOnly).ToArray();
     public bool IsLocked(string name) => !LocalOnly.Contains(name) && (LockAllSettings || LockedSettings.Contains(name) || Settings.ContainsKey(name) || HideAsrConfiguration && IsAsr(name));
+    public string[] AllowedImportExtensions() =>
+        (DisabledFeatures.Contains("importIlp") ? Array.Empty<string>() : new[] { "ilp" })
+        .Concat(DisabledFeatures.Contains("importAudio") ? Array.Empty<string>() : new[] { "mp3", "m4a", "wav", "flac", "ogg" }).ToArray();
     public static bool IsAsr(string name) => name.StartsWith("cloud", StringComparison.Ordinal) || name.StartsWith("local", StringComparison.Ordinal) || name is "asrProvider" or "selectedLocalModel" or "detectedLocalModels" or "translateChineseToEnglish";
     public void Validate()
     {
@@ -65,5 +68,10 @@ public static class ManagedRuntime
         if(Client?.Configuration is {} config)text=text.Replace(config.EnrollmentToken,"[managed]",StringComparison.Ordinal);
         return text;
     }
-    public static void Require(string feature) { if (!Allows(feature)) throw new InvalidOperationException("该功能由您的组织管理。"); }
+    public static void Require(string feature) { if (!Allows(feature)) throw new ManagedFeatureDeniedException(feature); }
+}
+
+public sealed class ManagedFeatureDeniedException(string feature) : InvalidOperationException("该功能由您的组织管理。")
+{
+    public string Feature { get; } = feature;
 }

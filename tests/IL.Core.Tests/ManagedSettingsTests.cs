@@ -8,6 +8,22 @@ namespace IL.Core.Tests;
 
 public sealed class ManagedSettingsTests
 {
+    [Theory]
+    [InlineData(false, false, 6)]
+    [InlineData(true, false, 5)]
+    [InlineData(false, true, 1)]
+    [InlineData(true, true, 0)]
+    public void ImportPickerHonorsBothIndependentFeatureRestrictions(bool ilpDisabled, bool audioDisabled, int count)
+    {
+        var features = new List<string>();
+        if (ilpDisabled) features.Add("importIlp"); if (audioDisabled) features.Add("importAudio");
+        var policy = new ManagedPolicy { DisabledFeatures = features.ToArray() };
+        policy.Validate(); var extensions = policy.AllowedImportExtensions();
+        Assert.Equal(count, extensions.Length);
+        Assert.Equal(!ilpDisabled, extensions.Contains("ilp"));
+        Assert.Equal(!audioDisabled, extensions.Contains("mp3"));
+        Assert.DoesNotContain("playback", policy.DisabledFeatures);
+    }
     [Fact]
     public void ServerAndClientAgreeOnEveryManagedSettingAndType()
     {

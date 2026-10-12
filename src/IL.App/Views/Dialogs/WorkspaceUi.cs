@@ -54,7 +54,21 @@ internal static class WorkspaceUi
     {
         var button = new Button { Content = title };
         if (primary) button.Classes.Add("accent");
-        button.Click += async (_, _) => { button.IsEnabled = false; try { await action(); } finally { button.IsEnabled = true; } };
+        button.Click += async (_, _) =>
+        {
+            Control origin = TopLevel.GetTopLevel(button) ?? (Control)button;
+            button.IsEnabled = false;
+            try
+            {
+                if (await IL.App.Services.UiActionRunner.RunAsync(action) is { } error)
+                {
+                    var managed = error is IL.Core.Management.ManagedFeatureDeniedException;
+                    if (!managed) IL.Core.Infrastructure.AppLog.Warning("界面操作未完成", error);
+                    IL.App.Views.WorkspaceToast.Show(origin, managed ? "组织管理限制" : "操作未完成", error.Message, true);
+                }
+            }
+            finally { button.IsEnabled = true; }
+        };
         return button;
     }
     public static Button NextButton(string title, Func<Task> action)

@@ -202,7 +202,7 @@ public sealed class StudentView : UserControl
         {
             var openLesson = WorkspaceUi.Button("打开课程", PickLessonAsync); openLesson.Content = Row(WorkspaceUi.Icon("open_file"), Text("打开课程")); openLesson.IsEnabled = _vm.Lessons.Count > 0;
             var import = WorkspaceUi.Button("导入精听包或音频", ImportAsync, true); import.Content = Row(_importing ? new FAProgressRing { IsActive = true, Width = 16, Height = 16 } : WorkspaceUi.Icon("download"), Text("导入精听包或音频")); import.IsEnabled = !_importing;
-            var commands = Row(openLesson, import); commands.HorizontalAlignment = HorizontalAlignment.Left; header.Children.Add(ManagedUi.Wrap(commands,()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp")));
+            var commands = Row(openLesson, ManagedUi.Wrap(import,()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp"))); commands.HorizontalAlignment = HorizontalAlignment.Left; header.Children.Add(commands);
         }
         _header.Content = header;
     }
@@ -211,7 +211,7 @@ public sealed class StudentView : UserControl
         BuildHeader();
         if (_vm.Lessons.Count == 0)
         {
-            var actions = Row(WorkspaceUi.Button("导入精听包或音频", ImportAsync, true)); actions.HorizontalAlignment = HorizontalAlignment.Center;
+            var actions = Row(ManagedUi.Wrap(WorkspaceUi.Button("导入精听包或音频", ImportAsync, true),()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp"))); actions.HorizontalAlignment = HorizontalAlignment.Center;
             var empty = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 360 };
             var icon = WorkspaceUi.Icon("open_file", 40); icon.HorizontalAlignment = HorizontalAlignment.Center; icon.Margin = new Thickness(0, 0, 0, 18);
             empty.Children.Add(icon); empty.Children.Add(new TextBlock { Text = "打开音频或精听包", FontSize = 17, FontWeight = FontWeight.Bold, TextAlignment = TextAlignment.Center });
@@ -682,7 +682,10 @@ public sealed class StudentView : UserControl
     }
     private async Task ImportAsync()
     {
-        if (_importing || await WorkspaceUi.Pick(this, "导入精听包或音频", "ilp", "mp3", "m4a", "wav", "flac", "ogg") is not { } file) return;
+        if (_importing) return;
+        var extensions = (IL.Core.Management.ManagedRuntime.IsManaged ? IL.Core.Management.ManagedRuntime.Policy : new IL.Core.Management.ManagedPolicy()).AllowedImportExtensions();
+        if (extensions.Length == 0) { ShowNotice("组织管理限制", "音频和精听包导入均已由您的组织禁用。", true); return; }
+        if (await WorkspaceUi.Pick(this, "导入精听包或音频", extensions) is not { } file) return;
         if (Path.GetExtension(file).Equals(".ilp", StringComparison.OrdinalIgnoreCase)) await ImportFileAsync(file);
         else
         {
@@ -704,11 +707,11 @@ public sealed class StudentView : UserControl
     }
     public async Task ImportFileAsync(string file, bool standalone = false)
     {
-        IL.Core.Management.ManagedRuntime.Require("importIlp");
         if (_importing) return;
         _importing = _handlingOperationStatus = true; BuildHeader();
         try
         {
+            IL.Core.Management.ManagedRuntime.Require("importIlp");
             var manifest = await _vm.ReadManifestAsync(file); var existing = _vm.Lessons.FirstOrDefault(l => l.Id == manifest.PackageUuid);
             if (existing is not null)
             {
@@ -745,6 +748,7 @@ public sealed class StudentView : UserControl
             }
             await ImportLessonAsync(file);
         }
+        catch (IL.Core.Management.ManagedFeatureDeniedException ex) { ShowNotice("组织管理限制", ex.Message, true); }
         catch (Exception ex) { _vm.Status = ex.Message; await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "无法导入", ex.Message, "完成"); }
         finally { _importing = _handlingOperationStatus = false; BuildHeader(); }
     }

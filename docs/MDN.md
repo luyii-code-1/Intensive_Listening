@@ -55,7 +55,7 @@ disable_ssl: false
 
 YAML 含共享注册凭证，分发给组织的安装环境。注册时生成独立设备凭证，服务端仅保存其 SHA-256；客户端使用 DPAPI 保存凭证和策略缓存，之后以设备凭证请求策略和发送诊断。相同 UUID 再次注册会被拒绝，以防覆盖已有设备凭证。凭据丢失时，管理员选择“重置设备注册”，客户端退出后删除 `data\mdn\state.bin` 再启动。
 
-设备 UUID 保存在 `data\device-id.txt`，与注册表 `Software\Intensive Listening\InstallUuid`、MDN 注册和上报使用相同值。升级沿用设备 UUID；旧安装优先迁移已有 UUID。安装器更新注册表并同步 data，应用也同步 HKCU。OOBE 使用独立的 `data\installation-cycle.txt` 安装周期标记，每次安装更新此标记。
+设备 UUID 保存在 `data\device-id.txt`，与注册表 `Software\Intensive Listening\InstallUuid`、MDN 注册和上报使用相同值。升级沿用设备 UUID；旧安装优先迁移已有 UUID。安装器更新注册表并同步 data，应用也同步 HKCU。OOBE 使用独立的 `data\installation-cycle.txt` 安装周期标记；首次 UUID 注册或清空 data 后展示完整引导，覆盖安装只显示欢迎页。预设与详细规则见 [安装部署配置](DEPLOYMENT_PRESETS.md)。
 
 OOBE 顶部显示组织名。主窗口顶部显示组织名和设备 UUID 最后一节。服务不可达时继续应用本地缓存的策略，并自动重试。
 

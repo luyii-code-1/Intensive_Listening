@@ -56,6 +56,20 @@ begin
   Result := ExpandConstant('{param:MDNDATA|{localappdata}\Intensive Listening\data}');
 end;
 
+function InitializeSetup: Boolean;
+var Source, Target: String;
+begin
+  Result := True;
+  Source := ExpandConstant('{src}\il_precfg.yaml');
+  if FileExists(Source) then begin
+    Target := AddBackslash(ManagedDataDirectory) + 'il_precfg.yaml';
+    if not ForceDirectories(ManagedDataDirectory) or not FileCopy(Source, Target, False) then begin
+      MsgBox('无法复制预设配置到应用数据目录。', mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+end;
+
 function ValidDeviceId(Value: String): Boolean;
 var I: Integer;
 begin
@@ -69,13 +83,19 @@ end;
 
 procedure RecordDeviceIdentity;
 var
-  Value: String;
+  Value, Registered: String;
+  FirstRegistration: Boolean;
   Saved: AnsiString;
   Device: TManagedGuid;
   DataPath: String;
 begin
   DataPath := ManagedDataDirectory;
   if not ForceDirectories(DataPath) then RaiseException('无法建立应用数据目录。');
+  Registered := '';
+  RegQueryStringValue(HKLM64, 'Software\Intensive Listening', 'InstallUuid', Registered);
+  if not ValidDeviceId(Registered) then RegQueryStringValue(HKLM32, 'Software\Intensive Listening', 'InstallUuid', Registered);
+  if not ValidDeviceId(Registered) then RegQueryStringValue(HKCU, 'Software\Intensive Listening', 'InstallUuid', Registered);
+  FirstRegistration := not ValidDeviceId(Registered);
   Value := '';
   if LoadStringFromFile(AddBackslash(DataPath) + 'device-id.txt', Saved) then Value := Trim(String(Saved));
   if not ValidDeviceId(Value) then RegQueryStringValue(HKLM64, 'Software\Intensive Listening', 'InstallUuid', Value);
@@ -88,6 +108,9 @@ begin
   if not SaveStringToFile(AddBackslash(DataPath) + 'device-id.txt', Value, False) then RaiseException('无法保存设备 UUID。');
   if not RegWriteStringValue(HKLM64, 'Software\Intensive Listening', 'InstallUuid', Value) then RaiseException('无法同步设备 UUID。');
   RegWriteStringValue(HKCU, 'Software\Intensive Listening', 'InstallUuid', Value);
+  if FirstRegistration then Registered := 'full' else Registered := 'welcome';
+  if not SaveStringToFile(AddBackslash(DataPath) + 'installation-onboarding.txt', Registered, False) then
+    RaiseException('无法记录安装引导类型。');
 end;
 
 function NormalizedDirectory(Path: String): String;

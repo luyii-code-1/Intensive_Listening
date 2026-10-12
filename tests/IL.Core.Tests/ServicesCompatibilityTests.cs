@@ -17,7 +17,7 @@ public sealed class ServicesCompatibilityTests : IDisposable
     {
         var path=Path.Combine(_root,"settings.json");await File.WriteAllTextAsync(path,"""{"asrProvider":"local","cloudLanguage":"zh","cloudTimeoutSeconds":"240","cloudConcurrency":20,"transcriptFontSize":40,"telemetryEnabled":true,"telemetryPrompted":true,"eulaAcceptedVersion":"1.0.1","detectedLocalModels":["foo",12]}""");
         var store=new AppSettingsStore(path);var settings=await store.LoadAsync();Assert.Equal(AsrProviderKind.Cloud,settings.AsrProvider);Assert.Equal("en",settings.CloudLanguage);Assert.Equal(240,settings.CloudTimeoutSeconds);Assert.Equal(10,settings.CloudConcurrency);Assert.Equal(28,settings.TranscriptFontSize);Assert.True(settings.TelemetryEnabled);Assert.True(settings.TelemetryPrompted);Assert.Equal("1.0.1",settings.EulaAcceptedVersion);Assert.Equal(["foo"],settings.DetectedLocalModels);
-        Assert.Empty(settings.PlayerKeyBindings);
+        Assert.Equal("PageUp", settings.PlayerKeyBindings[PlayerShortcutAction.TogglePlayback]);
         await store.SaveAsync(settings with{CloudApiKey="secret",McpEnabled=true,ApplicationFontFamily="Segoe UI",ApplicationFontWeight=700,
             PlayerKeyBindings=new Dictionary<PlayerShortcutAction,string>{{PlayerShortcutAction.TogglePlayback,"PageUp"},{PlayerShortcutAction.NextCue,"PageDown"}}});
         var saved=await store.LoadAsync();Assert.Equal("PageUp",saved.PlayerKeyBindings[PlayerShortcutAction.TogglePlayback]);Assert.Equal("PageDown",saved.PlayerKeyBindings[PlayerShortcutAction.NextCue]);

@@ -31,6 +31,7 @@ public sealed class AppServices : IAsyncDisposable
     public ManagedUpdater ManagedUpdates { get; }
     public Func<Task<bool>>? ConfirmForcedCuts {get;set;}
     public bool Standalone {get;}
+    public string? PreconfigurationError { get; private set; }
     public AppServices(Action<Action> dispatch,bool standalone)
     {
         Standalone=standalone; Mdn=new(DataDirectory,AppBuildInfo.Version); if(!standalone)ManagedRuntime.Client=Mdn; ManagedUpdates=new(Mdn,DataDirectory); Projects=new(Path.Combine(DataDirectory,"projects"));
@@ -49,7 +50,19 @@ public sealed class AppServices : IAsyncDisposable
         Api.TranscriptReplacing=project=>{if(project.TranscriptionJobId is {} id){Queue.Cancel(id);Queue.MarkSrtConsumed(id);}};
         Queue.Completed+=(job,cacheHit)=>{_ = Telemetry.AsrCompletedAsync(job.CacheProfile,job.StartedAt,job.FinishedAt,cacheHit);};
     }
-    public async Task InitializeAsync(){Settings=await SettingsStore.LoadAsync();AppLog.DebugEnabled=Settings.DebugLogging;await Queue.RestoreAsync();await Transcriptions.RestorePendingAsync();await Student.RefreshAsync();}
+    public async Task InitializeAsync()
+    {
+        if (!Standalone)
+        {
+            var hasSettings = SettingsStore.HasPersonalSettings;
+            InstallationOnboarding.Prepare(DataDirectory, hasSettings);
+            if (!hasSettings) await SettingsStore.SaveAsync(AppSettings.Defaults() with { FileAssociationEnabled = true, McpEnabled = true });
+            try { await DeploymentPreset.ApplyAsync(SettingsStore, force: !hasSettings); }
+            catch (Exception e) when (e is IOException or FormatException or UnauthorizedAccessException or YamlDotNet.Core.YamlException)
+            { PreconfigurationError = "预设配置未应用，请检查 il_precfg.yaml 的格式和字段。"; AppLog.Warning(PreconfigurationError); }
+        }
+        Settings=await SettingsStore.LoadAsync();AppLog.DebugEnabled=Settings.DebugLogging;await Queue.RestoreAsync();await Transcriptions.RestorePendingAsync();await Student.RefreshAsync();
+    }
     public async Task ApplySettingsAsync(AppSettings settings)
     {
         settings=await SettingsStore.NormalizeAsync(settings); Settings=settings;AppLog.DebugEnabled=settings.DebugLogging;

@@ -343,10 +343,11 @@ public partial class MainWindow : Window
             if(!_services.Standalone&&_services.Settings.NeedsOnboarding(installationId))
             {
                 var legal=Path.Combine(AppContext.BaseDirectory,"assets","legal");
-                var settings=await AppDialogs.FirstRunAsync(this,_services.Settings,await File.ReadAllTextAsync(Path.Combine(legal,"eula_zh_cn.txt")),await File.ReadAllTextAsync(Path.Combine(legal,"privacy_zh_cn.txt")));
+                var settings=await AppDialogs.FirstRunAsync(this,_services.Settings,await File.ReadAllTextAsync(Path.Combine(legal,"eula_zh_cn.txt")),await File.ReadAllTextAsync(Path.Combine(legal,"privacy_zh_cn.txt")),InstallationOnboarding.WelcomeOnly(_services.DataDirectory));
                 if(settings is null){await ExitAsync();return;}settings=settings with { CompletedInstallationId=installationId };await _services.SettingsStore.SaveAsync(settings);_settings.Populate(settings);ApplyTheme(settings);await _services.ApplySettingsAsync(settings);
             }
             else await _services.ApplySettingsAsync(_services.Settings);
+            if (_services.PreconfigurationError is {} presetError) WorkspaceToast.Show(this, "预设配置", presetError, true);
             _residence?.UpdateMcpState(_services.Server.IsRunning);
             for(var i=0;i<Program.Arguments.Length;i++)
             {

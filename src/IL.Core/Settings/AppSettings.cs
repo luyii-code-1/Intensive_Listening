@@ -28,7 +28,7 @@ public sealed record AppSettings
     public bool SkipOpeningPrompts { get; init; } = true;
     public bool CreateProjectOnAudioImport { get; init; } = true;
     public int TranscriptFontSize { get; init; } = 18;
-    public IReadOnlyDictionary<PlayerShortcutAction, string> PlayerKeyBindings { get; init; } = new Dictionary<PlayerShortcutAction, string>();
+    public IReadOnlyDictionary<PlayerShortcutAction, string> PlayerKeyBindings { get; init; } = DefaultPlayerBindings(new Dictionary<PlayerShortcutAction, string>());
     public bool DebugLogging { get; init; }
     public bool TelemetryEnabled { get; init; }
     public bool TelemetryPrompted { get; init; }
@@ -64,6 +64,14 @@ public sealed record AppSettings
                 if (Enum.TryParse<PlayerShortcutAction>(pair.Key, true, out var action) && Enum.IsDefined(action) &&
                     pair.Value is JsonValue value && value.TryGetValue<string>(out var key) && !string.IsNullOrWhiteSpace(key))
                     bindings[action] = key;
+        return DefaultPlayerBindings(bindings);
+    }
+    public static IReadOnlyDictionary<PlayerShortcutAction, string> DefaultPlayerBindings(IReadOnlyDictionary<PlayerShortcutAction, string> current)
+    {
+        var bindings = new Dictionary<PlayerShortcutAction, string>(current);
+        if ((!bindings.TryGetValue(PlayerShortcutAction.TogglePlayback, out var key) || string.IsNullOrWhiteSpace(key)) &&
+            !bindings.Values.Any(k => string.Equals(k, "PageUp", StringComparison.OrdinalIgnoreCase)))
+            bindings[PlayerShortcutAction.TogglePlayback] = "PageUp";
         return bindings;
     }
     internal static bool Bool(JsonObject j, string k, bool d = false) => j[k] is JsonValue v && v.TryGetValue<bool>(out var b) ? b : d;
@@ -75,8 +83,23 @@ public sealed record AppSettings
 public sealed class AppSettingsStore(string? settingsPath = null)
 {
     public string FilePath => settingsPath ?? Path.Combine(AppDirectories.DataDirectory(), "settings.json");
-    private async Task<AppSettings> LoadPersonalAsync() { try { return File.Exists(FilePath) && JsonNode.Parse(await File.ReadAllTextAsync(FilePath)) is JsonObject j ? AppSettings.FromJson(j) : AppSettings.Defaults(); } catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return AppSettings.Defaults(); } }
+    internal async Task<AppSettings> LoadPersonalAsync() { try { return File.Exists(FilePath) && JsonNode.Parse(await File.ReadAllTextAsync(FilePath)) is JsonObject j ? AppSettings.FromJson(j) : AppSettings.Defaults(); } catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return AppSettings.Defaults(); } }
     public async Task<AppSettings> LoadAsync() => IL.Core.Management.ManagedRuntime.Effective(await LoadPersonalAsync());
     public async Task<AppSettings> NormalizeAsync(AppSettings settings) => IL.Core.Management.ManagedRuntime.Effective(IL.Core.Management.ManagedRuntime.IsManaged ? IL.Core.Management.ManagedRuntime.Policy.PreservePersonal(settings, await LoadPersonalAsync()) : settings);
-    public async Task SaveAsync(AppSettings settings) { if (IL.Core.Management.ManagedRuntime.IsManaged) settings = IL.Core.Management.ManagedRuntime.Policy.PreservePersonal(settings, await LoadPersonalAsync()); Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(FilePath))!); await File.WriteAllTextAsync(FilePath, settings.ToJson().ToJsonString(AppSettings.JsonOptions)); }
+    public bool HasPersonalSettings
+    {
+        get { try { return File.Exists(FilePath) && JsonNode.Parse(File.ReadAllText(FilePath)) is JsonObject; } catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return false; } }
+    }
+    internal async Task SavePersonalAsync(AppSettings settings)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(FilePath))!);
+        var temporary = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try { await File.WriteAllTextAsync(temporary, settings.ToJson().ToJsonString(AppSettings.JsonOptions)); File.Move(temporary, FilePath, true); }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+    public async Task SaveAsync(AppSettings settings)
+    {
+        if (IL.Core.Management.ManagedRuntime.IsManaged) settings = IL.Core.Management.ManagedRuntime.Policy.PreservePersonal(settings, await LoadPersonalAsync());
+        await SavePersonalAsync(settings);
+    }
 }

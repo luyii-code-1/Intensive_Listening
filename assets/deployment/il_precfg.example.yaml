@@ -1,0 +1,9 @@
+schema_version: 1
+settings:
+  themeMode: system
+  transcriptFontSize: 20
+  createProjectOnAudioImport: true
+  fileAssociationEnabled: true
+  mcpEnabled: false
+  playerKeyBindings:
+    togglePlayback: PageUp

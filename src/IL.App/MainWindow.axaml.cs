@@ -139,7 +139,7 @@ public partial class MainWindow : Window
         _settings.BackRequested=()=>Navigate(_settingsBack);
         _teacher.ProjectOpened=CollapsePane;
         _services.Student.PresentationChanged+=()=>{var path=_services.Student.AudioPath;if(path!=_openedAudioPath){_openedAudioPath=path;if(path!=null)CollapsePane();}};
-        _services.Student.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(_services.Student.HasMedia) && !_services.Student.HasMedia) _ = _services.ManagedLessons.RefreshAsync(); };
+        _services.Student.PropertyChanged += (_, e) => { if (!standalone && e.PropertyName == nameof(_services.Student.HasMedia) && !_services.Student.HasMedia) _ = _services.ManagedLessons.RefreshAsync(); };
         _settings.WithdrawAgreementRequested=async()=>
         {
             var reset=_services.Settings with{EulaAcceptedVersion="",TelemetryEnabled=false,TelemetryPrompted=false};

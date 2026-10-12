@@ -690,7 +690,7 @@ class IntensiveListeningApp {
           </div>
         </div>
         <div class="lesson-row-actions">
-          <button class="fluent-btn sm filled btn-open-item">打开</button>
+          <button class="fluent-btn sm outline btn-open-item">打开</button>
           <button class="icon-btn btn-delete-item" title="删除记录">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="3 6 5 6 21 6"></polyline>
@@ -1701,8 +1701,8 @@ class IntensiveListeningApp {
 
   reportTelemetryEvent(name, properties = {}) {
     const payload = {
-      app_version: '1.0.1+9',
-      commit_id: '25f9062',
+      app_version: '1.1.0+10',
+      commit_id: '64b1338',
       ...properties,
       timestamp: Date.now()
     };

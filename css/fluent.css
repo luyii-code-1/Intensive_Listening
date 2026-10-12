@@ -1,15 +1,19 @@
 /* Fluent Design System CSS - Matching Dart Intensive Listening App */
 
 :root {
-  --font-family: 'SourceHanSansSC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  
-  /* Fluent Red Accent */
-  --accent: #d13438;
-  --accent-hover: #c42b1c;
-  --accent-pressed: #a80000;
-  --accent-tint: rgba(209, 52, 56, 0.08);
-  --accent-tint-hover: rgba(209, 52, 56, 0.14);
-  --accent-light: rgba(209, 52, 56, 0.12);
+  /* 字体：中文界面黑体，英文听力材料衬线 */
+  --font-family: 'SourceHanSansSC', 'Source Han Sans SC', 'Segoe UI', -apple-system,
+                 BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-en: 'Source Serif 4', 'Source Serif Pro', Georgia, 'Times New Roman',
+             'Source Han Sans SC', 'PingFang SC', 'Microsoft YaHei', serif;
+
+  /* 品牌朱红：取自 logo #B80F28。红只标「当前」或「主操作」 */
+  --accent: #B80F28;
+  --accent-hover: #8E0B1E;
+  --accent-pressed: #6E0817;
+  --accent-tint: #F6E7E9;
+  --accent-tint-hover: #EFD6D9;
+  --accent-light: #F6E7E9;
   --accent-text: #ffffff;
 
   /* WinUI 3 Motion Tokens */
@@ -17,76 +21,77 @@
   --ease-decel: cubic-bezier(0.1, 0.9, 0.2, 1);
   --ease-accel: cubic-bezier(0.7, 0, 1, 0.5);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  
+
   --trans-micro: 90ms ease-out;
   --trans-fast: 160ms var(--ease-decel);
   --trans-normal: 240ms var(--ease-decel);
   --trans-slow: 340ms var(--ease-decel);
   --trans-spring: 320ms var(--ease-spring);
 
-  /* Light Theme */
-  --bg-app: #f3f3f3;
-  --bg-mica: radial-gradient(1200px circle at 50% 0px, rgba(255, 255, 255, 0.82) 0%, rgba(243, 243, 243, 0.96) 100%), #f3f3f3;
+  /* Light Theme —— 中性纸面 */
+  --bg-app: #F3F3F1;
+  --bg-mica: radial-gradient(1200px circle at 50% 0px, rgba(255, 255, 255, 0.55) 0%, rgba(243, 243, 241, 0.96) 100%), #F3F3F1;
   --bg-card: #ffffff;
-  --bg-card-header: #f8f9fa;
+  --bg-card-header: #F7F7F5;
   --bg-surface: #ffffff;
   --bg-input: #ffffff;
-  --bg-btn: #fbfcfd;
-  --bg-btn-hover: #f5f5f5;
-  --bg-btn-pressed: #ebebeb;
-  
-  --border-card: rgba(0, 0, 0, 0.08);
-  --border-btn: rgba(0, 0, 0, 0.16);
-  --border-btn-bottom: rgba(0, 0, 0, 0.24);
-  --border-divider: rgba(0, 0, 0, 0.08);
-  
-  --text-primary: rgba(0, 0, 0, 0.89);
-  --text-secondary: rgba(0, 0, 0, 0.60);
-  --text-caption: rgba(0, 0, 0, 0.45);
-  --text-disabled: rgba(0, 0, 0, 0.28);
-  
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 0 1px rgba(0, 0, 0, 0.07);
-  --shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.08), 0 0 1px rgba(0, 0, 0, 0.08);
-  --shadow-flyout: 0 12px 28px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
-  --shadow-dialog: 0 24px 48px rgba(0, 0, 0, 0.24), 0 4px 16px rgba(0, 0, 0, 0.12);
+  --bg-btn: #ffffff;
+  --bg-btn-hover: #EAEAE6;
+  --bg-btn-pressed: #E0E0DB;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  --border-card: #D8D8D2;
+  --border-btn: #C6C6C0;
+  --border-btn-bottom: #A8A8A2;
+  --border-divider: #E2E2DC;
+
+  --text-primary: #1B1F24;
+  --text-secondary: #586068;
+  --text-caption: #7A828A;
+  --text-disabled: #A8AEB4;
+
+  /* 内容面平铺；投影只留给浮层与对话框 */
+  --shadow-card: none;
+  --shadow-hover: none;
+  --shadow-flyout: 0 12px 28px rgba(27, 31, 36, 0.16), 0 2px 8px rgba(27, 31, 36, 0.08);
+  --shadow-dialog: 0 24px 48px rgba(27, 31, 36, 0.24), 0 4px 16px rgba(27, 31, 36, 0.12);
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 7px;
   --radius-pill: 9999px;
 }
 
 [data-theme="dark"] {
-  --accent: #e81123;
-  --accent-hover: #f12d3e;
-  --accent-pressed: #c42b1c;
-  --accent-tint: rgba(232, 17, 35, 0.14);
-  --accent-tint-hover: rgba(232, 17, 35, 0.22);
-  --accent-light: rgba(232, 17, 35, 0.18);
+  --accent: #E85A68;
+  --accent-hover: #F07482;
+  --accent-pressed: #C24452;
+  --accent-tint: rgba(232, 90, 104, 0.16);
+  --accent-tint-hover: rgba(232, 90, 104, 0.26);
+  --accent-light: rgba(232, 90, 104, 0.20);
   --accent-text: #ffffff;
 
-  --bg-app: #202020;
-  --bg-mica: radial-gradient(1200px circle at 50% 0px, rgba(46, 46, 46, 0.72) 0%, rgba(32, 32, 32, 0.98) 100%), #202020;
-  --bg-card: #2c2c2c;
-  --bg-card-header: #262626;
-  --bg-surface: #2d2d2d;
-  --bg-input: #1f1f1f;
-  --bg-btn: #2d2d2d;
-  --bg-btn-hover: #383838;
-  --bg-btn-pressed: #242424;
-  
-  --border-card: rgba(255, 255, 255, 0.08);
-  --border-btn: rgba(255, 255, 255, 0.16);
-  --border-btn-bottom: rgba(255, 255, 255, 0.24);
-  --border-divider: rgba(255, 255, 255, 0.08);
-  
-  --text-primary: rgba(255, 255, 255, 0.95);
-  --text-secondary: rgba(255, 255, 255, 0.70);
-  --text-caption: rgba(255, 255, 255, 0.48);
-  --text-disabled: rgba(255, 255, 255, 0.25);
-  
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 1px rgba(255, 255, 255, 0.08);
-  --shadow-hover: 0 6px 18px rgba(0, 0, 0, 0.45), 0 0 1px rgba(255, 255, 255, 0.12);
+  --bg-app: #1B1B1B;
+  --bg-mica: radial-gradient(1200px circle at 50% 0px, rgba(58, 58, 58, 0.62) 0%, rgba(27, 27, 27, 0.98) 100%), #1B1B1B;
+  --bg-card: #242424;
+  --bg-card-header: #1F1F1F;
+  --bg-surface: #262626;
+  --bg-input: #161616;
+  --bg-btn: #262626;
+  --bg-btn-hover: #333333;
+  --bg-btn-pressed: #1A1A1A;
+
+  --border-card: rgba(255, 255, 255, 0.10);
+  --border-btn: rgba(255, 255, 255, 0.18);
+  --border-btn-bottom: rgba(255, 255, 255, 0.26);
+  --border-divider: rgba(255, 255, 255, 0.10);
+
+  --text-primary: rgba(255, 255, 255, 0.94);
+  --text-secondary: rgba(255, 255, 255, 0.68);
+  --text-caption: rgba(255, 255, 255, 0.46);
+  --text-disabled: rgba(255, 255, 255, 0.24);
+
+  --shadow-card: none;
+  --shadow-hover: none;
   --shadow-flyout: 0 16px 36px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
   --shadow-dialog: 0 28px 56px rgba(0, 0, 0, 0.7), 0 4px 18px rgba(0, 0, 0, 0.5);
 }
@@ -642,9 +647,10 @@ body {
 }
 
 .question-title {
-  font-size: 18px;
+  font-family: var(--font-en);
+  font-size: 17.5px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.62;
   margin-bottom: 14px;
   color: var(--text-primary);
 }
@@ -654,6 +660,8 @@ body {
   flex-direction: column;
   gap: 8px;
   margin-bottom: 16px;
+  font-family: var(--font-en);
+  line-height: 1.75;
 }
 
 .option-item {
@@ -670,13 +678,13 @@ body {
 }
 
 .option-item:hover {
-  background-color: var(--accent-tint);
+  background-color: var(--bg-btn-hover);
   transform: translateX(3px);
 }
 
 .option-item.selected {
-  background-color: var(--accent-tint-hover);
-  border-color: var(--accent);
+  background-color: var(--bg-btn-hover);
+  border-color: var(--text-primary);
   font-weight: 500;
   transform: translateX(3px);
 }
@@ -952,11 +960,11 @@ body {
 }
 
 .strip-item.active {
-  background-color: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-text);
+  background-color: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-card);
   font-weight: 500;
-  box-shadow: 0 2px 8px rgba(209, 52, 56, 0.35);
+  box-shadow: none;
 }
 
 /* Transcript Pane Subtitle Cards */
@@ -986,8 +994,8 @@ body {
 }
 
 .transcript-card.active {
-  border-color: rgba(209, 52, 56, 0.3);
-  box-shadow: var(--shadow-hover);
+  border-color: var(--border-card);
+  box-shadow: none;
 }
 
 .transcript-card-header {
@@ -1002,7 +1010,7 @@ body {
 }
 
 .transcript-card.active .transcript-card-header {
-  background-color: var(--accent-tint);
+  background-color: var(--bg-card-header);
 }
 
 .header-icon {
@@ -1067,41 +1075,49 @@ body {
 }
 
 .cue-row.active {
-  background-color: var(--accent-tint);
+  background-color: transparent;
+}
+
+.cue-row.active .cue-text {
+  color: var(--text-primary);
 }
 
 /* Signature WinUI Selection Pill Indicator */
+/* 当前句：朱红竖标是唯一强调（「考卷与红笔」） */
 .cue-row::before {
   content: '';
   position: absolute;
   left: 0;
-  top: 50%;
-  transform: translateY(-50%) scaleY(0);
-  width: 3.5px;
-  height: 22px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  height: auto;
   background-color: var(--accent);
-  border-radius: 0 3px 3px 0;
-  transition: transform 220ms var(--ease-spring), opacity 160ms var(--ease-decel);
-  opacity: 0;
-}
-
-.cue-row.active::before {
-  transform: translateY(-50%) scaleY(1);
+  border-radius: 0;
+  transform: scaleY(0);
+  transition: transform 220ms var(--ease-spring);
   opacity: 1;
 }
 
+.cue-row.active::before {
+  transform: scaleY(1);
+}
+
 .cue-time {
+  font-family: var(--font-family);
   font-size: 12px;
   color: var(--text-secondary);
-  width: 48px;
+  width: 52px;
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
 }
 
 .cue-text {
   flex: 1;
-  font-size: 16px;
-  line-height: 1.5;
+  font-family: var(--font-en);
+  font-size: 16.5px;
+  line-height: 1.62;
   color: var(--text-primary);
   word-break: break-word;
 }
@@ -1122,22 +1138,25 @@ body {
   cursor: pointer;
 }
 
+/* 挖空词槽：品牌粉底，与桌面实机的挖空块一致 */
 .cloze-word.hidden {
-  filter: blur(4.5px);
+  filter: blur(5px);
   background-color: var(--accent-light);
-  border-bottom: 2px solid var(--accent);
+  border-bottom: 0;
   user-select: none;
 }
 
 .cloze-word.hidden:hover {
-  filter: blur(3.5px);
+  filter: blur(4px);
   background-color: var(--accent-tint-hover);
   transform: translateY(-1px);
 }
 
 .cloze-word.revealed {
   background-color: var(--accent-tint);
-  border-bottom: 2px solid transparent;
+  border-bottom: 0;
+  color: var(--text-primary);
+  font-weight: 600;
   animation: clozeRevealPulse 260ms var(--ease-spring);
 }
 

@@ -36,7 +36,7 @@ from starlette.middleware.sessions import SessionMiddleware
 ASSETS = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
 FEATURES = ["playback", "importAudio", "importIlp", "authoring", "asr", "mcp", "export", "importProject", "dataMaintenance", "apiConfiguration", "updates"]
 SCHEMA = json.loads((ASSETS / "settings-schema.json").read_text(encoding="utf-8"))
-DEFAULT_POLICY = {"settings": {}, "lockedSettings": [], "disabledFeatures": [], "lockAllSettings": False, "hideAsrConfiguration": False, "automaticOobe": False, "update": None}
+DEFAULT_POLICY = {"settings": {}, "lockedSettings": [], "disabledFeatures": [], "lockAllSettings": False, "lockManagement": False, "hideAsrConfiguration": False, "automaticOobe": False, "update": None}
 MDN_LOOP = "asyncio:SelectorEventLoop"
 
 
@@ -132,7 +132,7 @@ def apply_transport(config, public, disable_ssl=False):
 def validate_policy(policy: dict):
     if not isinstance(policy, dict) or set(policy) - set(DEFAULT_POLICY):
         raise ValueError("策略包含未知字段。")
-    for key in ("lockAllSettings", "hideAsrConfiguration", "automaticOobe"):
+    for key in ("lockAllSettings", "lockManagement", "hideAsrConfiguration", "automaticOobe"):
         if key in policy and type(policy[key]) is not bool:
             raise ValueError(key + " 必须是布尔值。")
     settings = policy.get("settings", {})

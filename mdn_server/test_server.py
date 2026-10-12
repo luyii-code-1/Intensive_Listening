@@ -185,6 +185,14 @@ class ManagementTests(unittest.TestCase):
         self.assertTrue(apply_transport(self.config, {"disable_ssl": False}, True)["disable_ssl"])
         with self.assertRaises(ValueError): apply_transport(self.config, {"disable_ssl": "false"})
 
+    def test_management_lock_global_and_device_override(self):
+        csrf = self.login()
+        self.assertEqual(self.save("all", {"lockManagement": True}, csrf).status_code, 200)
+        self.assertTrue(self.client.get("/api/policy", headers=self.headers).json()["lockManagement"])
+        self.assertEqual(self.save(self.identifier, {"lockManagement": False}, csrf).status_code, 200)
+        self.assertFalse(self.client.get("/api/policy", headers=self.headers).json()["lockManagement"])
+        self.assertEqual(self.save("all", {"lockManagement": "true"}, csrf).status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

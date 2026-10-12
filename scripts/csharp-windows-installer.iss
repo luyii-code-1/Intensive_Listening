@@ -200,14 +200,17 @@ end;
 
 procedure ImportManagedConfiguration;
 var
-  Source, Target, DataDirectory: String;
+  Source, DataDirectory, Parameters: String;
+  ResultCode: Integer;
 begin
   Source := ExpandConstant('{src}\il_mdn_config.yaml');
   DataDirectory := ManagedDataDirectory;
-  Target := AddBackslash(DataDirectory) + 'il_mdn_config.yaml';
-  if FileExists(Source) and not FileExists(Target) then begin
-    if not ForceDirectories(DataDirectory) or not FileCopy(Source, Target, True) then
-      RaiseException('无法复制集控配置到数据目录。');
+  if FileExists(Source) then begin
+    Parameters := '--import-mdn-config "' + Source + '" "' + DataDirectory + '"';
+    if not Exec(ExpandConstant('{app}\IL.App.exe'), Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      RaiseException('无法检查并导入集控配置。');
+    if ResultCode = 10 then Log('Organization management is locked; keeping existing configuration.')
+    else if ResultCode <> 0 then RaiseException('无法导入集控配置，请检查 YAML 和现有组织缓存。');
   end;
 end;
 

@@ -190,10 +190,9 @@ public sealed class StudentView : UserControl
         }
         else
         {
-            header.Children.Add(Text("学生端", 22, true));
             var openLesson = WorkspaceUi.Button("打开课程", PickLessonAsync); openLesson.Content = Row(WorkspaceUi.Icon("open_file"), Text("打开课程")); openLesson.IsEnabled = _vm.Lessons.Count > 0;
             var import = WorkspaceUi.Button("导入精听包或音频", ImportAsync, true); import.Content = Row(_importing ? new FAProgressRing { IsActive = true, Width = 16, Height = 16 } : WorkspaceUi.Icon("download"), Text("导入精听包或音频")); import.IsEnabled = !_importing;
-            var commands = Row(openLesson, import); Grid.SetColumn(commands, 1); header.Children.Add(ManagedUi.Wrap(commands,()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp")));
+            var commands = Row(openLesson, import); commands.HorizontalAlignment = HorizontalAlignment.Left; header.Children.Add(ManagedUi.Wrap(commands,()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp")));
         }
         _header.Content = header;
     }

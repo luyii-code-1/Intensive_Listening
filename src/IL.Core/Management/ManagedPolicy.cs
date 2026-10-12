@@ -14,6 +14,7 @@ public sealed record ManagedPolicy
     public string[] LockedSettings { get; init; } = [];
     public string[] DisabledFeatures { get; init; } = [];
     public bool LockAllSettings { get; init; }
+    public bool LockManagement { get; init; }
     public bool HideAsrConfiguration { get; init; }
     public bool AutomaticOobe { get; init; }
     public ManagedUpdate? Update { get; init; }

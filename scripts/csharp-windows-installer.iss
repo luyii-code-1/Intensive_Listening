@@ -7,7 +7,7 @@
 [Setup]
 AppId=IntensiveListening.Luyii
 AppName=Intensive Listening 2 Resonance
-AppVersion=2.0.1
+AppVersion=2.1.0
 AppPublisher=Luyii
 DefaultDirName={autopf}\Intensive Listening
 DisableDirPage=no
@@ -16,7 +16,7 @@ DefaultGroupName=Intensive Listening
 UninstallDisplayIcon={app}\IL.App.exe
 SetupIconFile=..\assets\installer_icon.ico
 OutputDir={#OutputDirectory}
-OutputBaseFilename=Intensive-Listening-2.0.1-win-x64-Setup
+OutputBaseFilename=Intensive-Listening-2.1.0-win-x64-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

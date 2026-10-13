@@ -1,5 +1,7 @@
 # MDN 集控与更新
 
+本文对应 Intensive Listening **2.1.0** 及本次发布的 MDN 服务端。安装包、`MDN.Server.exe`、部署示例和校验文件见 [v2.1.0 Release](https://github.com/luyii-code-1/Intensive_Listening/releases/tag/v2.1.0)，功能概览见 [2.1.0 发布说明](RELEASE_2.1.0.md)。
+
 客户端目前支持 Windows。MDN 服务端使用 FastAPI、SQLite 和内置管理页面，Windows 部署文件为 `MDN.Server.exe`。开发源文件位于 `mdn_server`。
 
 ## Windows 服务端部署
@@ -156,7 +158,7 @@ size
 ## 开发验证
 
 ```powershell
-python -m pip install -r mdn_server\requirements.txt httpx
+python -m pip install -r mdn_server\requirements.txt httpx2
 python -m unittest discover -s mdn_server -p test_server.py -v
 ```
 

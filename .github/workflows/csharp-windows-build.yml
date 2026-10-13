@@ -56,7 +56,7 @@ jobs:
           if ($process.ExitCode -ne 0) { throw 'Windows single-instance verification failed.' }
           $identity = Get-Content artifacts/verification/runtime.json -Raw | ConvertFrom-Json
           $commit = (git rev-parse --short=7 HEAD).Trim()
-          if ($identity.build -ne $commit -or $identity.version -ne '2.0.0') { throw 'Release build identity mismatch.' }
+          if ($identity.build -ne $commit -or $identity.version -ne '2.1.0') { throw 'Release build identity mismatch.' }
       - name: Package installer
         shell: pwsh
         run: |
@@ -118,7 +118,15 @@ jobs:
         run: |
           cd artifacts/windows
           sha256sum --check SHA256SUMS.txt
-          gh release upload "$RELEASE_TAG" ./*.exe ../macos/*.dmg --clobber
+          existing_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          for installer in ./*.exe ../macos/*.dmg; do
+            asset_name="$(basename "$installer")"
+            if printf '%s\n' "$existing_assets" | grep -Fxq "$asset_name"; then
+              echo "Keeping existing release asset: $asset_name"
+            else
+              gh release upload "$RELEASE_TAG" "$installer"
+            fi
+          done
 
   deploy:
     if: github.event_name == 'release' && !github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v2.')

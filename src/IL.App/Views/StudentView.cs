@@ -21,6 +21,7 @@ namespace IL.App.Views;
 
 public sealed class StudentView : UserControl
 {
+    private BlurEffect _transcriptBlur = new() { Radius = IL.Core.Settings.AppSettings.MaxTranscriptBlurIntensity };
     public Action<DictionaryQuery>? LookupWord { get; set; }
     private readonly StudentViewModel _vm;
     private readonly Grid _page = new() { RowDefinitions = new RowDefinitions("auto,*") };
@@ -30,13 +31,19 @@ public sealed class StudentView : UserControl
     private readonly StackPanel _transcriptContent = new() { Spacing = 10 };
     private readonly ScrollViewer _transcript = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
     private readonly WorkspaceContentHost _questions = new();
-    private readonly StackPanel _lessons = new() { Spacing = 8 };
+    private readonly StackPanel _lessons = new() { Spacing = 4 };
     private readonly SpringListCollection<Control> _lessonMotion;
     private Grid? _homeContent;
     private readonly StackPanel _index = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly Dictionary<int, List<(Control Control, LessonTextPart Part)>> _words = [];
     private readonly Dictionary<int, Border> _cueRows = [];
     private readonly Dictionary<int, Border> _cueSlots = [];
+    private (int Index, Border Slot, double Top, double Bottom)[] _cueGeometry = [];
+    private double[] _cueTops = [];
+    private double _maximumCueHeight;
+    private bool _cueGeometryDirty = true;
+    private int _realizationGeneration;
+    private readonly HashSet<int> _viewportCues = [];
     private bool _homePending, _realizationPending;
     private int _highlightedCue = -1;
     private readonly List<(Border Header, LessonMaterial Material)> _materialHeaders = [];
@@ -47,19 +54,22 @@ public sealed class StudentView : UserControl
     private readonly Button _materialCloze, _allCloze, _return, _play;
     private readonly CheckBox _hideSubtitles = new() { Content = "隐藏字幕", VerticalAlignment = VerticalAlignment.Center };
     private readonly DispatcherTimer _followTimer;
-    private readonly DispatcherTimer _pausedBrowseTimer = new() { Interval = TimeSpan.FromSeconds(30) };
+    private readonly SpringScroll _transcriptMotion;
+    private string? _transcriptLessonId;
+    public Func<string, Task>? ImportAudio { get; set; }
     private string? _displayedLessonId, _questionMaterialId;
     private bool _displayingMedia, _displayingTranscript, _importing, _handlingOperationStatus;
     private string? _openingLessonId, _deletingLessonId;
-    private DateTimeOffset _followPausedUntil;
+    private DateTimeOffset _lastInteraction = DateTimeOffset.UtcNow;
 
     public StudentView(StudentViewModel vm)
     {
         _vm = vm; DataContext = vm;
+        _transcriptBlur = new() { Radius = vm.TranscriptBlurIntensity };
         _lessonMotion = new(_lessons, _lessons.Children, frame => frame, _lessons.Children.Move);
         _materialCloze = WorkspaceUi.Button("显示本段挖空", () => { vm.ToggleMaterialCloze(); return Task.CompletedTask; });
         _allCloze = WorkspaceUi.Button("显示全部挖空", () => { vm.ShowAllCloze = !vm.ShowAllCloze; return Task.CompletedTask; });
-        _return = WorkspaceUi.Button("返回", async () => { _followPausedUntil = DateTimeOffset.MinValue; _pausedBrowseTimer.Stop(); await vm.ReturnCueCommand.ExecuteAsync(null); FollowActiveCue(); });
+        _return = WorkspaceUi.Button("返回", async () => { await vm.ReturnCueCommand.ExecuteAsync(null); FollowActiveCue(force: true, focus: true); });
         _return.Bind(IsVisibleProperty, new Binding(nameof(vm.CanReturn)));
         _play = new Button { Command = vm.TogglePlaybackCommand, Padding = new Thickness(18, 12) };
         _play.Classes.Add("accent");
@@ -71,22 +81,13 @@ public sealed class StudentView : UserControl
         _transcript.Content = _transcriptContent;
         _transcript.ScrollChanged += (_, _) => ScheduleRealization();
         _transcript.SizeChanged += (_, _) => ScheduleRealization();
-        _transcript.PointerWheelChanged += (_, _) =>
-        {
-            _followPausedUntil = vm.IsPlaying ? DateTimeOffset.UtcNow.AddSeconds(5) : DateTimeOffset.MaxValue;
-            _pausedBrowseTimer.Stop(); if (!vm.IsPlaying) _pausedBrowseTimer.Start();
-        };
-        _pausedBrowseTimer.Tick += async (_, _) =>
-        {
-            _pausedBrowseTimer.Stop(); if (vm.IsPlaying) return;
-            var center = _transcript.Offset.Y + _transcript.Viewport.Height / 2;
-            var nearest = _cueRows.Where(pair => pair.Value.IsEffectivelyVisible).Select(pair => (Index: pair.Key, Point: pair.Value.TranslatePoint(new Point(0, pair.Value.Bounds.Height / 2), _transcriptContent)))
-                .Where(item => item.Point is { } point && point.Y >= _transcript.Offset.Y && point.Y <= _transcript.Offset.Y + _transcript.Viewport.Height)
-                .OrderBy(item => Math.Abs(item.Point!.Value.Y - center)).FirstOrDefault();
-            var material = nearest.Point is null ? null : vm.CurrentLesson?.Manifest.Exercises.MaterialForCue(nearest.Index);
-            if (material is { QuestionIds.Count: > 0, CueIndexes.Count: > 0 } && material.CueIndexes[0] != vm.ActiveCue?.Index)
-            { _followPausedUntil = DateTimeOffset.MinValue; await vm.JumpCueCommand.ExecuteAsync(vm.Cues[material.CueIndexes[0]]); }
-        };
+        _transcriptContent.SizeChanged += (_, _) => InvalidateCueGeometry();
+        _transcriptContent.LayoutUpdated += (_, _) => { if (_cueGeometryDirty) ScheduleRealization(); };
+        _transcriptMotion = SpringScroll.For(_transcript);
+        AddHandler(PointerPressedEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Tunnel);
+        AddHandler(PointerMovedEvent, (_, _) => RegisterInteraction(interruptScroll: false), RoutingStrategies.Tunnel);
+        AddHandler(PointerWheelChangedEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Tunnel);
+        AddHandler(KeyDownEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Tunnel);
         _page.Children.Add(_header); _page.Children.Add(_body);
         Content = _page;
         _page.AddHandler(PointerPressedEvent, (_, e) =>
@@ -98,16 +99,22 @@ public sealed class StudentView : UserControl
         }, RoutingStrategies.Tunnel);
         vm.PropertyChanged += VmChanged;
         vm.PresentationChanged += UpdatePresentation;
+        vm.NavigationRequested += () =>
+        {
+            RegisterInteraction(); FollowActiveCue(force: true, focus: true);
+            var lesson = _vm.CurrentLesson; var cue = _vm.ActiveCue;
+            Dispatcher.UIThread.Post(() => { if (_vm.CurrentLesson == lesson && _vm.ActiveCue == cue) FollowActiveCue(force: true); }, DispatcherPriority.Loaded);
+        };
         vm.Lessons.CollectionChanged += (_, _) =>
         {
             if (_homePending || vm.HasMedia) return;
             _homePending = true;
             Dispatcher.UIThread.Post(() => { _homePending = false; if (!vm.HasMedia) BuildHome(); }, DispatcherPriority.Background);
         };
-        _followTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _followTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _followTimer.Tick += (_, _) => FollowActiveCue();
         AttachedToVisualTree += (_, _) => { _followTimer.Start(); ScheduleRealization(); };
-        DetachedFromVisualTree += (_, _) => { _followTimer.Stop(); _pausedBrowseTimer.Stop(); };
+        DetachedFromVisualTree += (_, _) => { _followTimer.Stop(); _transcriptMotion.Stop(); ++_realizationGeneration; _realizationPending = false; };
         KeyDown += async (_, e) =>
         {
             if (e.Source is TextBox) return;
@@ -118,6 +125,7 @@ public sealed class StudentView : UserControl
         ShowPage();
     }
 
+    public void ApplyManagement() { _play.IsEnabled = _vm.CanPlay && IL.Core.Management.ManagedRuntime.Allows("playback"); _play.Opacity=_play.IsEnabled?1:.45; UpdatePresentation(); }
     private static Button Command(string text, System.Windows.Input.ICommand command) => new() { Content = text, Command = command, Padding = new Thickness(8, 6) };
     private static StackPanel Row(params Control[] children)
     {
@@ -149,6 +157,7 @@ public sealed class StudentView : UserControl
     {
         if (!_vm.HasMedia)
         {
+            ClearTranscript();
             _displayingMedia = false; _displayedLessonId = null; _questionMaterialId = null;
             BuildHome(); return;
         }
@@ -158,7 +167,7 @@ public sealed class StudentView : UserControl
         _selectedAnswers.Clear(); _revealedAnswers.Clear(); _questionMaterialId = null;
         foreach (var control in new Control[] { _questions, _index, _materialCloze, _allCloze, _return, _play, _transcript, _hideSubtitles }) DetachControl(control);
         var player = BuildPlayer();
-        if (!_vm.HasTranscript) PresentBody(player, "audio:" + _vm.Title);
+        if (!_vm.HasTranscript) { ClearTranscript(); PresentBody(player, "audio:" + _vm.Title); }
         else
         {
             BuildTranscript();
@@ -191,11 +200,9 @@ public sealed class StudentView : UserControl
         }
         else
         {
-            header.Children.Add(Text("学生端", 22, true));
-            var openAudio = WorkspaceUi.Button("打开音频", OpenAudioAsync); openAudio.Content = Row(WorkspaceUi.Icon("music_in_collection"), Text("打开音频")); openAudio.IsEnabled = !_importing;
             var openLesson = WorkspaceUi.Button("打开课程", PickLessonAsync); openLesson.Content = Row(WorkspaceUi.Icon("open_file"), Text("打开课程")); openLesson.IsEnabled = _vm.Lessons.Count > 0;
-            var import = WorkspaceUi.Button("导入精听包", ImportAsync, true); import.Content = Row(_importing ? new FAProgressRing { IsActive = true, Width = 16, Height = 16 } : WorkspaceUi.Icon("download"), Text("导入精听包")); import.IsEnabled = !_importing;
-            var commands = Row(openAudio, openLesson, import); Grid.SetColumn(commands, 1); header.Children.Add(commands);
+            var import = WorkspaceUi.Button("导入精听包或音频", ImportAsync, true); import.Content = Row(_importing ? new FAProgressRing { IsActive = true, Width = 16, Height = 16 } : WorkspaceUi.Icon("download"), Text("导入精听包或音频")); import.IsEnabled = !_importing;
+            var commands = Row(openLesson, ManagedUi.Wrap(import,()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp"))); commands.HorizontalAlignment = HorizontalAlignment.Left; header.Children.Add(commands);
         }
         _header.Content = header;
     }
@@ -204,7 +211,7 @@ public sealed class StudentView : UserControl
         BuildHeader();
         if (_vm.Lessons.Count == 0)
         {
-            var actions = Row(WorkspaceUi.Button("打开音频", OpenAudioAsync, true), WorkspaceUi.Button("导入精听包", ImportAsync)); actions.HorizontalAlignment = HorizontalAlignment.Center;
+            var actions = Row(ManagedUi.Wrap(WorkspaceUi.Button("导入精听包或音频", ImportAsync, true),()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp"))); actions.HorizontalAlignment = HorizontalAlignment.Center;
             var empty = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 360 };
             var icon = WorkspaceUi.Icon("open_file", 40); icon.HorizontalAlignment = HorizontalAlignment.Center; icon.Margin = new Thickness(0, 0, 0, 18);
             empty.Children.Add(icon); empty.Children.Add(new TextBlock { Text = "打开音频或精听包", FontSize = 17, FontWeight = FontWeight.Bold, TextAlignment = TextAlignment.Center });
@@ -225,23 +232,23 @@ public sealed class StudentView : UserControl
         var progress = _vm.ProgressFor(lesson.Id);
         var position = TimeSpan.FromMilliseconds(progress?.PositionMs ?? 0);
         var fraction = lesson.Lesson.Manifest.Duration.TotalMilliseconds > 0 ? Math.Clamp(position.TotalMilliseconds / lesson.Lesson.Manifest.Duration.TotalMilliseconds, 0, 1) : 0;
-        var info = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        var info = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         info.Children.Add(new TextBlock { Text = lesson.Title, FontWeight = FontWeight.Bold, TextTrimming = TextTrimming.CharacterEllipsis });
         info.Children.Add(Text($"{FormatTime(position)} / {FormatTime(lesson.Lesson.Manifest.Duration)} · 版本 {lesson.Lesson.Manifest.PackageVersion}", 12));
-        var content = new Grid { ColumnDefinitions = new ColumnDefinitions("auto,*,auto"), Margin = new Thickness(18, 0) };
+        var content = new Grid { ColumnDefinitions = new ColumnDefinitions("auto,*,auto"), Margin = new Thickness(12, 0) };
         Control icon = _openingLessonId == lesson.Id ? new FAProgressRing { IsActive = true, Width = 22, Height = 22 } : WorkspaceUi.Icon("music_note", 22); icon.Margin = new Thickness(0, 0, 18, 0); content.Children.Add(icon);
         Grid.SetColumn(info, 1); content.Children.Add(info);
         var track = new ProgressBar { Minimum = 0, Maximum = 1, Value = fraction, Foreground = Brush.Parse("#E81123"), Width = 148, Height = 6, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(18, 0, 0, 0) };
         Grid.SetColumn(track, 2); content.Children.Add(track);
-        var open = new Button { Content = content, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = Brushes.Transparent };
+        var open = new Button { Content = content, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = Brushes.Transparent };
         open.Classes.Add("student-lesson-open");
         open.IsEnabled = _openingLessonId is null && _deletingLessonId is null;
         open.Click += async (_, _) => await OpenLessonFromHomeAsync(lesson);
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,auto,auto"), Height = 86 };
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,auto,auto"), Height = 58 };
         row.Children.Add(open); row.Children.Add(new Border { Width = 1, Height = 40, Background = Brush.Parse("#22000000"), [Grid.ColumnProperty] = 1 });
         var remove = WorkspaceUi.IconButton("delete", "移除课程", () => RemoveAsync(lesson)); remove.IsEnabled = _openingLessonId is null && _deletingLessonId is null;
         if (_deletingLessonId == lesson.Id) remove.Content = new FAProgressRing { IsActive = true, Width = 14, Height = 14 }; remove.Margin = new Thickness(8, 0); Grid.SetColumn(remove, 2); row.Children.Add(remove);
-        var card = Card(row, new Thickness(0)); card.Height = 88;
+        var card = Card(row, new Thickness(0)); card.Height = 60;
         card.PointerEntered += (_, _) => { card.Background = Brush.Parse("#0BE81123"); card.BoxShadow = new BoxShadows(new BoxShadow { Color = Color.Parse("#14000000"), Blur = 10, OffsetY = 3 }); };
         card.PointerExited += (_, _) => { card.Bind(Border.BackgroundProperty, new DynamicResourceExtension("CardBackgroundFillColorDefaultBrush")); card.BoxShadow = default; };
         return card;
@@ -290,13 +297,13 @@ public sealed class StudentView : UserControl
                 strip.Children.Add(new ScrollViewer { Content = _index, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, [Grid.ColumnProperty] = 1 }); stack.Children.Add(strip);
             }
         }
-        return new Grid { Children = { stack } };
+        return ManagedUi.Feature(new Grid { Children = { stack } },"playback");
     }
     private async Task NavigateMaterialAsync(LessonMaterial material)
     {
-        _followPausedUntil = DateTimeOffset.MinValue; _pausedBrowseTimer.Stop();
+        RegisterInteraction();
         await _vm.JumpMaterialAsync(material);
-        FollowActiveCue();
+        FollowActiveCue(force: true, focus: true);
     }
     private void BuildQuestionIndex()
     {
@@ -315,6 +322,8 @@ public sealed class StudentView : UserControl
         if (_questionMaterialId == id && _questions.Content is not null) return;
         _questionMaterialId = id;
         _selectedAnswers.Clear(); _revealedAnswers.Clear();
+        if (_vm.CurrentLesson is { } lesson && _vm.ProgressFor(lesson.Id) is { } progress)
+        { foreach (var answer in progress.SelectedAnswers) _selectedAnswers[answer.Key] = answer.Value; _revealedAnswers.UnionWith(progress.RevealedAnswers); }
         if (_vm.Questions.Count == 0)
         { _questions.Content = new TextBlock { Text = "当前题目未设置", FontSize = 17, HorizontalAlignment = HorizontalAlignment.Center }; return; }
         var panel = new StackPanel { Spacing = 14 };
@@ -323,24 +332,34 @@ public sealed class StudentView : UserControl
     }
     private Control QuestionTemplate(LessonQuestion question)
     {
+        var lessonId = _vm.CurrentLesson?.Id;
         var panel = new StackPanel { Spacing = 7 };
         panel.Children.Add(Text($"第 {question.Number} 题  {question.Title}", 20, true));
         var options = new ListBox { SelectionMode = SelectionMode.Single, Background = Brushes.Transparent, BorderThickness = new Thickness(0), ItemsSource = question.Options.Select((option, index) => $"{(char)('A' + index)}. {option}").ToArray() };
-        if (_selectedAnswers.TryGetValue(question.Id, out var selected)) options.SelectedIndex = selected;
-        options.SelectionChanged += (_, _) => { if (options.SelectedIndex >= 0) _selectedAnswers[question.Id] = options.SelectedIndex; };
+        if (_selectedAnswers.TryGetValue(question.Id, out var selected) && selected < question.Options.Count) options.SelectedIndex = selected;
+        options.SelectionChanged += async (_, _) => { if (options.SelectedIndex >= 0 && lessonId is not null) { _selectedAnswers[question.Id] = options.SelectedIndex; await _vm.SaveAnswerStateAsync(lessonId, question.Id, selected: options.SelectedIndex); } };
         if (question.Options.Count > 0) panel.Children.Add(options);
         if (question.AnswerIndex is { } answer)
         {
             var answerText = Text($"答案：{(char)('A' + answer)}", 14, true); answerText.IsVisible = _revealedAnswers.Contains(question.Id);
             var reveal = new Button { Content = answerText.IsVisible ? "隐藏答案" : "显示答案", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 1, 0, 0) };
-            reveal.Click += (_, _) => { if (!_revealedAnswers.Add(question.Id)) _revealedAnswers.Remove(question.Id); answerText.IsVisible = _revealedAnswers.Contains(question.Id); reveal.Content = answerText.IsVisible ? "隐藏答案" : "显示答案"; };
+            reveal.Click += async (_, _) => { if (!_revealedAnswers.Add(question.Id)) _revealedAnswers.Remove(question.Id); answerText.IsVisible = _revealedAnswers.Contains(question.Id); reveal.Content = answerText.IsVisible ? "隐藏答案" : "显示答案"; if (lessonId is not null) await _vm.SaveAnswerStateAsync(lessonId, question.Id, revealed: answerText.IsVisible); };
             panel.Children.Add(reveal); panel.Children.Add(answerText);
         }
         return panel;
     }
+    private void ClearTranscript()
+    {
+        ++_realizationGeneration; _realizationPending = false;
+        _cueGeometryDirty = true; _cueGeometry = []; _cueTops = []; _viewportCues.Clear();
+        _transcriptMotion.Stop(); _transcriptLessonId = null;
+        _transcriptContent.Children.Clear(); _words.Clear(); _cueRows.Clear(); _cueSlots.Clear();
+        _highlightedCue = -1; _materialHeaders.Clear(); _expanders.Clear();
+    }
     private void BuildTranscript()
     {
-        _transcriptContent.Children.Clear(); _words.Clear(); _cueRows.Clear(); _cueSlots.Clear(); _highlightedCue = -1; _materialHeaders.Clear(); _expanders.Clear();
+        ClearTranscript();
+        _transcriptLessonId = _vm.CurrentLesson?.Id;
         if (_vm.CurrentLesson is not { } lesson) return;
         var exercises = lesson.Manifest.Exercises;
         var groups = new List<(LessonMaterial? Material, List<int> Cues)>();
@@ -359,6 +378,7 @@ public sealed class StudentView : UserControl
                 var title = Text("题前提示", 14, true); Grid.SetColumn(title, 1); header.Children.Add(title);
                 var count = Text($"{indexes.Count} 句", 12); Grid.SetColumn(count, 2); header.Children.Add(count);
                 var expander = new Expander { Header = header, Content = CueRows(indexes), IsExpanded = indexes.Contains(_vm.ActiveCue?.Index ?? -1), HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                expander.SizeChanged += (_, _) => InvalidateCueGeometry();
                 _expanders.Add((expander, indexes)); _transcriptContent.Children.Add(expander); continue;
             }
             var questions = exercises.QuestionsForMaterial(material);
@@ -378,6 +398,7 @@ public sealed class StudentView : UserControl
                 var repeatText = Text("重复朗读"); Grid.SetColumn(repeatText, 1); repeatHeader.Children.Add(repeatText);
                 var repeatCount = Text($"{repeated.Length} 句"); Grid.SetColumn(repeatCount, 2); repeatHeader.Children.Add(repeatCount);
                 var expander = new Expander { Header = repeatHeader, Content = CueRows(repeated), IsExpanded = repeated.Contains(_vm.ActiveCue?.Index ?? -1), HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                expander.SizeChanged += (_, _) => InvalidateCueGeometry();
                 _expanders.Add((expander, repeated)); groupContent.Children.Add(expander);
             }
             var card = Card(groupContent, new Thickness(0)); card.ClipToBounds = true; _transcriptContent.Children.Add(card);
@@ -396,34 +417,64 @@ public sealed class StudentView : UserControl
         {
             if (i > 0) panel.Children.Add(Divider());
             var slot = new Border { MinHeight = 76 };
+            slot.SizeChanged += (_, _) => InvalidateCueGeometry();
             _cueSlots[indexes[i]] = slot; panel.Children.Add(slot);
         }
         return panel;
     }
     private void ScheduleRealization()
     {
-        if (_realizationPending || !_vm.HasTranscript || TopLevel.GetTopLevel(this) is null) return;
+        if (_realizationPending || !_vm.HasTranscript || TopLevel.GetTopLevel(this) is not { } owner) return;
         _realizationPending = true;
-        Dispatcher.UIThread.Post(() => { _realizationPending = false; RealizeViewport(); }, DispatcherPriority.Background);
+        var generation = _realizationGeneration;
+        owner.RequestAnimationFrame(_ =>
+        {
+            if (generation != _realizationGeneration) return;
+            _realizationPending = false; RealizeViewport();
+        });
+    }
+    private void InvalidateCueGeometry()
+    {
+        _cueGeometryDirty = true; ScheduleRealization();
+    }
+    private void RebuildCueGeometry()
+    {
+        var geometry = new List<(int Index, Border Slot, double Top, double Bottom)>();
+        foreach (var (index, slot) in _cueSlots)
+            if (slot.IsEffectivelyVisible && slot.TranslatePoint(default, _transcriptContent) is { } point)
+                geometry.Add((index, slot, point.Y, point.Y + slot.Bounds.Height));
+        _cueGeometry = geometry.OrderBy(entry => entry.Top).ToArray();
+        _cueTops = _cueGeometry.Select(entry => entry.Top).ToArray();
+        _maximumCueHeight = _cueGeometry.Length == 0 ? 0 : _cueGeometry.Max(entry => entry.Bottom - entry.Top);
+        _cueGeometryDirty = false;
     }
     private void RealizeViewport()
     {
-        if (TopLevel.GetTopLevel(this) is null || _transcript.Viewport.Height <= 0) return;
+        if (!_vm.HasTranscript || _transcriptLessonId != _vm.CurrentLesson?.Id || TopLevel.GetTopLevel(this) is null || _transcript.Viewport.Height <= 0) return;
         var top = _transcript.Offset.Y - _transcript.Viewport.Height;
         var bottom = _transcript.Offset.Y + _transcript.Viewport.Height * 2;
         var clock = Stopwatch.StartNew(); var pending = false;
+        if (_cueGeometryDirty) RebuildCueGeometry();
         var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() as Visual;
-        foreach (var (index, slot) in _cueSlots)
+        var focusAncestors = focused?.GetVisualAncestors().ToHashSet();
+        _viewportCues.Clear();
+        var (start, end) = TranscriptViewportIndex.FindCandidates(_cueTops, top, bottom, _maximumCueHeight);
+        for (var i = start; i < end; i++)
         {
-            var point = slot.TranslatePoint(default, _transcriptContent);
-            var needed = slot.IsEffectivelyVisible && point is { } position && position.Y + slot.Bounds.Height >= top && position.Y <= bottom;
-            if (needed && slot.Child is null)
+            var (index, slot, rowTop, rowBottom) = _cueGeometry[i];
+            if (index < 0 || index >= _vm.Cues.Count) continue;
+            if (rowBottom < top || rowTop > bottom) continue;
+            _viewportCues.Add(index);
+            if (slot.Child is null)
             {
-                if (clock.Elapsed.TotalMilliseconds >= 6) { pending = true; continue; }
+                if (clock.Elapsed.TotalMilliseconds >= 3) { pending = true; continue; }
                 slot.Child = CueTemplate(_vm.Cues[index]); UpdateCuePresentation(index); HighlightCue(index);
             }
-            else if (!needed && slot.Child is Control row && index != _vm.ActiveCue?.Index
-                && (focused is null || !focused.GetVisualAncestors().Contains(row) && focused != row))
+        }
+        foreach (var index in _cueRows.Keys.ToArray())
+        {
+            if (!_viewportCues.Contains(index) && _cueSlots.TryGetValue(index, out var slot) && slot.Child is Control row && index != _vm.ActiveCue?.Index
+                && (focused is null || focusAncestors?.Contains(row) != true && focused != row))
             {
                 // Retain measured height so recycling cannot move the viewport.
                 slot.MinHeight = Math.Max(76, slot.Bounds.Height); slot.Child = null; _words.Remove(index); _cueRows.Remove(index);
@@ -457,9 +508,12 @@ public sealed class StudentView : UserControl
         }
         _words[row.Index] = words;
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("auto,*"), Margin = new Thickness(14, 12), MinHeight = 50 };
+        grid.Effect = _vm.ShowSubtitles ? null : _transcriptBlur;
         var time = Text(row.Time, 12); time.VerticalAlignment = VerticalAlignment.Center; time.Margin = new Thickness(0, 0, 16, 0); grid.Children.Add(time);
         Grid.SetColumn(text, 1); grid.Children.Add(text);
-        var visual = new Grid(); visual.Children.Add(grid);
+        // Cache each realized sentence, including word blur effects; scrolling and
+        // unrelated playback controls can reuse its pixels until its content changes.
+        var visual = new Grid { CacheMode = new BitmapCache() }; visual.Children.Add(grid);
         var marker = new Border { Width = 3, CornerRadius = new CornerRadius(2), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 12), Background = Brush.Parse("#E81123"), IsVisible = false }; visual.Children.Add(marker);
         var border = new Border { Child = visual, MinHeight = 76, CornerRadius = new CornerRadius(4), Focusable = true, Cursor = new Cursor(StandardCursorType.Hand), Background = Brushes.Transparent };
         _cueRows[row.Index] = border;
@@ -470,8 +524,9 @@ public sealed class StudentView : UserControl
         FlyoutBase.SetAttachedFlyout(border, popup);
         async Task SelectCue(bool atPointer = false)
         {
-            _followPausedUntil = _vm.IsPlaying ? DateTimeOffset.UtcNow.AddSeconds(5) : DateTimeOffset.MaxValue; _pausedBrowseTimer.Stop();
+            RegisterInteraction();
             await _vm.JumpCueCommand.ExecuteAsync(row);
+            FollowActiveCue(force: true, focus: true);
             if (!_vm.IsPlaying) popup.ShowAt(border, atPointer);
         }
         border.PointerReleased += async (_, e) => { if (e.Handled || e.InitialPressMouseButton != MouseButton.Left) return; await SelectCue(atPointer: true); };
@@ -484,7 +539,11 @@ public sealed class StudentView : UserControl
     private void UpdatePresentation()
     {
         _hideSubtitles.IsChecked = !_vm.ShowSubtitles;
-        _transcriptContent.Effect = !_vm.ShowSubtitles ? new BlurEffect { Radius = 8 } : null;
+        // Keep effects inside the cached, realized row instead of allocating a
+        // blur surface for the entire transcript's full scrollable height.
+        foreach (var row in _cueRows.Values)
+            if (row.Child is Grid visual && visual.Children[0] is Control sentence)
+                sentence.Effect = _vm.ShowSubtitles ? null : _transcriptBlur;
         foreach (var cue in _words.Keys) UpdateCuePresentation(cue);
         UpdatePresentationButtons();
         ScheduleRealization();
@@ -498,7 +557,7 @@ public sealed class StudentView : UserControl
                 {
                     label.FontSize = _vm.TranscriptFontSize; label.LineHeight = _vm.TranscriptFontSize * 1.4;
                     var hidden = _vm.IsClozeHidden(cue, part.WordIndex!.Value);
-                    label.Effect = hidden ? new BlurEffect { Radius = 4.5 } : null;
+                    label.Effect = hidden ? _transcriptBlur : null;
                     var cloze = _vm.CurrentLesson?.Manifest.Exercises.ClozeWordIndexes.GetValueOrDefault(cue)?.Contains(part.WordIndex.Value) == true;
                     word.Background = cloze ? Brush.Parse(hidden ? "#1FE81123" : "#0FE81123") : Brushes.Transparent;
                     word.BorderThickness = new Thickness(0, 0, 0, hidden ? 2 : 0); word.BorderBrush = Brush.Parse("#B90D1C");
@@ -525,9 +584,9 @@ public sealed class StudentView : UserControl
         }
         foreach (var (expander, cues) in _expanders) expander.IsExpanded = cues.Contains(active);
         foreach (var (id, button) in _indexButtons)
-        { if (id == _vm.ActiveMaterial?.Id) { button.Classes.Add("accent"); button.BringIntoView(); } else button.Classes.Remove("accent"); }
+        { if (id == _vm.ActiveMaterial?.Id) { button.Classes.Add("accent"); SpringScroll.Reveal(button); } else button.Classes.Remove("accent"); }
         UpdateQuestions(); UpdatePresentationButtons(); ScheduleRealization();
-        DispatcherTimer.RunOnce(FollowActiveCue, TimeSpan.FromMilliseconds(420));
+        FollowActiveCue();
     }
     private void HighlightCue(int index)
     {
@@ -537,18 +596,30 @@ public sealed class StudentView : UserControl
         else row.Background = Brushes.Transparent;
         if (row.Child is Grid grid && grid.Children[1] is Border marker) marker.IsVisible = active;
     }
-    private void FollowActiveCue()
+    internal void RegisterInteraction(bool interruptScroll = true)
     {
-        if (!_vm.FollowTranscript || DateTimeOffset.UtcNow < _followPausedUntil || _vm.ActiveCue is not { } cue || !_cueSlots.TryGetValue(cue.Index, out var row)) return;
-        var position = row.TranslatePoint(new Point(0, row.Bounds.Height / 2), _transcriptContent);
-        if (position is { } point)
-            _transcript.Offset = new Vector(0, Math.Clamp(point.Y - _transcript.Viewport.Height / 2, 0, Math.Max(0, _transcript.Extent.Height - _transcript.Viewport.Height)));
+        _lastInteraction = DateTimeOffset.UtcNow;
+        if (interruptScroll) _transcriptMotion.Stop();
+    }
+    private void FollowActiveCue(bool force = false, bool focus = false)
+    {
+        if (!force && (!_vm.FollowTranscript || !_vm.IsPlaying || DateTimeOffset.UtcNow - _lastInteraction < TimeSpan.FromSeconds(5))) return;
+        if (_transcriptLessonId != _vm.CurrentLesson?.Id || _vm.ActiveCue is not { } cue || !_cueSlots.TryGetValue(cue.Index, out var slot)) return;
+        var position = slot.TranslatePoint(new Point(0, slot.Bounds.Height / 2), _transcriptContent);
+        if (position is not { } point) return;
+        _transcriptMotion.To(new Vector(0, point.Y - _transcript.Viewport.Height / 2));
+        if (focus && cue.Index >= 0 && cue.Index < _vm.Cues.Count)
+        {
+            if (slot.Child is null) { slot.Child = CueTemplate(_vm.Cues[cue.Index]); UpdateCuePresentation(cue.Index); HighlightCue(cue.Index); }
+            if (_cueRows.TryGetValue(cue.Index, out var row)) { ScrollViewer.SetBringIntoViewOnFocusChange(row, false); row.Focus(); }
+        }
     }
     private void VmChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(_vm.HasMedia) or nameof(_vm.HasTranscript)) ShowPage();
         if (e.PropertyName == nameof(_vm.ActiveCue)) UpdateActiveCue();
         if (e.PropertyName == nameof(_vm.TranscriptFontSize)) UpdatePresentation();
+        if (e.PropertyName == nameof(_vm.TranscriptBlurIntensity)) { _transcriptBlur = new() { Radius = _vm.TranscriptBlurIntensity }; UpdatePresentation(); }
         if (e.PropertyName == nameof(_vm.Status) && !_handlingOperationStatus && !string.IsNullOrWhiteSpace(_vm.Status)
             && !_vm.Status.StartsWith("选择课程") && !_vm.Status.Contains(" 条字幕 · ") && _vm.Status != "音频已打开")
         {
@@ -562,7 +633,7 @@ public sealed class StudentView : UserControl
         if (e.PropertyName == nameof(_vm.IsPlaying))
         {
             ToolTip.SetTip(_play, _vm.PlayLabel);
-            if (_vm.IsPlaying) { _followPausedUntil = DateTimeOffset.MinValue; _pausedBrowseTimer.Stop(); }
+            RegisterInteraction();
         }
     }
     private async Task ShowFileInfoAsync()
@@ -571,7 +642,7 @@ public sealed class StudentView : UserControl
         var path = _vm.AudioPath;
         if (path is null) return;
         var details = new List<string> { $"名称：{_vm.Title}", $"类型：{(manifest is null ? "普通音频" : "ILP 精听包")}", $"时长：{_vm.DurationLabel}" };
-        if (manifest is not null) details.AddRange([$"精听包版本：{manifest.PackageVersion}", $"格式版本：{manifest.FormatVersion}", $"包 UUID：{manifest.PackageUuid}", $"字幕：{_vm.Cues.Count} 句"]);
+        if (manifest is not null) details.AddRange([manifest.CreatorDescription, $"精听包版本：{manifest.PackageVersion}", $"格式版本：{manifest.FormatVersion}", $"包 UUID：{manifest.PackageUuid}", $"字幕：{_vm.Cues.Count} 句"]);
         if (File.Exists(path)) details.Add($"音频大小：{new FileInfo(path).Length / (1024.0 * 1024):F2} MB");
         details.Add($"文件位置：{path}");
         var dialog = AppDialogs.Create(WorkspaceUi.Owner(this), "文件信息", new SelectableTextBlock { Text = string.Join('\n', details), MaxWidth = 500, TextWrapping = TextWrapping.Wrap }, 548);
@@ -586,7 +657,6 @@ public sealed class StudentView : UserControl
         list.SelectionChanged += async (_, _) => { if (list.SelectedItem is LessonListItem lesson) { dialog.Hide(); await _vm.OpenLessonAsync(lesson); } };
         await dialog.ShowAsync(owner);
     }
-    private async Task OpenAudioAsync() { if (await WorkspaceUi.Pick(this, "打开音频", "mp3", "m4a", "wav", "flac", "ogg") is { } file) await _vm.OpenAudioAsync(file); }
     private async Task OpenLessonFromHomeAsync(LessonListItem lesson)
     {
         _openingLessonId = lesson.Id; BuildHome();
@@ -612,9 +682,23 @@ public sealed class StudentView : UserControl
         await _vm.ImportAsync(file, replace, title);
         if (_vm.Status.StartsWith("导入失败"))
         { await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "无法导入", _vm.Status, "完成"); return false; }
-        ShowNotice(noticeTitle, noticeMessage); return true;
+        ShowNotice(noticeTitle, noticeMessage + "\n" + _vm.CurrentLesson?.Manifest.CreatorDescription); return true;
     }
-    private async Task ImportAsync() { if (await WorkspaceUi.Pick(this, "选择精听包", "ilp") is { } file) await ImportFileAsync(file); }
+    private async Task ImportAsync()
+    {
+        if (_importing) return;
+        var extensions = (IL.Core.Management.ManagedRuntime.IsManaged ? IL.Core.Management.ManagedRuntime.Policy : new IL.Core.Management.ManagedPolicy()).AllowedImportExtensions();
+        if (extensions.Length == 0) { ShowNotice("组织管理限制", "音频和精听包导入均已由您的组织禁用。", true); return; }
+        if (await WorkspaceUi.Pick(this, "导入精听包或音频", extensions) is not { } file) return;
+        if (Path.GetExtension(file).Equals(".ilp", StringComparison.OrdinalIgnoreCase)) await ImportFileAsync(file);
+        else
+        {
+            _importing = _handlingOperationStatus = true; BuildHeader();
+            try { if (ImportAudio is { } import) await import(file); else await _vm.OpenAudioAsync(file); }
+            catch (Exception ex) { await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "无法导入音频", ex.Message, "完成"); }
+            finally { _importing = _handlingOperationStatus = false; BuildHeader(); }
+        }
+    }
     private static string FormatTime(TimeSpan time) => time.ToString(time.TotalHours >= 1 ? @"h\:mm\:ss" : @"mm\:ss");
     private async Task<string?> RenameLessonAsync(string initialTitle)
     {
@@ -627,23 +711,31 @@ public sealed class StudentView : UserControl
     }
     public async Task ImportFileAsync(string file, bool standalone = false)
     {
+        if (_importing) return;
         _importing = _handlingOperationStatus = true; BuildHeader();
         try
         {
+            IL.Core.Management.ManagedRuntime.Require("importIlp");
             var manifest = await _vm.ReadManifestAsync(file); var existing = _vm.Lessons.FirstOrDefault(l => l.Id == manifest.PackageUuid);
             if (existing is not null)
             {
                 if (existing.Lesson.Manifest.PackageVersion == manifest.PackageVersion)
                 {
                     var local = existing.Lesson.Manifest;
-                    if (local.AudioSha256 != manifest.AudioSha256 || local.TranscriptSha256 != manifest.TranscriptSha256 || local.Title != manifest.Title)
-                        await ImportLessonAsync(file, true, noticeTitle: "课程已重载", noticeMessage: manifest.Title);
+                    if (local.AudioSha256 != manifest.AudioSha256 || local.TranscriptSha256 != manifest.TranscriptSha256 || local.Title != manifest.Title ||
+                        local.FormatVersion != manifest.FormatVersion || local.CreatorMachine != manifest.CreatorMachine || local.CreatorAgent != manifest.CreatorAgent ||
+                        !System.Text.Json.Nodes.JsonNode.DeepEquals(System.Text.Json.JsonSerializer.SerializeToNode(local.Exercises), System.Text.Json.JsonSerializer.SerializeToNode(manifest.Exercises)))
+                    {
+                        if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "更新本地课程？", $"本地与文件均为版本 {manifest.PackageVersion}，内容或制作信息存在变化。\n本地：{local.CreatorDescription}\n文件：{manifest.CreatorDescription}", "更新课程")) return;
+                        await ImportLessonAsync(file, true, noticeTitle: "课程已更新", noticeMessage: manifest.CreatorDescription);
+                    }
                     else { await _vm.OpenLessonAsync(existing); ShowNotice("课程已重载", manifest.Title); }
                     return;
                 }
-                if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "发现课程的其他版本", $"本地版本 {existing.Lesson.Manifest.PackageVersion}，文件版本 {manifest.PackageVersion}。是否更新？", "更新课程")) return;
+                if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "发现课程的其他版本", $"本地版本 {existing.Lesson.Manifest.PackageVersion}，文件版本 {manifest.PackageVersion}。是否更新？\n本地：{existing.Lesson.Manifest.CreatorDescription}\n文件：{manifest.CreatorDescription}", "更新课程")) return;
                 await ImportLessonAsync(file, true, noticeTitle: "课程已更新", noticeMessage: "播放记录与挖空记录已保留。"); return;
             }
+            if (!standalone && !await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "导入精听包", $"{manifest.Title} · 版本 {manifest.PackageVersion}\n{manifest.CreatorDescription}", "导入")) return;
             var sameTitle = _vm.Lessons.FirstOrDefault(l => l.Title.Equals(manifest.Title, StringComparison.OrdinalIgnoreCase));
             if (sameTitle is not null)
             {
@@ -660,6 +752,7 @@ public sealed class StudentView : UserControl
             }
             await ImportLessonAsync(file);
         }
+        catch (IL.Core.Management.ManagedFeatureDeniedException ex) { ShowNotice("组织管理限制", ex.Message, true); }
         catch (Exception ex) { _vm.Status = ex.Message; await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "无法导入", ex.Message, "完成"); }
         finally { _importing = _handlingOperationStatus = false; BuildHeader(); }
     }

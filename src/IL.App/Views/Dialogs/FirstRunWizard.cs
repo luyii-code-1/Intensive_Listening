@@ -25,7 +25,8 @@ internal sealed class FirstRunWizard : Border
     private readonly Action<AppSettings?> _finish;
     private readonly Grid _page = new() { ClipToBounds = true, Name = "OobePageHost" };
     private readonly Dictionary<int, ScrollViewer> _pages = new();
-    private readonly bool _windows;
+    private readonly bool _windows, _welcomeOnly;
+    private IReadOnlyDictionary<PlayerShortcutAction, string> _bindings;
     private CancellationTokenSource? _transition;
     private Button? _licenseNext;
     private WelcomeIntro? _intro;
@@ -34,16 +35,18 @@ internal sealed class FirstRunWizard : Border
     internal static Func<bool>? ReducedMotionOverride { get; set; }
     private readonly TextBlock _fraction = WorkspaceUi.Text("");
     private int _step, _font;
-    private bool _association, _mcp, _skip, _telemetry, _accepted, _privateAccepted;
+    private bool _association, _mcp, _createProject, _skip, _telemetry, _accepted, _privateAccepted;
     private string _theme, _key;
 
-    private FirstRunWizard(Window owner, AppSettings initial, string agreement, string privacy, Action<AppSettings?> finish, bool windows = false)
+    private FirstRunWizard(Window owner, AppSettings initial, string agreement, string privacy, Action<AppSettings?> finish, bool windows = false, bool welcomeOnly = false)
     {
-        _owner = owner; _initial = initial; _agreement = agreement; _privacy = privacy; _finish = finish; _windows = windows;
-        _association = initial.EulaAcceptedVersion.Length == 0 || initial.FileAssociationEnabled;
-        _mcp = initial.EulaAcceptedVersion.Length == 0 || initial.McpEnabled;
-        _skip = initial.SkipOpeningPrompts; _telemetry = !initial.TelemetryPrompted || initial.TelemetryEnabled;
-        _font = initial.TranscriptFontSize; _theme = initial.ThemeMode; _key = initial.CloudApiKey;
+        _owner = owner; _initial = initial; _agreement = agreement; _privacy = privacy; _finish = finish; _windows = windows; _welcomeOnly = welcomeOnly;
+        _bindings = AppSettings.DefaultPlayerBindings(initial.PlayerKeyBindings);
+        _accepted = _privateAccepted = welcomeOnly && initial.EulaAcceptedVersion.Length > 0;
+        _association = initial.FileAssociationEnabled;
+        _mcp = initial.McpEnabled;
+        _createProject = initial.CreateProjectOnAudioImport; _skip = initial.SkipOpeningPrompts; _telemetry = !initial.TelemetryPrompted || initial.TelemetryEnabled;
+        _font = initial.TranscriptFontSize; _theme = initial.ThemeMode; _key = IL.Core.Management.ManagedRuntime.Display(initial).CloudApiKey;
         ClipToBounds = true;
         HorizontalAlignment = HorizontalAlignment.Stretch; VerticalAlignment = VerticalAlignment.Stretch;
         var layout = new Grid { RowDefinitions = new RowDefinitions(windows ? "*,Auto" : "Auto,*,Auto") };
@@ -62,7 +65,11 @@ internal sealed class FirstRunWizard : Border
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,*"), Margin = new Thickness(22, 0, 22, windows ? 12 : 16) };
         var version = CenterText(AppBuildInfo.ReleaseName, 12); version.Opacity = .75; Grid.SetColumn(version, 1); footer.Children.Add(version);
         _fraction.FontSize = 12; _fraction.Opacity = .6; _fraction.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(_fraction, 2); footer.Children.Add(_fraction); Grid.SetRow(footer, windows ? 1 : 2); layout.Children.Add(footer);
-        Child = layout; Render();
+        if (IL.Core.Management.ManagedRuntime.Client?.Configuration is {} managed)
+        {
+            var host=new Grid{RowDefinitions=new RowDefinitions("Auto,*")};
+            var banner=WorkspaceUi.Text("",12);WorkspaceUi.OrganizationText(banner,"当前已加入",managed.OrganizationName,"的管理");banner.Margin=new Thickness(22,10);banner.Opacity=.7;host.Children.Add(banner);Grid.SetRow(layout,1);host.Children.Add(layout);Child=host;
+        } else Child=layout; Render();
         AttachedToVisualTree += (_, _) =>
         {
             _attached = true;
@@ -74,8 +81,8 @@ internal sealed class FirstRunWizard : Border
         };
         DetachedFromVisualTree += (_, _) => { _attached = false; CancelTransition(); };
     }
-    internal static Task<AppSettings?> ShowAsync(Window owner, AppSettings initial, string agreement, string privacy) =>
-        ShowInlineAsync(owner, initial, agreement, privacy);
+    internal static Task<AppSettings?> ShowAsync(Window owner, AppSettings initial, string agreement, string privacy, bool welcomeOnly = false) =>
+        ShowInlineAsync(owner, initial, agreement, privacy, welcomeOnly);
 
     internal static Window CreateWindowsWindow(Window owner, AppSettings initial, string agreement, string privacy)
     {
@@ -96,19 +103,20 @@ internal sealed class FirstRunWizard : Border
     internal static async Task<AppSettings?> ShowWindowsAsync(Window owner, AppSettings initial, string agreement, string privacy) =>
         await CreateWindowsWindow(owner, initial, agreement, privacy).ShowDialog<AppSettings?>(owner);
 
-    private static async Task<AppSettings?> ShowInlineAsync(Window owner, AppSettings initial, string agreement, string privacy)
+    private static async Task<AppSettings?> ShowInlineAsync(Window owner, AppSettings initial, string agreement, string privacy, bool welcomeOnly)
     {
         var completion = new TaskCompletionSource<AppSettings?>();
         var root = owner.Content as Grid ?? throw new InvalidOperationException("首次设置需要应用根布局。");
         var layer = new Border { Focusable = true };
         layer.Bind(BackgroundProperty, new DynamicResourceExtension("WorkspaceBackgroundBrush"));
-        var wizard = new FirstRunWizard(owner, initial, agreement, privacy, value => completion.TrySetResult(value), windows: true);
+        var wizard = new FirstRunWizard(owner, initial, agreement, privacy, value => completion.TrySetResult(value), windows: true, welcomeOnly: welcomeOnly);
         layer.Child = wizard;
         EventHandler closed = (_, _) => completion.TrySetResult(null);
         var underlying = root.Children.Select(control => (Control: control, Enabled: control.IsEnabled)).ToArray();
         foreach (var item in underlying) item.Control.IsEnabled = false;
         owner.Closed += closed;
         layer.KeyDown += (_, e) => { if (e.Key == Key.Escape) { completion.TrySetResult(null); e.Handled = true; } };
+        Grid.SetRowSpan(layer,Math.Max(1,root.RowDefinitions.Count));Grid.SetColumnSpan(layer,Math.Max(1,root.ColumnDefinitions.Count));
         root.Children.Add(layer); layer.Focus();
         try { return await completion.Task; } finally { owner.Closed -= closed; root.Children.Remove(layer); foreach (var item in underlying) item.Control.IsEnabled = item.Enabled; }
     }
@@ -145,7 +153,8 @@ internal sealed class FirstRunWizard : Border
         var card = WorkspaceUi.SettingsRow(icon, title, description, trailing);
         if (_windows && card is Border surface) surface.Padding = new Thickness(16, 10);
         if (card is Border { Child: Grid grid } && grid.Children[0] is TextBlock glyph) glyph.Foreground = WorkspaceUi.Accent;
-        return card;
+        string? setting=title switch {"关联 .ilp 文件"=>"fileAssociationEnabled","MCP 制作接口"=>"mcpEnabled","跳过题前提示"=>"skipOpeningPrompts","导入音频时同时建立项目"=>"createProjectOnAudioImport","API Key"=>"cloudApiKey",_=>null};
+        return setting is null?card:ManagedUi.Setting(card,setting);
     }
     private ToggleSwitch Toggle(bool value, Action<bool> set)
     { var toggle = new ToggleSwitch { IsChecked = value, OnContent = "", OffContent = "", MinWidth = 40 }; toggle.IsCheckedChanged += (_, _) => set(toggle.IsChecked == true); return toggle; }
@@ -161,21 +170,33 @@ internal sealed class FirstRunWizard : Border
         if (!first)
         {
             var back = RoundButton("chevron_left", "上一步", false); back.Name = "OobeBack";
-            back.Click += (_, _) => { _step = _initial.CloudReady && _step == 5 ? 3 : _step - 1; Render(); };
+            back.Click += (_, _) => { _step = _initial.CloudReady && _step == 6 ? 4 : _step - 1; Render(); };
             row.Children.Add(back);
         }
-        var next = RoundButton(_step == 5 ? "accept" : "chevron_right", _step == 5 ? "完成设置" : "下一步", true);
+        var next = RoundButton(_welcomeOnly || _step == 6 ? "accept" : "chevron_right", _welcomeOnly ? "进入应用" : _step == 6 ? "完成设置" : "下一步", true);
         next.Name = "OobeNext"; next.Click += (_, _) => Next();
-        next.IsEnabled = _step != 1 || (_accepted && _privateAccepted);
-        if (_step == 1) _licenseNext = next;
+        next.IsEnabled = !(_step == 1 || _welcomeOnly) || (_accepted && _privateAccepted);
+        if (_step == 1 || _welcomeOnly) _licenseNext = next;
         row.Children.Add(next); return row;
     }
     private void Next()
     {
-        if (_step == 1 && (!_accepted || !_privateAccepted)) return;
-        if (_step == 5) { _finish(_initial with { EulaAcceptedVersion = "2026-09-22", FileAssociationEnabled = _association, FileAssociationPrompted = true, McpEnabled = _mcp, SkipOpeningPrompts = _skip, TelemetryEnabled = _telemetry, TelemetryPrompted = true, TranscriptFontSize = _font, ThemeMode = _theme, CloudApiKey = _key.Trim() }); return; }
-        _step = _initial.CloudReady && _step == 3 ? 5 : _step + 1; Render();
+        if ((_step == 1 || _welcomeOnly) && (!_accepted || !_privateAccepted)) return;
+        if (_welcomeOnly) { _finish(_initial with { EulaAcceptedVersion = _initial.EulaAcceptedVersion.Length == 0 ? "2026-09-22" : _initial.EulaAcceptedVersion }); return; }
+        if (_step == 6) { _finish(_initial with { EulaAcceptedVersion = "2026-09-22", FileAssociationEnabled = _association, FileAssociationPrompted = true, McpEnabled = _mcp, SkipOpeningPrompts = _skip, CreateProjectOnAudioImport = _createProject, TelemetryEnabled = _telemetry, TelemetryPrompted = true, TranscriptFontSize = _font, ThemeMode = _theme, PlayerKeyBindings = _bindings, CloudApiKey = _key.Trim() }); return; }
+        _step = _initial.CloudReady && _step == 4 ? 6 : _step + 1; Render();
     }
+    private CheckBox Consent(string document, string text, bool value, Action<bool> set)
+    {
+        var link = new Button { Content = $"《{document}》", Padding = new Thickness(2, 0), MinHeight = 24, Foreground = WorkspaceUi.Accent };
+        link.Classes.Add("subtle"); link.Click += async (_, e) => { e.Handled = true; await AppDialogs.DocumentAsync(_owner, document, text); };
+        var wording = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        wording.Children.Add(WorkspaceUi.Text("我已阅读并同意")); wording.Children.Add(link);
+        var check = new CheckBox { Content = wording, IsChecked = value, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) };
+        check.IsCheckedChanged += (_, _) => { set(check.IsChecked == true); UpdateGate(); };
+        return check;
+    }
+
     private StackPanel BuildPage()
     {
         StackPanel body;
@@ -187,19 +208,12 @@ internal sealed class FirstRunWizard : Border
                 var brandTitle = CenterText("Intensive Listening", _windows ? 32 : 22, true);
                 if (_windows) brandTitle.FontWeight = FontWeight.Bold;
                 body.Children.Add(brandTitle); body.Children.Add(CenterText("欢迎使用精听课程制作与播放"));
-                var build = CenterText(AppBuildInfo.Display, 12); build.Name = "OobeBuildInfo"; build.Opacity = .65; build.Margin = new Thickness(0, 4, 0, 0); body.Children.Add(build); break;
+                var build = CenterText(AppBuildInfo.Display, 12); build.Name = "OobeBuildInfo"; build.Opacity = .65; build.Margin = new Thickness(0, 4, 0, 0); body.Children.Add(build);
+                if (_welcomeOnly && _initial.EulaAcceptedVersion.Length == 0)
+                { body.Children.Add(Consent("用户协议", _agreement, _accepted, value => _accepted = value)); body.Children.Add(Consent("隐私说明", _privacy, _privateAccepted, value => _privateAccepted = value)); }
+                break;
             case 1:
                 body = Page("同意许可条款", "请先阅读并确认用户协议与隐私说明。");
-                CheckBox Consent(string document, string text, bool value, Action<bool> set)
-                {
-                    var link = new Button { Content = $"《{document}》", Padding = new Thickness(2, 0), MinHeight = 24, Foreground = WorkspaceUi.Accent };
-                    link.Classes.Add("subtle"); link.Click += async (_, e) => { e.Handled = true; await AppDialogs.DocumentAsync(_owner, document, text); };
-                    var wording = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-                    wording.Children.Add(WorkspaceUi.Text("我已阅读并同意")); wording.Children.Add(link);
-                    var check = new CheckBox { Content = wording, IsChecked = value, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) };
-                    check.IsCheckedChanged += (_, _) => { set(check.IsChecked == true); UpdateGate(); };
-                    return check;
-                }
                 body.Children.Add(Consent("用户协议", _agreement, _accepted, value => _accepted = value));
                 body.Children.Add(Consent("隐私说明", _privacy, _privateAccepted, value => _privateAccepted = value)); break;
             case 2:
@@ -207,12 +221,19 @@ internal sealed class FirstRunWizard : Border
                 body.Children.Add(Card("open_file", "关联 .ilp 文件", "双击精听包即可在应用中打开。", Toggle(_association, value => _association = value)));
                 body.Children.Add(Card("robot", "MCP 制作接口", "接管需在应用内批准；关闭主窗口后服务在托盘继续运行。", Toggle(_mcp, value => _mcp = value)));
                 body.Children.Add(Card("forward", "跳过题前提示", "首次打开课程时直接定位到第一题前并暂停。", Toggle(_skip, value => _skip = value)));
+                body.Children.Add(Card("music_note", "导入音频时同时建立项目", "自动创建制作工程并绑定音频副本。", Toggle(_createProject, value => _createProject = value)));
                 var telemetry = new ToggleSwitch { IsChecked = _telemetry, OnContent = "", OffContent = "", MinWidth = 40 };
                 var settingTelemetry = false;
                 telemetry.IsCheckedChanged += async (_, _) => { if (settingTelemetry) return; var enabled = telemetry.IsChecked == true; if (!enabled && _telemetry && !await AppDialogs.ConfirmAsync(_owner, "关闭匿名数据分析？", Retention + "\n\n关闭后可以随时在设置中重新开启。", "确认关闭")) { settingTelemetry = true; telemetry.IsChecked = true; settingTelemetry = false; return; } _telemetry = enabled; };
                 body.Children.Add(Card("chart", "匿名数据分析", "帮助了解应用使用情况与错误，可在设置中更改。", telemetry));
                 var disclosure = WorkspaceUi.Text(Disclosure + "\n" + Retention, 12); disclosure.Margin = new Thickness(0, 6, 0, 0); body.Children.Add(disclosure); break;
             case 3:
+                body = Page("快捷按键", "使用翻页笔或键盘单键控制播放，也可以稍后在设置中调整。");
+                var shortcuts = new PlayerShortcutSettingsView(bindings => { _bindings = new Dictionary<PlayerShortcutAction, string>(bindings); return Task.CompletedTask; });
+                shortcuts.Populate(_bindings);
+                body.Children.Add(ManagedUi.Setting(shortcuts, "playerKeyBindings"));
+                break;
+            case 4:
                 body = Page("外观", "调整播放时的阅读体验。");
                 var theme = new ComboBox { ItemsSource = new[] { "跟随系统", "浅色", "深色" }, SelectedIndex = _theme == "light" ? 1 : _theme == "dark" ? 2 : 0, MinWidth = 100 };
                 theme.SelectionChanged += (_, _) => _theme = new[] { "system", "light", "dark" }[Math.Max(0, theme.SelectedIndex)];
@@ -221,7 +242,7 @@ internal sealed class FirstRunWizard : Border
                 var value = WorkspaceUi.Text(_font.ToString()); value.VerticalAlignment = VerticalAlignment.Center;
                 font.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) { _font = (int)Math.Round(font.Value); value.Text = _font.ToString(); } };
                 body.Children.Add(Card("font", "字幕字体大小", "调整播放页逐句字幕的字号。", WorkspaceUi.Row(font, value))); break;
-            case 4:
+            case 5:
                 body = Page("云端转写", "填写 API Key 后即可制作课程，也可以稍后再配置。");
                 var key = new TextBox { Text = _key, PasswordChar = '●', PlaceholderText = "可留空", Width = 270 };
                 key.TextChanged += (_, _) => _key = key.Text ?? "";
@@ -241,8 +262,8 @@ internal sealed class FirstRunWizard : Border
         CancelTransition();
         if (!_pages.TryGetValue(_step, out var body)) _pages[_step] = body = BuildPageSurface();
         _visibleStep = _step;
-        _fraction.Text = $"{(_initial.CloudReady && _step == 5 ? 5 : _step + 1)} / {(_initial.CloudReady ? 5 : 6)}";
-        _fraction.IsVisible = _step != 0;
+        _fraction.Text = $"{(_initial.CloudReady && _step == 6 ? 6 : _step + 1)} / {(_initial.CloudReady ? 6 : 7)}";
+        _fraction.IsVisible = !_welcomeOnly && _step != 0;
         if (!_attached)
         {
             _page.Children.Clear(); _page.Children.Add(body); Normalize(body); return;

@@ -69,6 +69,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     public string DurationLabel => FormatTime(DurationSeconds);
     public IReadOnlySet<string> RevealedCloze => _revealed;
     public event Action? PresentationChanged;
+    public event Action? NavigationRequested;
     public bool IsScrubbing { get; set; }
 
     [ObservableProperty] private LessonListItem? selectedLesson;
@@ -88,6 +89,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty] private bool followTranscript = true;
     [ObservableProperty] private bool revealAnswer;
     [ObservableProperty] private int transcriptFontSize = 18;
+    [ObservableProperty] private int transcriptBlurIntensity = AppSettings.MaxTranscriptBlurIntensity;
 
     partial void OnSelectedLessonChanged(LessonListItem? value)
     {
@@ -134,7 +136,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         });
     }
 
-    public async Task RefreshAsync()
+    public async Task RefreshAsync(bool preservePlayback = false)
     {
         try
         {
@@ -142,10 +144,10 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
             _progress = await _progressStore.LoadAsync();
             var id = SelectedLesson?.Id;
             var loaded = await _library.LoadAsync();
-            Lessons.Clear();
-            foreach (var lesson in loaded.Lessons) Lessons.Add(new(lesson));
-            SelectedLesson = Lessons.FirstOrDefault(x => x.Id == id);
-            await CurrentLoad;
+            if (preservePlayback) _clearingSelection = true;
+            try { Lessons.Clear(); foreach (var lesson in loaded.Lessons) Lessons.Add(new(lesson)); SelectedLesson = Lessons.FirstOrDefault(x => x.Id == id); }
+            finally { _clearingSelection = false; }
+            if (!preservePlayback) await CurrentLoad;
             if (loaded.Issues.Count > 0) Status = $"{loaded.Issues.Count} 个课程无法读取";
         }
         catch (Exception ex) { Status = $"读取课库失败：{ex.Message}"; }
@@ -155,6 +157,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     {
         try
         {
+            IL.Core.Management.ManagedRuntime.Require("importIlp");
             var imported = await _importer.ImportFileAsync(file, replace, title);
             await RefreshAsync();
             SelectedLesson = Lessons.FirstOrDefault(x => x.Id == imported.Id);
@@ -164,6 +167,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     }
     public Task OpenAudioAsync(string file) => RunAsync(async () =>
     {
+        IL.Core.Management.ManagedRuntime.Require("importAudio");
         await CloseMediaAsync();
         ClearSelectedLesson();
         _audioPath = file;
@@ -233,6 +237,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         }
         else
         {
+            IL.Core.Management.ManagedRuntime.Require("playback");
             if (PositionSeconds >= DurationSeconds) await SeekCoreAsync(TimeSpan.Zero);
             if (SingleSentenceLoop && ActiveCue is { } cue && (PositionSeconds < cue.Cue.Start.TotalSeconds || PositionSeconds >= cue.Cue.End.TotalSeconds))
                 await SeekCoreAsync(PlaybackNavigation.CueSeekPosition(cue.Cue), cue.Index);
@@ -245,7 +250,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     [RelayCommand] private Task NextCueAsync() => StepCueAsync(1);
     private Task StepCueAsync(int delta) => RunAsync(async () =>
     {
-        if (ActiveCue is null) return;
+        if (ActiveCue is null || Cues.Count == 0) return;
         var row = Cues[Math.Clamp(ActiveCue.Index + delta, 0, Cues.Count - 1)];
         await SeekCoreAsync(PlaybackNavigation.CueNavigationPosition(row.Cue), row.Index);
     });
@@ -361,8 +366,10 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     }
     private async Task SeekCoreAsync(TimeSpan target, int? index = null)
     {
+        IL.Core.Management.ManagedRuntime.Require("playback");
         _repeatEnd = null; _preroll = index;
         UpdatePosition(target);
+        NavigationRequested?.Invoke();
         if (_playerSource is not null) await _player!.SeekAsync(TimeSpan.FromSeconds(PositionSeconds));
         await ConfigureLoopAsync();
         await SaveProgressAsync();
@@ -371,12 +378,13 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         ? _player!.SetLoopAsync(PlaybackNavigation.CueSeekPosition(row.Cue), row.Cue.End) : _player!.SetLoopAsync(null, null);
     private async Task EnsurePlayerLoadedAsync()
     {
+        IL.Core.Management.ManagedRuntime.Require("playback");
         if (_audioPath is null) throw new InvalidOperationException("请先选择课程");
         if (_playerSource == _audioPath) return;
         _switching = true;
         try
         {
-            if (_player is null) { _player = _factory(); _player.StateChanged += OnPlayerChanged; }
+            if (_player is null) { _player = await Task.Run(_factory); _player.StateChanged += OnPlayerChanged; }
             await _player.OpenAsync(_audioPath);
             _playerSource = _audioPath;
             if (_player.Duration > TimeSpan.Zero) DurationSeconds = _player.Duration.TotalSeconds;
@@ -410,9 +418,23 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     {
         if (_lesson is null) return;
         _lastProgressSave = DateTimeOffset.UtcNow;
-        _progress[_lesson.Id] = new(_lesson.Id, (long)(PositionSeconds * 1000), DateTimeOffset.Now, _revealed.ToHashSet());
+        var previous = _progress.GetValueOrDefault(_lesson.Id);
+        _progress[_lesson.Id] = new(_lesson.Id, (long)(PositionSeconds * 1000), DateTimeOffset.Now, _revealed.ToHashSet())
+        { SelectedAnswers = previous?.SelectedAnswers ?? new Dictionary<string, int>(), RevealedAnswers = previous?.RevealedAnswers ?? new HashSet<string>() };
         await _progressStore.SaveAsync(new Dictionary<string, LessonProgress>(_progress));
     }
+    public Task SaveAnswerStateAsync(string lessonId, string questionId, int? selected = null, bool? revealed = null) => RunAsync(async () =>
+    {
+        if (_lesson?.Id != lessonId) return;
+        var question = _lesson.Manifest.Exercises.Questions.FirstOrDefault(q => q.Id == questionId);
+        if (question is null || selected is int value && (value < 0 || value >= question.Options.Count)) return;
+        var previous = _progress.GetValueOrDefault(lessonId) ?? new(lessonId, 0, null, new HashSet<string>());
+        var answers = new Dictionary<string, int>(previous.SelectedAnswers); var shown = previous.RevealedAnswers.ToHashSet();
+        if (selected is int index) answers[questionId] = index;
+        if (revealed is true) shown.Add(questionId); else if (revealed is false) shown.Remove(questionId);
+        _progress[lessonId] = previous with { SelectedAnswers = answers, RevealedAnswers = shown };
+        await SaveProgressAsync();
+    });
     private async Task CloseMediaAsync()
     {
         await SaveProgressAsync();

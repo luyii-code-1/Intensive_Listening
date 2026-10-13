@@ -3,7 +3,11 @@ using IL.Core.Infrastructure;
 
 namespace IL.Core.Student;
 
-public sealed record LessonProgress(string PackageUuid, long PositionMs, DateTimeOffset? LastOpenedAt, IReadOnlySet<string> RevealedCloze);
+public sealed record LessonProgress(string PackageUuid, long PositionMs, DateTimeOffset? LastOpenedAt, IReadOnlySet<string> RevealedCloze)
+{
+    public IReadOnlyDictionary<string, int> SelectedAnswers { get; init; } = new Dictionary<string, int>();
+    public IReadOnlySet<string> RevealedAnswers { get; init; } = new HashSet<string>();
+}
 
 public sealed class LessonProgressStore(string? path = null)
 {
@@ -28,7 +32,13 @@ public sealed class LessonProgressStore(string? path = null)
                     && DateTimeOffset.TryParse(date.GetString(), out var parsed) ? parsed : null;
                 var revealed = record.TryGetProperty("revealedCloze", out var blanks) && blanks.ValueKind == JsonValueKind.Array
                     ? blanks.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToHashSet() : [];
-                result[id.GetString()!] = new(id.GetString()!, ms, opened, revealed);
+                var selected = new Dictionary<string, int>();
+                if (record.TryGetProperty("selectedAnswers", out var answers) && answers.ValueKind == JsonValueKind.Object)
+                    foreach (var answer in answers.EnumerateObject())
+                        if (answer.Name.Length > 0 && answer.Value.ValueKind == JsonValueKind.Number && answer.Value.TryGetInt32(out var index) && index >= 0) selected[answer.Name] = index;
+                var revealedAnswers = record.TryGetProperty("revealedAnswers", out var shown) && shown.ValueKind == JsonValueKind.Array
+                    ? shown.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToHashSet() : [];
+                result[id.GetString()!] = new(id.GetString()!, ms, opened, revealed) { SelectedAnswers = selected, RevealedAnswers = revealedAnswers };
             }
             return result;
         }
@@ -38,7 +48,7 @@ public sealed class LessonProgressStore(string? path = null)
     {
         var json = JsonSerializer.Serialize(new { version = 1, records = records.Values.Select(p => new
         {
-            packageUuid = p.PackageUuid, positionMs = p.PositionMs, lastOpenedAt = p.LastOpenedAt?.ToString("O"), revealedCloze = p.RevealedCloze.Order().ToArray()
+            packageUuid = p.PackageUuid, positionMs = p.PositionMs, lastOpenedAt = p.LastOpenedAt?.ToString("O"), revealedCloze = p.RevealedCloze.Order().ToArray(), selectedAnswers = p.SelectedAnswers, revealedAnswers = p.RevealedAnswers.Order().ToArray()
         }) }, new JsonSerializerOptions { WriteIndented = true });
         await _writes.WaitAsync(ct);
         var file = FilePath;

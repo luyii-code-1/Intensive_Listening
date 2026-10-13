@@ -18,6 +18,7 @@ public sealed class DesktopResidence : IDisposable
     public DesktopResidence(Window window, Func<Task> save, Func<Task> stop, Action shutdown, bool createTray = true)
     {
         _window = window; _save = save; _stop = stop; _shutdown = shutdown;
+        _visibleState = window.WindowState;
         if (createTray)
         {
             using var icon = AssetLoader.Open(new Uri("avares://IL.App/Assets/app_icon.ico"));

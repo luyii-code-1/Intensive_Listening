@@ -10,6 +10,9 @@ public sealed record CourseProject(string Id,string Title,DateTimeOffset Created
     string? AudioPath=null,TimeSpan? AudioDuration=null,string? TranscriptionJobId=null,string Transcript="",string? LastExportPath=null,int PackageVersion=0,
     ReviewPhase ReviewPhase=ReviewPhase.Grouping,LessonExercises? ExerciseData=null,bool AutomaticQuestionPlanApplied=false,bool AutoQuestionPlanDeferred=false)
 {
+    public string CreatorMachine { get; init; } = Environment.MachineName;
+    public string CreatorAgent { get; init; } = "用户";
+    public bool UserEdited { get; init; }
     public bool HasAudio=>!string.IsNullOrEmpty(AudioPath);
     public bool HasTranscript=>!string.IsNullOrWhiteSpace(Transcript);
     public LessonExercises Exercises {get;init;}=ExerciseData??LessonExercises.Empty;
@@ -18,6 +21,7 @@ public sealed record CourseProject(string Id,string Title,DateTimeOffset Created
         ["version"]=2,["id"]=Id,["title"]=Title,["createdAt"]=CreatedAt,["updatedAt"]=UpdatedAt,["step"]=Step.ToString().ToLowerInvariant(),
         ["audioPath"]=AudioPath,["audioDurationMs"]=AudioDuration?.TotalMilliseconds,["transcriptionJobId"]=TranscriptionJobId,["lastExportPath"]=LastExportPath,
         ["packageUuid"]=PackageUuid,["packageVersion"]=PackageVersion,["reviewPhase"]=ReviewPhase.ToString().ToLowerInvariant(),["exercises"]=Exercises,
+        ["creatorMachine"]=CreatorMachine,["creatorAgent"]=CreatorAgent,["userEdited"]=UserEdited,
         ["automaticQuestionPlanApplied"]=AutomaticQuestionPlanApplied,["autoQuestionPlanDeferred"]=AutoQuestionPlanDeferred
     };
     internal static CourseProject FromMetadata(JsonElement json,string transcript)
@@ -30,7 +34,8 @@ public sealed record CourseProject(string Id,string Title,DateTimeOffset Created
         var uuid=Nullable("packageUuid")??StableUuid(id);
         return new(id,Text("title"),DateTimeOffset.Parse(Text("createdAt")),DateTimeOffset.Parse(Text("updatedAt")),Enum.TryParse<CourseProjectStep>(Text("step"),true,out var step)?step:CourseProjectStep.Audio,uuid,
             Nullable("audioPath"),Number("audioDurationMs") is {} ms?TimeSpan.FromMilliseconds(ms):null,Nullable("transcriptionJobId"),transcript,Nullable("lastExportPath"),(int)(Number("packageVersion")??0),
-            Enum.TryParse<ReviewPhase>(Text("reviewPhase"),true,out var phase)?phase:ReviewPhase.Grouping,json.TryGetProperty("exercises",out var exercises)?LessonExercises.FromJson(exercises):null,Flag("automaticQuestionPlanApplied"),Flag("autoQuestionPlanDeferred"));
+            Enum.TryParse<ReviewPhase>(Text("reviewPhase"),true,out var phase)?phase:ReviewPhase.Grouping,json.TryGetProperty("exercises",out var exercises)?LessonExercises.FromJson(exercises):null,Flag("automaticQuestionPlanApplied"),Flag("autoQuestionPlanDeferred"))
+        { CreatorMachine = Text("creatorMachine", "未知"), CreatorAgent = Text("creatorAgent", "未知"), UserEdited = Flag("userEdited") };
     }
     private static string StableUuid(string id)
     {

@@ -8,7 +8,10 @@ namespace IL.Core.Ilp;
 public sealed partial record IlpManifest(int FormatVersion, string Title, TimeSpan Duration, string AudioPath,
     string TranscriptPath, string AudioSha256, string TranscriptSha256, string PackageUuid, int PackageVersion, LessonExercises Exercises)
 {
-    public const int SupportedVersion = 2;
+    public const int SupportedVersion = 3;
+    public string CreatorMachine { get; init; } = "未知";
+    public string CreatorAgent { get; init; } = "未知";
+    public string CreatorDescription => $"制作者：{CreatorAgent} · 电脑：{CreatorMachine}";
     public const string CanonicalTranscriptPath = "transcript.srt";
     public static IReadOnlySet<string> SupportedAudioExtensions { get; } = new HashSet<string> { "m4a", "mp3", "wav" };
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
@@ -20,7 +23,7 @@ public sealed partial record IlpManifest(int FormatVersion, string Title, TimeSp
     public byte[] ToBytes() => JsonSerializer.SerializeToUtf8Bytes(new
     {
         FormatVersion, Title, durationMs = (long)Duration.TotalMilliseconds, AudioPath, TranscriptPath,
-        PackageUuid, PackageVersion, Exercises,
+        PackageUuid, PackageVersion, Exercises, CreatorMachine, CreatorAgent,
         sha256 = new Dictionary<string, string> { [AudioPath] = AudioSha256, [TranscriptPath] = TranscriptSha256 }
     }, JsonOptions);
 
@@ -33,7 +36,7 @@ public sealed partial record IlpManifest(int FormatVersion, string Title, TimeSp
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object) throw Invalid("manifest.json 顶层必须是对象");
             if (!root.TryGetProperty("formatVersion", out var v) || !v.TryGetInt32(out var version)) throw Invalid("formatVersion 必须是整数");
-            if (version != SupportedVersion) throw new IlpException(IlpError.UnsupportedVersion, $"不支持的 .ilp 格式版本：{version}");
+            if (version is not (2 or SupportedVersion)) throw new IlpException(IlpError.UnsupportedVersion, $"不支持的 .ilp 格式版本：{version}");
             var title = String(root, "title");
             if (string.IsNullOrWhiteSpace(title) || title.Length > 300) throw Invalid("title 必须是非空字符串");
             if (!root.TryGetProperty("durationMs", out var d) || !d.TryGetInt64(out var milliseconds) || milliseconds <= 0 || milliseconds > TimeSpan.MaxValue.TotalMilliseconds)
@@ -52,7 +55,9 @@ public sealed partial record IlpManifest(int FormatVersion, string Title, TimeSp
             var transcriptHash = String(hashes, transcript);
             if (!HashPattern().IsMatch(audioHash) || !HashPattern().IsMatch(transcriptHash)) throw Invalid("SHA-256 必须是 64 位小写十六进制字符串");
             var exercises = root.TryGetProperty("exercises", out var e) ? LessonExercises.FromJson(e) : LessonExercises.Empty;
-            return new(version, title.Trim(), TimeSpan.FromMilliseconds(milliseconds), audio, transcript, audioHash, transcriptHash, uuid, packageVersion, exercises);
+            return new(version, title.Trim(), TimeSpan.FromMilliseconds(milliseconds), audio, transcript, audioHash, transcriptHash, uuid, packageVersion, exercises)
+            { CreatorMachine = String(root, "creatorMachine") is { Length: > 0 } machine ? machine : "未知",
+              CreatorAgent = String(root, "creatorAgent") is { Length: > 0 } agent ? agent : "未知" };
         }
         catch (Exception ex) when (ex is JsonException or DecoderFallbackException or InvalidOperationException or OverflowException)
         { throw new IlpException(IlpError.InvalidManifest, "manifest.json 不是有效的 UTF-8 JSON 或字段类型无效", ex); }

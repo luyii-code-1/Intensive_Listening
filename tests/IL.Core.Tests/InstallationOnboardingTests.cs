@@ -1,10 +1,37 @@
 using IL.Core.Settings;
+using System.Text.Json.Nodes;
 using Xunit;
 
 namespace IL.Core.Tests;
 
 public sealed class InstallationOnboardingTests
 {
+    [Fact]
+    public void UpgradeShowsWelcomeWhileNewOrResetDataKeepsFullSetupUntilCompleted()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il-onboarding-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var marker = Path.Combine(root, "installation-onboarding.txt");
+            File.WriteAllText(marker, "welcome");
+            InstallationOnboarding.Prepare(root, hasPersonalSettings: true); Assert.True(InstallationOnboarding.WelcomeOnly(root));
+            InstallationOnboarding.Prepare(root, hasPersonalSettings: false); Assert.False(InstallationOnboarding.WelcomeOnly(root));
+            InstallationOnboarding.Prepare(root, hasPersonalSettings: true); Assert.False(InstallationOnboarding.WelcomeOnly(root));
+            File.WriteAllText(marker, "full"); Assert.False(InstallationOnboarding.WelcomeOnly(root));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    [Fact]
+    public void DefaultPlaybackBindingPreservesUserKeysAndDoesNotTakeOccupiedPageUp()
+    {
+        Assert.Equal("PageUp", AppSettings.Defaults().PlayerKeyBindings[PlayerShortcutAction.TogglePlayback]);
+        var custom = AppSettings.FromJson(new JsonObject { ["playerKeyBindings"] = new JsonObject { ["togglePlayback"] = "PageDown" } });
+        Assert.Equal("PageDown", custom.PlayerKeyBindings[PlayerShortcutAction.TogglePlayback]);
+        var occupied = AppSettings.FromJson(new JsonObject { ["playerKeyBindings"] = new JsonObject { ["nextCue"] = "PageUp" } });
+        Assert.Equal("PageUp", occupied.PlayerKeyBindings[PlayerShortcutAction.NextCue]);
+        Assert.False(occupied.PlayerKeyBindings.ContainsKey(PlayerShortcutAction.TogglePlayback));
+    }
     [Fact]
     public async Task CompletedSetupSurvivesRestartAndReopensForNextInstallation()
     {

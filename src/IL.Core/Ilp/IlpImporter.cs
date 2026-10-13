@@ -1,4 +1,6 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text.Json.Nodes;
 
 namespace IL.Core.Ilp;
 
@@ -8,14 +10,16 @@ public sealed class IlpImporter(string libraryDirectory)
     {
         try
         {
-            using var archive = ZipFile.OpenRead(file);
-            return await ReadManifestAsync(Entries(archive), ct);
+            IlpManifest manifest;
+            using (var archive = ZipFile.OpenRead(file)) manifest = await ReadManifestAsync(Entries(archive), ct);
+            return manifest.FormatVersion < IlpManifest.SupportedVersion ? await UpgradeFileAsync(file, ct) : manifest;
         }
         catch (InvalidDataException ex) { throw new IlpException(IlpError.CorruptArchive, ".ilp 文件不是有效的 ZIP", ex); }
     }
 
     public async Task<ImportedLesson> ImportFileAsync(string file, bool replaceExisting = false, string? titleOverride = null, CancellationToken ct = default)
     {
+        await ReadManifestAsync(file, ct);
         var root = Path.GetFullPath(libraryDirectory);
         var staging = Path.Combine(root, ".import", "ilp-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
@@ -61,6 +65,47 @@ public sealed class IlpImporter(string libraryDirectory)
         finally { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
     }
 
+    private static async Task<IlpManifest> UpgradeFileAsync(string file, CancellationToken ct)
+    {
+        var temporary = Path.GetFullPath(file) + "." + Guid.NewGuid().ToString("N") + ".upgrade";
+        try
+        {
+            await using (var source = File.OpenRead(file))
+            await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+                await source.CopyToAsync(target, ct);
+            var upgraded = await Task.Run(async () =>
+            {
+                using var archive = ZipFile.Open(temporary, ZipArchiveMode.Update);
+                var entries = Entries(archive);
+                var manifest = await ReadManifestAsync(entries, ct);
+                foreach (var (name, expected) in new[] { (manifest.AudioPath, manifest.AudioSha256), (manifest.TranscriptPath, manifest.TranscriptSha256) })
+                {
+                    await using var input = Required(entries, name).Open();
+                    var actual = Convert.ToHexString(await SHA256.HashDataAsync(input, ct)).ToLowerInvariant();
+                    if (actual != expected) throw new IlpException(IlpError.HashMismatch, "升级前完整性校验失败");
+                }
+                byte[] transcript;
+                await using (var input = Required(entries, manifest.TranscriptPath).Open())
+                { using var output = new MemoryStream(); await input.CopyToAsync(output, ct); transcript = output.ToArray(); }
+                SrtParser.Parse(transcript, manifest.Duration);
+                JsonObject json;
+                await using (var input = Required(entries, "manifest.json").Open())
+                    json = (await JsonNode.ParseAsync(input, cancellationToken: ct))!.AsObject();
+                var result = manifest with { FormatVersion = IlpManifest.SupportedVersion };
+                json["formatVersion"] = result.FormatVersion;
+                json["creatorMachine"] = result.CreatorMachine;
+                json["creatorAgent"] = result.CreatorAgent;
+                entries["manifest.json"].Delete();
+                await using (var output = archive.CreateEntry("manifest.json").Open())
+                    await System.Text.Json.JsonSerializer.SerializeAsync(output, json, cancellationToken: ct);
+                return result;
+            }, ct);
+            ct.ThrowIfCancellationRequested();
+            File.Move(temporary, Path.GetFullPath(file), overwrite: true);
+            return upgraded;
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
     private static Dictionary<string, ZipArchiveEntry> Entries(ZipArchive archive)
     {
         var result = new Dictionary<string, ZipArchiveEntry>(StringComparer.Ordinal);

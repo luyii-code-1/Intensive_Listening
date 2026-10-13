@@ -101,14 +101,10 @@ public partial class MainWindow : Window
             if (OperatingSystem.IsWindows())
             {
                 _updateNotification ??= new WindowsSystemNotification(this, 0x494D, 0x8422);
-                _updateNotification.Show(title, message, () => Dispatcher.UIThread.Post(async () => { RestoreWorkspace(); ShowSettings(); _settings.ShowUpdates(); WorkspaceToast.Show(this, "开始安装更新", "正在保存工程并准备安装。"); await InstallManagedUpdateAsync(); }));
+                _updateNotification.Show(title, message, () => Dispatcher.UIThread.Post(async () => { _pendingColdUpdate = null; RestoreWorkspace(); ShowSettings(); _settings.ShowUpdates(); WorkspaceToast.Show(this, "开始安装更新", "正在保存工程并准备安装。"); await InstallManagedUpdateAsync(); }));
             }
-            if (IsVisible && WindowState != WindowState.Minimized)
-            {
-                var choice = await AppDialogs.ChooseAsync(this, title, message, "稍后", "更新");
-                ShowSettings(); _settings.ShowUpdates();
-                if (choice == 1) await InstallManagedUpdateAsync();
-            }
+            _pendingColdUpdate = update;
+            await ShowPendingColdUpdateAsync();
         });
         _services.Mdn.Changed+=()=>Dispatcher.UIThread.Post(async()=>
         {
@@ -163,6 +159,7 @@ public partial class MainWindow : Window
         });
         CrashMonitor.BackgroundFault += BackgroundFault;
         Closed += (_, _) => CrashMonitor.BackgroundFault -= BackgroundFault;
+        Activated += async (_, _) => await ShowPendingColdUpdateAsync();
         Opened+=async(_,_)=>{if(_initializationStarted)return;_initializationStarted=true;if(!standalone)_ = _services.Updates.CheckAsync(AppBuildInfo.Version);await InitializeAsync();};
         if (OperatingSystem.IsWindows() && !standalone)
         {
@@ -263,6 +260,16 @@ public partial class MainWindow : Window
         finally { _installingUpdate = false; }
     }
     private CancellationTokenSource? _otaPrompt;
+    private IL.Core.Management.ManagedUpdate? _pendingColdUpdate;
+    private async Task ShowPendingColdUpdateAsync()
+    {
+        if (!IsVisible || WindowState == WindowState.Minimized || _pendingColdUpdate is not {} update) return;
+        _pendingColdUpdate = null;
+        if (update.Id != _services.ManagedUpdates.UpdateId) return;
+        var choice = await AppDialogs.ChooseAsync(this, "组织更新已下载", $"版本 {update.Version} 已下载并校验，点击更新开始安装。", "稍后", "更新");
+        ShowSettings(); _settings.ShowUpdates();
+        if (choice == 1) await InstallManagedUpdateAsync();
+    }
     private bool _updateOnClose;
     private async Task AutomaticManagedUpdateAsync()
     {

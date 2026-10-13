@@ -32,6 +32,7 @@ public sealed class ManagedUpdater : IDisposable
     public bool ReopenAfterUpdate { get; set; } = true;
     public bool SkipUpdateOobe { get; set; }
     public string? UpdateMode => _offered?.Mode;
+    public string? UpdateId => _offered?.Id;
     public bool CanInstallDeferred => DeferredUntilClose && _ready is not null && _ready == EligibleUpdate();
     public ManagedUpdater(MdnClient client, string data) : this(() => client.Policy, () => client.Configuration, client.DownloadCredential, data, AppBuildInfo.Version) { _client = client; }
     public void DeferUntilClose() { DeferredUntilClose = true; ReopenAfterUpdate = false; _ = FeedbackAsync("deferred", "用户选择关闭窗口后更新"); }

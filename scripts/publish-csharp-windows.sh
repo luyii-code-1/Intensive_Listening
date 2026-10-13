@@ -54,7 +54,7 @@ import json
 PY
 "$python_runtime" - "$output" <<'PY'
 import pathlib,sys,zipfile,hashlib
-root=pathlib.Path(sys.argv[1]);target=root.with_suffix('.zip')
+root=pathlib.Path(sys.argv[1]);target=root.parent/(root.name+'.zip')
 with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=5) as z:
     for p in sorted(root.rglob('*')):
         if p.is_file():z.write(p,p.relative_to(root))

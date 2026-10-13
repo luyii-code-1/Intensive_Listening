@@ -68,7 +68,7 @@ internal sealed class FirstRunWizard : Border
         if (IL.Core.Management.ManagedRuntime.Client?.Configuration is {} managed)
         {
             var host=new Grid{RowDefinitions=new RowDefinitions("Auto,*")};
-            var banner=WorkspaceUi.Text($"当前已加入{managed.OrganizationName}的管理",12);banner.Margin=new Thickness(22,10);banner.Opacity=.7;host.Children.Add(banner);Grid.SetRow(layout,1);host.Children.Add(layout);Child=host;
+            var banner=WorkspaceUi.Text("",12);WorkspaceUi.OrganizationText(banner,"当前已加入",managed.OrganizationName,"的管理");banner.Margin=new Thickness(22,10);banner.Opacity=.7;host.Children.Add(banner);Grid.SetRow(layout,1);host.Children.Add(layout);Child=host;
         } else Child=layout; Render();
         AttachedToVisualTree += (_, _) =>
         {

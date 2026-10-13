@@ -92,7 +92,7 @@ public partial class MainWindow : Window
             var manifest = _services.Student.Lessons.FirstOrDefault(l => l.Id.Equals(lesson.PackageUuid, StringComparison.OrdinalIgnoreCase))?.Lesson.Manifest;
             WorkspaceToast.Show(this, "组织精听包已导入", $"{manifest?.Title ?? lesson.Title} · 版本 {lesson.PackageVersion}\n{manifest?.CreatorDescription}");
         });
-        ManagedBanner.Text=_services.Mdn.Banner;ManagedBanner.IsVisible=ManagedBanner.Text.Length>0;
+        RefreshManagedBanner();
         _services.ManagedUpdates.AutomaticInstall=()=>OnUiAsync(async()=>{await InstallManagedUpdateAsync();return true;});
         _services.ManagedUpdates.NotificationRequested += update => Dispatcher.UIThread.Post(() =>
         {
@@ -109,7 +109,7 @@ public partial class MainWindow : Window
         });
         _services.Mdn.Changed+=()=>Dispatcher.UIThread.Post(async()=>
         {
-            ManagedBanner.Text=_services.Mdn.Banner;ManagedBanner.IsVisible=ManagedBanner.Text.Length>0;
+            RefreshManagedBanner();
             if(!await _initialized.Task)return;
             _ = _services.ManagedLessons.RefreshAsync();
             if(_managedRevision==_services.Mdn.Policy.Revision){_ = _services.ManagedUpdates.RefreshAsync();return;}
@@ -167,6 +167,12 @@ public partial class MainWindow : Window
             Closing+=async(_,e)=>{if(_closing)return;e.Cancel=true;await ExitAsync();};
     }
     private void ToggleMaximize() => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+    private void RefreshManagedBanner()
+    {
+        var config = _services.Mdn.Configuration; ManagedBanner.IsVisible = config is not null;
+        if (config is not null) WorkspaceUi.OrganizationText(ManagedBanner, "当前由", config.OrganizationName, $"管理 · {_services.Mdn.DeviceId.Split('-')[^1]}");
+        else { ManagedBanner.Inlines = null; ManagedBanner.Text = ""; }
+    }
     private void RestoreWorkspace() { if (_residence != null) _residence.Restore(); else { Show(); if(WindowState==WindowState.Minimized)WindowState=WindowState.Normal;Activate(); } }
     private async Task<IL.Core.Mcp.AgentApprovalDecision> RequestAgentApprovalAsync(string name)
     {

@@ -36,7 +36,7 @@
 
 默认使用 HTTPS。可信内网可运行 `MDN.Server.exe --disable_ssl`，或在现有 `data/server.json` 中加入 `"disable_ssl": true` 后重启。启动参数优先开启 HTTP，本次启动沿用配置中的端口（默认 8443）；控制台和后台导出的连接地址自动使用 HTTP。HTTP 模式无需读取 TLS 证书或私钥，管理员登录会使用适用于 HTTP 的会话 Cookie。
 
-客户端可在“设置 → 组织管理”勾选“使用 HTTP（禁用 SSL）”。已加入管理的客户端可点击“应用连接方式并重连”，沿用设备 UUID、凭证和策略缓存。切回 HTTPS 时重新核对证书指纹；签名公钥必须与原组织一致。
+客户端在加入管理前可在“设置 → 组织管理”选择 HTTP 或 HTTPS。加入后服务器地址、注册凭证、传输方式与服务器信任均锁定，断线时保持锁定；页面保留状态、连接重试和管理员授权退出。需要改变连接配置时，先获得管理员授权退出，再重新加入。安装器导入配置继续遵循独立的 `lockManagement` 策略。
 
 HTTP 模式导出的 YAML 包含 `disable_ssl: true`、`server_url: "http://IP:端口/"` 和空的 `server_certificate_sha256`。客户端明确选择 HTTP 后确认明文传输风险。注册凭证、策略、遥测与 API 配置的传输不加密；本地敏感缓存仍使用 DPAPI。组织更新允许 HTTP 或 HTTPS 下载，签名、大小和 SHA-256 校验始终执行。
 

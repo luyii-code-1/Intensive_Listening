@@ -271,8 +271,15 @@ public sealed class SettingsView : UserControl
         if(ManagedRuntime.Client is {} organization && organization.Status!="未加入管理")
         {
             var status=WorkspaceUi.Text(organization.Status,12);
-            organization.Changed+=()=>Dispatcher.UIThread.Post(()=>status.Text=organization.Status);
-            privacy.Children.Add(Card("info","组织管理",organization.Banner.Length>0?organization.Banner:"集控配置需要检查",status));
+            var name = WorkspaceUi.Text("", 12);
+            void RefreshOrganization()
+            {
+                status.Text = organization.Status;
+                if (organization.Configuration is { } config) WorkspaceUi.OrganizationText(name, "当前由", config.OrganizationName, $"管理 · {organization.DeviceId.Split('-')[^1]}");
+                else { name.Inlines = null; name.Text = "尚未加入组织管理"; }
+            }
+            RefreshOrganization(); organization.Changed+=()=>Dispatcher.UIThread.Post(RefreshOrganization);
+            privacy.Children.Add(WorkspaceUi.SettingsRow("info", "组织管理", name, status, compact: true));
         }
 
         var categories = new[]

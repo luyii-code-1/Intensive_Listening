@@ -84,28 +84,10 @@ public sealed class MdnClient : IAsyncDisposable
         }
         finally { Start(); }
     }
-    public async Task ChangeTransportAsync(bool disableSsl, string certificatePin = "", CancellationToken ct = default)
-    {
-        await _request.WaitAsync(ct);
-        try
-        {
-            var current = Configuration ?? throw new InvalidOperationException("请先加入组织管理。");
-            var server = new UriBuilder(current.Server) { Scheme = disableSsl ? "http" : "https", Port = current.Server.IsDefaultPort ? -1 : current.Server.Port }.Uri;
-            var next = new MdnConfiguration { OrganizationName = current.OrganizationName, ServerUrl = server.AbsoluteUri,
-                EnrollmentToken = current.EnrollmentToken, UpdatePublicKey = current.UpdatePublicKey, PollSeconds = current.PollSeconds,
-                DisableSsl = disableSsl, ServerCertificateSha256 = disableSsl ? "" : certificatePin };
-            var handler = MdnConfiguration.CreateHttpHandler(next.ServerCertificateSha256);
-            var path = Path.Combine(Path.GetDirectoryName(_root)!, "il_mdn_config.yaml");
-            var yaml = new YamlDotNet.Serialization.SerializerBuilder().WithNamingConvention(YamlDotNet.Serialization.NamingConventions.UnderscoredNamingConvention.Instance).Build().Serialize(next);
-            File.WriteAllText(path + ".tmp", yaml); File.Move(path + ".tmp", path, true);
-            _http.Dispose(); _http = new(handler) { Timeout = TimeSpan.FromSeconds(10) }; Configuration = next;
-            if (_token is not null) Save();
-            Status = "连接方式已保存，正在重连"; Changed?.Invoke();
-            _socket?.Abort();
-        }
-        finally { _request.Release(); }
-        await SynchronizeAsync(ct);
-    }
+    public Task ChangeTransportAsync(bool disableSsl, string certificatePin = "", CancellationToken ct = default) =>
+        Task.FromException(new InvalidOperationException(Configuration is null
+            ? "请在加入管理时选择连接方式。"
+            : "加入组织管理后，连接设置已锁定。请先由管理员授权退出管理。"));
     public async Task LeaveAsync(CancellationToken ct = default)
     {
         if (Configuration is null) return;

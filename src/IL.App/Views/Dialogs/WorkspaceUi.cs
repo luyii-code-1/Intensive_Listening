@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Markup.Xaml.MarkupExtensions;
@@ -33,11 +34,13 @@ internal static class WorkspaceUi
         return grid;
     }
     public static Control SettingsRow(string icon, string title, string description, Control trailing, bool compact = false)
+        => SettingsRow(icon, title, Text(description, 12), trailing, compact);
+    public static Control SettingsRow(string icon, string title, Control description, Control trailing, bool compact = false)
     {
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), MinHeight = compact ? 36 : 44 };
         var glyph = Icon(icon, 22); glyph.Margin = new Thickness(0, 0, 18, 0); grid.Children.Add(glyph);
         var labels = new StackPanel { Spacing = compact ? 2 : 3, VerticalAlignment = VerticalAlignment.Center };
-        labels.Children.Add(Text(title, 14, true)); labels.Children.Add(Text(description, 12)); Grid.SetColumn(labels, 1); grid.Children.Add(labels);
+        labels.Children.Add(Text(title, 14, true)); labels.Children.Add(description); Grid.SetColumn(labels, 1); grid.Children.Add(labels);
         trailing.Margin = new Thickness(16, 0, 0, 0); trailing.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(trailing, 2); grid.Children.Add(trailing);
         var border = Surface(grid, new Thickness(20, compact ? 10 : 16)); border.CornerRadius = new CornerRadius(4);
         border.BorderThickness = new Thickness(1); border.Bind(Border.BorderBrushProperty, new DynamicResourceExtension("WorkspaceCardBorderBrush")); return border;
@@ -47,6 +50,11 @@ internal static class WorkspaceUi
         var block = new TextBlock { Text = text, FontSize = size, TextWrapping = TextWrapping.Wrap };
         if (strong) block.FontWeight = FontWeight.Bold;
         return block;
+    }
+    public static void OrganizationText(TextBlock label, string prefix, string organization, string suffix = "")
+    {
+        label.Text = null;
+        label.Inlines = new InlineCollection { new Run(prefix), new Run(organization) { FontWeight = FontWeight.Bold }, new Run(suffix) };
     }
     public static StackPanel Stack(params Control[] controls) { var panel = new StackPanel { Spacing = 8 }; foreach (var c in controls) panel.Children.Add(c); return panel; }
     public static WrapPanel Row(params Control[] controls) { var panel = new WrapPanel { Orientation = Orientation.Horizontal }; foreach (var c in controls) { c.Margin = new Thickness(0, 0, 8, 6); panel.Children.Add(c); } return panel; }

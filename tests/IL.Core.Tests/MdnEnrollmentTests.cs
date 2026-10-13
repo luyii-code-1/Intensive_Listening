@@ -44,6 +44,31 @@ public sealed class MdnEnrollmentTests
         finally { Directory.Delete(root, true); }
     }
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ManagedTransportCannotBeChangedWhileDisconnectedOrAfterRestart(bool disableSsl)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "il-mdn-locked-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "il_mdn_config.yaml");
+            await File.WriteAllTextAsync(path, $"schema_version: 1\norganization_name: Test\nserver_url: {(disableSsl ? "http" : "https")}://127.0.0.1:8443/\nenrollment_token: test-token\ndisable_ssl: {disableSsl.ToString().ToLowerInvariant()}\n");
+            var before = await File.ReadAllBytesAsync(path);
+            for (var restart = 0; restart < 2; restart++)
+            {
+                await using var client = new MdnClient(root, "2.0.1");
+                var original = client.Configuration;
+                var denied = await Assert.ThrowsAsync<InvalidOperationException>(() => client.ChangeTransportAsync(!disableSsl, new string('a', 64)));
+                Assert.Contains("已锁定", denied.Message);
+                Assert.Same(original, client.Configuration); Assert.Equal(disableSsl, client.Configuration!.DisableSsl);
+                Assert.Equal(before, await File.ReadAllBytesAsync(path));
+                await Assert.ThrowsAsync<InvalidOperationException>(() => client.JoinYamlAsync(path));
+            }
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    [Theory]
     [InlineData("192.168.1.10:8443", "https://192.168.1.10:8443/")]
     [InlineData(" https://192.168.1.10:8443/ ", "https://192.168.1.10:8443/")]
     [InlineData("[::1]:8443", "https://[::1]:8443/")]

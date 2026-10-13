@@ -3,7 +3,7 @@
   <h1>Intensive Listening 2 Resonance</h1>
   <p>从听力材料到精听课程，让制作与训练连成一个工作流</p>
   <p>
-    <a href="https://github.com/luyii-code-1/Intensive_Listening/releases/tag/v2.0.0"><img src="https://img.shields.io/badge/Release-v2.0.0-B71C1C" alt="v2.0.0" /></a>
+    <a href="https://github.com/luyii-code-1/Intensive_Listening/releases/tag/v2.1.0"><img src="https://img.shields.io/badge/Release-v2.1.0-B71C1C" alt="v2.1.0" /></a>
     <img src="https://img.shields.io/badge/Windows-10%2F11%20x64-0078D4" alt="Windows 10/11 x64" />
     <img src="https://img.shields.io/badge/macOS-26%2B%20Apple%20Silicon-555555?logo=apple" alt="macOS 26+ Apple Silicon" />
     <img src="https://img.shields.io/badge/Framework-Avalonia-8B44AC" alt="Avalonia" />
@@ -15,16 +15,29 @@
 
 Intensive Listening 是面向英语听力教学的桌面应用。教师可以整理音频、字幕、试卷与答案，制作包含题目、时间轴和词级挖空的精听课程；学生可以按句、按题定位，反复听读、隐藏字幕并逐词揭晓答案。课程制作支持人工操作，也支持通过 MCP 交给电脑上的智能体处理，最后由用户审阅、保存与分发。
 
-当前正式版本为 **2.0.0 · 2 Resonance**，使用 C# / .NET 10 / Avalonia 构建。
+当前正式版本为 **2.1.0 · 2 Resonance**，使用 C# / .NET 10 / Avalonia 构建。
 
 | 平台 | 安装包 | 安装方式 |
 | --- | --- | --- |
-| Windows 10/11 x64 | [Windows 安装包](https://github.com/luyii-code-1/Intensive_Listening/releases/download/v2.0.0/Intensive-Listening-2.0.0-win-x64-Setup.exe) | 运行安装程序，选择程序安装目录 |
-| macOS 26.0+，Apple Silicon（M 系列） | [macOS DMG](https://github.com/luyii-code-1/Intensive_Listening/releases/download/v2.0.0/Intensive-Listening-2.0.0-osx-arm64.dmg) | 打开 DMG，将应用拖入 Applications |
+| Windows 10/11 x64 | [Windows 安装包](https://github.com/luyii-code-1/Intensive_Listening/releases/download/v2.1.0/Intensive-Listening-2.1.0-win-x64-Setup.exe) | 运行安装程序，选择程序安装目录 |
+| macOS 26.0+，Apple Silicon（M 系列） | [macOS DMG](https://github.com/luyii-code-1/Intensive_Listening/releases/download/v2.1.0/Intensive-Listening-2.1.0-osx-arm64.dmg) | 打开 DMG，将应用拖入 Applications |
 
 两个安装包均包含 .NET、VLC、FFmpeg 和 ARMS 运行依赖。macOS 包当前采用 ad-hoc 签名，尚未经过 Apple 公证；系统可能要求手动允许打开。Windows 文件关联、后台托盘、接管审批系统通知和独立 EXE 播放器为 Windows 平台功能。
 
-完整版本说明与附件见 [2 Resonance Release](https://github.com/luyii-code-1/Intensive_Listening/releases/tag/v2.0.0)。
+完整版本说明与附件见 [2 Resonance Release](https://github.com/luyii-code-1/Intensive_Listening/releases/tag/v2.1.0)。
+
+集控部署与组织更新见 [MDN 配置及部署说明](docs/MDN.md)。
+
+安装引导、YAML 预设与崩溃事件说明见 [安装部署配置](docs/DEPLOYMENT_PRESETS.md)。
+
+## 2.1 的变化
+
+- **MDN 组织管理**：Windows 单文件服务端，支持局域网 IP、HTTP／HTTPS、共享凭证注册、YAML 和安装后手动加入。WebSocket 实时维护在线状态与策略，每分钟轮询补偿；加入后锁定连接参数，退出需要管理员授权。
+- **组织配置与分发**：后台按全部或指定客户端配置偏好、锁定设置、禁用功能和下发 ASR 配置，查看设备状态与遥测；支持上传 EXE 分发冷更新／OTA，以及上传精听包自动导入和高版本更新，保留学习记录并查看接收回执。
+- **播放与导入**：统一“导入精听包或音频”，支持音频导入时建立项目；改进字幕列表滚动、跳转、冷状态和渲染，共用模糊强度滑块，最近课程整行可点击。
+- **部署与维护**：启动异步检查 GitHub Latest，独立关于页；完善 Windows 更新助手、系统通知、安装欢迎页、PageUp 快捷键默认绑定、YAML 预设及 ARMS 崩溃自定义事件。
+
+详见 [2.1.0 发布说明](docs/RELEASE_2.1.0.md)。
 
 ## 2.0 的变化
 
@@ -72,7 +85,7 @@ Intensive Listening 是面向英语听力教学的桌面应用。教师可以整
 - 按上一句、下一句、上一题、下一题定位，重听当前句，开启单句循环。
 - 展开与折叠题前提示、重复朗读区间，调整题目与字幕区域的分栏。
 - 隐藏字幕进行盲听，点击挖空词槽揭晓拼写，也可以批量显示或隐藏当前材料的挖空。
-- 在设置中调整字幕字号（14–28）。
+- 在设置中调整字幕字号（14–28）和高速模糊强度（1–8）；隐藏字幕与挖空共用强度，默认最大。
 
 ### 自定义扩展按键
 
@@ -142,17 +155,22 @@ Intensive Listening 是面向英语听力教学的桌面应用。教师可以整
 
 ## 设置、首次启动与数据
 
-设置页提供五个分类导航：
+设置页提供八个分类导航：
 
 | 分类 | 功能 |
 | --- | --- |
 | 外观与字体 | 跟随系统／浅色／深色，本机字体、字重、可编辑预览、恢复默认，即时应用 |
-| 播放 | 跳过题前提示、字幕字号、自定义扩展按键 |
+| 播放 | 跳过题前提示、字幕字号、共用模糊强度、自定义扩展按键、组织精听包接收状态 |
 | 制作与智能体 | 云端 ASR 配置、密码加密的 ZIP 配置导入导出、本地模型目录扫描与选择、MCP 开关及授权管理 |
 | 数据与维护 | 打开数据目录、清理缓存与日志、调试日志开关 |
-| 隐私与关于 | 匿名数据分析选择、隐私说明、协议与撤回同意、版本和构建信息 |
+| 隐私 | 匿名数据分析选择、隐私说明、协议与撤回同意 |
+| 更新 | GitHub 最新版本检查、组织更新状态与手动更新 |
+| 组织管理 | 手动连接／YAML 加入、组织与设备状态、重试连接、管理员授权退出 |
+| 关于 | 作者、仓库、版本与构建、开源许可证、第三方组件和 Ci2 借鉴声明 |
 
-首次启动或安装后，在主窗口中完成 OOBE：确认协议，配置适用的文件关联、MCP、转写 API 与匿名数据分析。匿名数据分析可随时关闭；崩溃报告提供报告 ID、版本、平台、组件与错误堆栈，支持复制，按同意状态上报或补报。
+首次安装或清空用户数据后，在主窗口中完成完整 OOBE：确认协议，配置文件关联、MCP、音频建项目、快捷键、转写 API 与匿名数据分析。覆盖安装保留欢迎页；缺少协议同意记录时在欢迎页确认协议。安装器可复制同目录的 `il_precfg.yaml`，在 OOBE 前应用指定预设字段。
+
+匿名数据分析可随时关闭；崩溃报告提供报告 ID、版本、平台、组件与错误堆栈，支持复制，按同意状态通过 ARMS 自定义事件上报或补报。组织遥测由 MDN 策略独立管理。
 
 Windows 默认安装到 `Program Files\Intensive Listening`，支持选择其他路径。检测到 1.x 程序目录时清理旧程序；其他非空目录须由用户确认删除后再安装。安装程序保护系统目录和应用数据目录。
 
@@ -164,6 +182,21 @@ Windows 默认安装到 `Program Files\Intensive Listening`，支持选择其他
 Windows 首次启动会迁移旧数据目录中的设置、课程库、工程、进度与转写队列。支持读取旧版 ILP、工程 ZIP、SRT 和配置归档；兼容性说明见 [迁移与兼容说明](docs/MIGRATION.md)。
 
 Windows 关闭主窗口会收起到托盘，后台服务继续运行；从托盘选择「退出」结束应用。重复启动或打开课程文件会交给已有实例。窗口内成功通知显示 5 秒，错误通知显示 15 秒，并支持复制错误信息。
+
+## MDN 集控
+
+MDN 面向 Windows 客户端提供组织配置与分发。服务端使用 Python / FastAPI / SQLite，发布附件 `MDN.Server.exe` 包含运行环境和管理页面，可直接在专用目录运行，自动展开 `data` 并保持控制台。升级前备份并保留该目录，停止旧服务后替换 EXE。
+
+客户端可以通过安装包旁的 `il_mdn_config.yaml`、设置中选择 YAML，或填写服务器地址与共享注册凭证加入管理。手动加入支持局域网 IP 和 HTTP／HTTPS；HTTPS 首次确认服务器证书指纹。设备沿用安装 UUID，保存在用户数据目录。加入后显示组织名称与 UUID 尾段，连接参数在断线及重启后仍锁定，退出需管理员在后台授权。
+
+管理后台提供以下操作：
+
+- 查看设备在线状态，配置全局或指定客户端的 UI／功能设置，锁定部分或全部设置，并使用 `lockManagement` 控制安装器能否替换组织配置。
+- 下发 ASR API 配置，隐藏 API 字段；客户端使用 DPAPI 保存组织凭据与配置。组织遥测独立于阿里云开关，报告版本、在线状态、ASR 耗时／错误和崩溃诊断。
+- 上传 EXE 分发 OTA 或冷更新，自动计算 SHA-256、大小与签名。OTA 自动下载校验、安装和重启；冷更新点击后下载并安装，提供系统通知和状态。允许同版本覆盖更新，拒绝低版本。
+- 上传 `.ilp` 分发到全部或多台指定设备，自动下载、校验和导入。同 UUID 高版本更新保留播放、挖空、答题及答案显隐记录；课程正在使用时延后导入，后台显示回执，撤回后保留已导入课程。
+
+WebSocket 提供实时配置下发与心跳，断线自动重连，每分钟轮询补偿。配置格式、HTTP／HTTPS 选项、权限、更新校验与部署步骤见 [MDN 配置及部署说明](docs/MDN.md)。
 
 ## 云端转写配置
 

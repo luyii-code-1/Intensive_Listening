@@ -26,8 +26,11 @@ public sealed record AppSettings
     public string ApplicationFontFamily { get; init; } = "";
     public int ApplicationFontWeight { get; init; } = 500;
     public bool SkipOpeningPrompts { get; init; } = true;
+    public bool CreateProjectOnAudioImport { get; init; } = true;
     public int TranscriptFontSize { get; init; } = 18;
-    public IReadOnlyDictionary<PlayerShortcutAction, string> PlayerKeyBindings { get; init; } = new Dictionary<PlayerShortcutAction, string>();
+    public const int MinTranscriptBlurIntensity = 1, MaxTranscriptBlurIntensity = 8;
+    public int TranscriptBlurIntensity { get; init; } = MaxTranscriptBlurIntensity;
+    public IReadOnlyDictionary<PlayerShortcutAction, string> PlayerKeyBindings { get; init; } = DefaultPlayerBindings(new Dictionary<PlayerShortcutAction, string>());
     public bool DebugLogging { get; init; }
     public bool TelemetryEnabled { get; init; }
     public bool TelemetryPrompted { get; init; }
@@ -36,7 +39,9 @@ public sealed record AppSettings
     public IL.Core.Asr.AsrConfig CloudAsrConfig => new(CloudBaseUrl,CloudEndpoint,CloudModel,CloudApiKey,CloudLanguage);
     public bool CloudReady => new[] { CloudBaseUrl, CloudEndpoint, CloudModel, CloudApiKey }.All(x => !string.IsNullOrWhiteSpace(x));
     public bool LocalReady => !string.IsNullOrWhiteSpace(LocalModelsDirectory) && !string.IsNullOrWhiteSpace(SelectedLocalModel);
-    public string AsrCacheProfile => JsonSerializer.Serialize(new { provider = AsrProvider.ToString().ToLowerInvariant(), baseUrl = CloudBaseUrl.Trim(), endpoint = CloudEndpoint.Trim(), model = CloudModel.Trim(), language = CloudLanguage.Trim(), translateChineseToEnglish = TranslateChineseToEnglish, localModel = SelectedLocalModel.Trim(), segmentMaxSeconds = 120 }, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+    private string RawAsrCacheProfile => JsonSerializer.Serialize(new { provider = AsrProvider.ToString().ToLowerInvariant(), baseUrl = CloudBaseUrl.Trim(), endpoint = CloudEndpoint.Trim(), model = CloudModel.Trim(), language = CloudLanguage.Trim(), translateChineseToEnglish = TranslateChineseToEnglish, localModel = SelectedLocalModel.Trim(), segmentMaxSeconds = 120 }, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+    public string AsrCacheProfile => IL.Core.Management.ManagedRuntime.IsManaged && IL.Core.Management.ManagedRuntime.Policy.HideAsrConfiguration
+        ? JsonSerializer.Serialize(new { provider="cloud", model="managed", configurationId=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(RawAsrCacheProfile))) }) : RawAsrCacheProfile;
     internal static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
     public static AppSettings Defaults() => new() { CloudBaseUrl = Environment.GetEnvironmentVariable("ILP_ASR_BASE_URL") ?? "https://dashscope.aliyuncs.com", CloudEndpoint = Environment.GetEnvironmentVariable("ILP_ASR_ENDPOINT") ?? "/api/v1/services/aigc/multimodal-generation/generation", CloudModel = Environment.GetEnvironmentVariable("ILP_ASR_MODEL") ?? "qwen-audio-3.0-asr-flash", CloudApiKey = Environment.GetEnvironmentVariable("ILP_ASR_API_KEY") ?? "" };
     public JsonObject ToJson() { var json = JsonSerializer.SerializeToNode(this, JsonOptions)!.AsObject(); foreach (var key in new[] { "cloudReady", "localReady", "asrCacheProfile", "cloudAsrConfig" }) json.Remove(key); return json; }
@@ -44,6 +49,8 @@ public sealed record AppSettings
     public static AppSettings FromJson(JsonObject j) => new()
     {
         CompletedInstallationId = String(j, "completedInstallationId", ""),
+        CreateProjectOnAudioImport = Bool(j, "createProjectOnAudioImport", true),
+        TranscriptBlurIntensity = Math.Clamp(Integer(j, "transcriptBlurIntensity", MaxTranscriptBlurIntensity), MinTranscriptBlurIntensity, MaxTranscriptBlurIntensity),
         ApplicationFontFamily = String(j, "applicationFontFamily", ""),
         ApplicationFontWeight = Math.Clamp(Integer(j, "applicationFontWeight", 500), 100, 950),
         PlayerKeyBindings = ReadPlayerKeyBindings(j["playerKeyBindings"]),
@@ -60,6 +67,14 @@ public sealed record AppSettings
                 if (Enum.TryParse<PlayerShortcutAction>(pair.Key, true, out var action) && Enum.IsDefined(action) &&
                     pair.Value is JsonValue value && value.TryGetValue<string>(out var key) && !string.IsNullOrWhiteSpace(key))
                     bindings[action] = key;
+        return DefaultPlayerBindings(bindings);
+    }
+    public static IReadOnlyDictionary<PlayerShortcutAction, string> DefaultPlayerBindings(IReadOnlyDictionary<PlayerShortcutAction, string> current)
+    {
+        var bindings = new Dictionary<PlayerShortcutAction, string>(current);
+        if ((!bindings.TryGetValue(PlayerShortcutAction.TogglePlayback, out var key) || string.IsNullOrWhiteSpace(key)) &&
+            !bindings.Values.Any(k => string.Equals(k, "PageUp", StringComparison.OrdinalIgnoreCase)))
+            bindings[PlayerShortcutAction.TogglePlayback] = "PageUp";
         return bindings;
     }
     internal static bool Bool(JsonObject j, string k, bool d = false) => j[k] is JsonValue v && v.TryGetValue<bool>(out var b) ? b : d;
@@ -71,6 +86,23 @@ public sealed record AppSettings
 public sealed class AppSettingsStore(string? settingsPath = null)
 {
     public string FilePath => settingsPath ?? Path.Combine(AppDirectories.DataDirectory(), "settings.json");
-    public async Task<AppSettings> LoadAsync() { try { return File.Exists(FilePath) && JsonNode.Parse(await File.ReadAllTextAsync(FilePath)) is JsonObject j ? AppSettings.FromJson(j) : AppSettings.Defaults(); } catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return AppSettings.Defaults(); } }
-    public async Task SaveAsync(AppSettings settings) { Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(FilePath))!); await File.WriteAllTextAsync(FilePath, settings.ToJson().ToJsonString(AppSettings.JsonOptions)); }
+    internal async Task<AppSettings> LoadPersonalAsync() { try { return File.Exists(FilePath) && JsonNode.Parse(await File.ReadAllTextAsync(FilePath)) is JsonObject j ? AppSettings.FromJson(j) : AppSettings.Defaults(); } catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return AppSettings.Defaults(); } }
+    public async Task<AppSettings> LoadAsync() => IL.Core.Management.ManagedRuntime.Effective(await LoadPersonalAsync());
+    public async Task<AppSettings> NormalizeAsync(AppSettings settings) => IL.Core.Management.ManagedRuntime.Effective(IL.Core.Management.ManagedRuntime.IsManaged ? IL.Core.Management.ManagedRuntime.Policy.PreservePersonal(settings, await LoadPersonalAsync()) : settings);
+    public bool HasPersonalSettings
+    {
+        get { try { return File.Exists(FilePath) && JsonNode.Parse(File.ReadAllText(FilePath)) is JsonObject; } catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return false; } }
+    }
+    internal async Task SavePersonalAsync(AppSettings settings)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(FilePath))!);
+        var temporary = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try { await File.WriteAllTextAsync(temporary, settings.ToJson().ToJsonString(AppSettings.JsonOptions)); File.Move(temporary, FilePath, true); }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+    public async Task SaveAsync(AppSettings settings)
+    {
+        if (IL.Core.Management.ManagedRuntime.IsManaged) settings = IL.Core.Management.ManagedRuntime.Policy.PreservePersonal(settings, await LoadPersonalAsync());
+        await SavePersonalAsync(settings);
+    }
 }

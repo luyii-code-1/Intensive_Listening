@@ -7,7 +7,7 @@ public sealed class ProjectDelivery
     {
         if(!project.HasAudio||!project.HasTranscript)throw new IlpException(IlpError.MissingFile,"课程需要音频和字幕才能生成精听包");
         var temp=Path.Combine(Path.GetTempPath(),"intensive-listening-delivery-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(temp);
-        try{var transcript=Path.Combine(temp,"transcript.srt");await File.WriteAllTextAsync(transcript,project.Transcript,ct);await new IlpCreator().CreateAsync(project.Title,project.AudioPath!,transcript,outputFile,project.PackageUuid,packageVersion??project.PackageVersion+1,project.AudioDuration,project.Exercises,ct);return outputFile;}
+        try{var transcript=Path.Combine(temp,"transcript.srt");await File.WriteAllTextAsync(transcript,project.Transcript,ct);await new IlpCreator().CreateAsync(project.Title,project.AudioPath!,transcript,outputFile,project.PackageUuid,packageVersion??project.PackageVersion+1,project.AudioDuration,project.Exercises,ct,creatorMachine:project.CreatorMachine,creatorAgent:project.CreatorAgent);return outputFile;}
         finally{Directory.Delete(temp,true);}
     }
     public async Task<ProjectDeliveryResult> AddToLibraryAsync(CourseProject project,string libraryDirectory,CancellationToken ct=default)

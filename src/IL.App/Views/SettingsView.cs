@@ -15,12 +15,31 @@ using IL.App.Services;
 using IL.Core.Infrastructure;
 using IL.Core.Settings;
 using IL.Core.Mcp;
+using IL.Core.Management;
+using IL.Core.Updates;
 
 namespace IL.App.Views;
 
 public sealed class SettingsView : UserControl
 {
     private readonly AppSettingsStore _store;
+    private GitHubUpdateChecker? _updates;
+        private readonly TextBlock _updateStatus = WorkspaceUi.Text("尚未检查更新",12);
+    private readonly TextBlock _managedUpdateStatus = WorkspaceUi.Text("",12);
+    private readonly Button _installButton = new(){Content="更新",IsVisible=false};
+    private readonly TextBlock _lessonStatus = WorkspaceUi.Text("尚无组织精听包任务", 12);
+    private ManagedLessonReceiver? _managedLessons;
+    public void ConfigureManagedLessons(ManagedLessonReceiver lessons)
+    { _managedLessons = lessons; _lessonStatus.Text = lessons.Status; lessons.Changed += () => Dispatcher.UIThread.Post(() => _lessonStatus.Text = lessons.Status); }
+    private ListBox? _categoryNavigation;
+    public void ShowUpdates() { if (_categoryNavigation is not null) _categoryNavigation.SelectedItem = _categoryNavigation.Items.OfType<SettingsCategory>().FirstOrDefault(c => c.Title == "更新"); }
+    public void ConfigureUpdates(GitHubUpdateChecker updates,ManagedUpdater managed,Func<Task> install)
+    {
+        _updates=updates;
+        void Refresh(){_updateStatus.Text=updates.Result.Message;_managedUpdateStatus.Text=managed.Status;_installButton.IsVisible=managed.HasUpdate;_installButton.IsEnabled=managed.CanUpdate;}
+        updates.Changed+=()=>Dispatcher.UIThread.Post(Refresh);managed.Changed+=()=>Dispatcher.UIThread.Post(Refresh);
+        _installButton.Click+=async(_,_)=>{_installButton.IsEnabled=false;await RunAsync(install);Refresh();}; Refresh();
+    }
     private readonly AppPrivateApiServer? _mcpServer;
     private readonly StackPanel _agents = new() { Spacing = 8 };
     private readonly Func<AppSettings, Task> _apply;
@@ -32,6 +51,9 @@ public sealed class SettingsView : UserControl
     private readonly NumericUpDown _timeout = new() { Minimum = 30, Maximum = 1800, Increment = 30 }, _concurrency = new() { Minimum = 1, Maximum = 10 };
     private readonly Slider _font = new() { Minimum = 14, Maximum = 28, TickFrequency = 1, IsSnapToTickEnabled = true, Width = 200 };
     private readonly TextBlock _fontValue = WorkspaceUi.Text("18");
+    private readonly Slider _blur = new() { Minimum = AppSettings.MinTranscriptBlurIntensity, Maximum = AppSettings.MaxTranscriptBlurIntensity, Value = AppSettings.MaxTranscriptBlurIntensity, TickFrequency = 1, IsSnapToTickEnabled = true, Width = 200 };
+    private readonly TextBlock _blurValue = WorkspaceUi.Text("8 / 8");
+    private readonly DispatcherTimer _blurSave = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly ComboBox _theme = new() { MinWidth = 145 };
     private sealed record FontChoice(string Value, string Label, FontFamily Family);
     private sealed record WeightChoice(FontWeight Weight, string Label);
@@ -42,7 +64,7 @@ public sealed class SettingsView : UserControl
         Text = "精听，让每一句都听得清楚\nThe quick brown fox jumps over a lazy dog\n1234567890  08:00–12:00",
         AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontSize = 17, MinHeight = 110
     };
-    private readonly ToggleSwitch _association = new(), _mcp = new(), _skip = new(), _debug = new(), _telemetry = new();
+    private readonly ToggleSwitch _association = new(), _mcp = new(), _skip = new(), _createProject = new(), _debug = new(), _telemetry = new();
     private readonly TextBox _localDirectory = WorkspaceUi.Input();
     private readonly ComboBox _localModel = new() { MinWidth = 180 };
     private readonly DispatcherTimer _fontSave = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -76,7 +98,7 @@ public sealed class SettingsView : UserControl
             if (_mcpServer is not null) { _mcpServer.AgentsChanged += OnAgentsChanged; _mcpServer.AgentStateChanged += OnAgentStateChanged; }
             await RunAsync(ReloadAsync);
         };
-        DetachedFromVisualTree += (_, _) => { if (_mcpServer is not null) { _mcpServer.AgentsChanged -= OnAgentsChanged; _mcpServer.AgentStateChanged -= OnAgentStateChanged; } _fontSave.Stop(); if (!_populating && (int)Math.Round(_font.Value) != _settings.TranscriptFontSize) _ = ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); };
+        DetachedFromVisualTree += (_, _) => { if (_mcpServer is not null) { _mcpServer.AgentsChanged -= OnAgentsChanged; _mcpServer.AgentStateChanged -= OnAgentStateChanged; } _fontSave.Stop(); _blurSave.Stop(); if (!_populating && (int)Math.Round(_font.Value) != _settings.TranscriptFontSize) _ = ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); if (!_populating && (int)Math.Round(_blur.Value) != _settings.TranscriptBlurIntensity) _ = ChangePreferenceAsync(s => s with { TranscriptBlurIntensity = (int)Math.Round(_blur.Value) }, "高速模糊强度"); };
     }
     public async Task ReloadAsync() { await _preferenceSaves; Populate(await _store.LoadAsync()); await RefreshAgentsAsync(); }
     public void Populate(AppSettings settings)
@@ -84,14 +106,15 @@ public sealed class SettingsView : UserControl
         _populating = true;
         try
         {
-            _settings = settings;
+            _settings = settings; settings=ManagedRuntime.Display(settings);
             _baseUrl.Text = settings.CloudBaseUrl; _endpoint.Text = settings.CloudEndpoint; _model.Text = settings.CloudModel; _key.Text = settings.CloudApiKey;
             _timeout.Value = settings.CloudTimeoutSeconds; _concurrency.Value = settings.CloudConcurrency;
             _font.Value = settings.TranscriptFontSize; _fontValue.Text = settings.TranscriptFontSize.ToString();
+            _blur.Value = settings.TranscriptBlurIntensity; _blurValue.Text = $"{settings.TranscriptBlurIntensity} / {AppSettings.MaxTranscriptBlurIntensity}";
             _theme.SelectedItem = _theme.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string?)i.Tag == settings.ThemeMode);
             PopulateTypography(settings);
             _playerShortcuts.Populate(settings.PlayerKeyBindings);
-            _association.IsChecked = settings.FileAssociationEnabled; _mcp.IsChecked = settings.McpEnabled; _skip.IsChecked = settings.SkipOpeningPrompts;
+            _association.IsChecked = settings.FileAssociationEnabled; _mcp.IsChecked = settings.McpEnabled; _skip.IsChecked = settings.SkipOpeningPrompts; _createProject.IsChecked = settings.CreateProjectOnAudioImport;
             _debug.IsChecked = settings.DebugLogging; _telemetry.IsChecked = settings.TelemetryEnabled;
             _localDirectory.Text = settings.LocalModelsDirectory; _localModel.ItemsSource = settings.DetectedLocalModels; _localModel.SelectedItem = settings.SelectedLocalModel;
         }
@@ -117,6 +140,7 @@ public sealed class SettingsView : UserControl
         };
         _association.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { FileAssociationEnabled = _association.IsChecked == true, FileAssociationPrompted = true }, "关联文件格式"); };
         _mcp.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { McpEnabled = _mcp.IsChecked == true }, "MCP"); };
+        _createProject.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { CreateProjectOnAudioImport = _createProject.IsChecked == true }, "导入音频时同时建立项目"); };
         _skip.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { SkipOpeningPrompts = _skip.IsChecked == true }, "跳过题前提示"); };
         _debug.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { DebugLogging = _debug.IsChecked == true }, "调试模式"); };
         _telemetry.IsCheckedChanged += async (_, _) =>
@@ -129,6 +153,8 @@ public sealed class SettingsView : UserControl
         };
         _font.ValueChanged += (_, _) => { _fontValue.Text = ((int)Math.Round(_font.Value)).ToString(); if (!_populating) { _fontSave.Stop(); _fontSave.Start(); } };
         _fontSave.Tick += async (_, _) => { _fontSave.Stop(); await ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); };
+        _blur.ValueChanged += (_, _) => { _blurValue.Text = $"{(int)Math.Round(_blur.Value)} / {AppSettings.MaxTranscriptBlurIntensity}"; if (!_populating) { _blurSave.Stop(); _blurSave.Start(); } };
+        _blurSave.Tick += async (_, _) => { _blurSave.Stop(); await ChangePreferenceAsync(s => s with { TranscriptBlurIntensity = (int)Math.Round(_blur.Value) }, "高速模糊强度"); };
     }
     private void PopulateTypography(AppSettings settings)
     {
@@ -149,7 +175,7 @@ public sealed class SettingsView : UserControl
     }
     private Task ChangePreferenceAsync(Func<AppSettings, AppSettings> update, string label)
     {
-        var next = update(_settings); if (next == _settings) return _preferenceSaves;
+        var next = update(_settings); if(ManagedRuntime.IsManaged) {var old=_settings.ToJson();foreach(var pair in next.ToJson())if(ManagedRuntime.Policy.IsLocked(pair.Key)&&!JsonNode.DeepEquals(pair.Value,old[pair.Key]))return Task.CompletedTask;} if (next == _settings) return _preferenceSaves;
         _settings = next;
         var previous = _preferenceSaves;
         _preferenceSaves = PersistPreferenceAsync(previous, next, label);
@@ -167,7 +193,7 @@ public sealed class SettingsView : UserControl
         if (Application.Current != null) Application.Current.RequestedThemeVariant = settings.ThemeMode switch { "dark" => ThemeVariant.Dark, "light" => ThemeVariant.Light, _ => ThemeVariant.Default };
     }
     private sealed record SettingsCategory(string Title, string Icon, Control Content);
-    private static Control CategoryPage(string title, string description, params Control[] settings)
+    private static StackPanel CategoryPage(string title, string description, params Control[] settings)
     {
         var page = new StackPanel { MaxWidth = 1040, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
         page.Children.Add(new StackPanel { Spacing = 4, Children = { WorkspaceUi.Text(title, 20, true), WorkspaceUi.Text(description, 12) } });
@@ -188,18 +214,21 @@ public sealed class SettingsView : UserControl
             Content = typography, IsExpanded = true, HorizontalAlignment = HorizontalAlignment.Stretch
         };
         var appearance = CategoryPage("外观与字体", "调整应用外观与全局文字显示",
-            Card("color", "外观主题", "选择跟随系统、浅色或深色外观", _theme), fontSettings);
+            Card("color", "外观主题", "选择跟随系统、浅色或深色外观", _theme), ManagedUi.Setting(fontSettings,"applicationFontFamily","applicationFontWeight"));
 
         var transcriptSize = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, VerticalAlignment = VerticalAlignment.Center };
         _fontValue.VerticalAlignment = VerticalAlignment.Center; transcriptSize.Children.Add(_font); transcriptSize.Children.Add(_fontValue);
         var shortcutSettings = new Expander
         {
             Header = Row("play", "扩展按键", "使用翻页笔或键盘单键控制播放，仅在应用前台的播放页生效", null),
-            Content = _playerShortcuts, HorizontalAlignment = HorizontalAlignment.Stretch
+            Content = ManagedUi.Setting(_playerShortcuts,"playerKeyBindings"), HorizontalAlignment = HorizontalAlignment.Stretch
         };
         var playback = CategoryPage("播放", "设置播放习惯、字幕大小与精听包关联",
+            Card("music_note", "导入音频时同时建立项目", "导入音频后自动创建制作工程并绑定音频副本", _createProject),
             Card("forward", "跳过题前提示", "首次打开课程时定位到第一题前并暂停，保留已有播放进度", _skip),
             Card("font", "字幕字体大小", "调整播放页逐句列表的文字大小", transcriptSize),
+            ManagedUi.Setting(Card("font", "高速模糊强度", "同步调整隐藏字幕和挖空文字的模糊程度，默认最大", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Children = { _blur, _blurValue } }), "transcriptBlurIntensity"),
+            Card("download", "组织精听包", "自动接收组织下发的课程并保留已有学习记录", Actions(_lessonStatus, ActionButton("重试接收", () => _managedLessons?.RefreshAsync() ?? Task.CompletedTask))),
             shortcutSettings, Card("open_file", "关联文件格式", "双击 .ilp 精听包直接进入播放界面", _association));
 
         var mcpBody = new StackPanel { Spacing = 10, Margin = new Thickness(18, 8, 18, 10) };
@@ -211,15 +240,15 @@ public sealed class SettingsView : UserControl
         mcpBody.Children.Add(WorkspaceUi.Text("首次使用时将 MCP 配置添加到客户端。制作完成后智能体交还应用，由你审阅、保存并导出。", 12));
         var mcpSettings = new Expander
         {
-            Header = Row("robot", "MCP", "连接智能体并管理授权，关闭主窗口后服务在托盘继续运行", _mcp),
+            Header = Row("robot", "MCP", "连接智能体并管理授权，关闭主窗口后服务在托盘继续运行", ManagedUi.Setting(_mcp,"mcpEnabled")),
             Content = mcpBody, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch
         };
         var apiBody = new StackPanel { Spacing = 10, Margin = new Thickness(18, 8, 18, 10) };
         var archiveActions = Actions(ActionButton("导入", ImportApiAsync), ActionButton("导出", ExportApiAsync)); archiveActions.HorizontalAlignment = HorizontalAlignment.Right; apiBody.Children.Add(archiveActions);
-        apiBody.Children.Add(WorkspaceUi.Field("API Endpoint", _baseUrl)); apiBody.Children.Add(WorkspaceUi.Field("Path", _endpoint)); apiBody.Children.Add(WorkspaceUi.Field("Name", _model)); apiBody.Children.Add(WorkspaceUi.Field("Key", _key));
-        var limits = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*") }; limits.Children.Add(WorkspaceUi.Field("分段并发", _concurrency)); var timeout = WorkspaceUi.Field("单段超时（秒）", _timeout); Grid.SetColumn(timeout, 2); limits.Children.Add(timeout); apiBody.Children.Add(limits);
+        apiBody.Children.Add(ManagedUi.Setting(WorkspaceUi.Field("API Endpoint", _baseUrl),"cloudBaseUrl")); apiBody.Children.Add(ManagedUi.Setting(WorkspaceUi.Field("Path", _endpoint),"cloudEndpoint")); apiBody.Children.Add(ManagedUi.Setting(WorkspaceUi.Field("Name", _model),"cloudModel")); apiBody.Children.Add(ManagedUi.Setting(WorkspaceUi.Field("Key", _key),"cloudApiKey"));
+        var limits = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*") }; limits.Children.Add(ManagedUi.Setting(WorkspaceUi.Field("分段并发", _concurrency),"cloudConcurrency")); var timeout = ManagedUi.Setting(WorkspaceUi.Field("单段超时（秒）", _timeout),"cloudTimeoutSeconds"); Grid.SetColumn(timeout, 2); limits.Children.Add(timeout); apiBody.Children.Add(limits);
         apiBody.Children.Add(new FAInfoBar { IsOpen = true, IsClosable = false, Severity = FAInfoBarSeverity.Informational, Title = "音频处理策略", Message = "VAD 在静音处切片，每段最长 120 秒，确保请求低于 10 MB；并发与请求启动速率均限制为 10 QPS。" });
-        var local = WorkspaceUi.Stack(WorkspaceUi.Field("本地模型目录", _localDirectory), _localModel, ActionButton("扫描模型", () => { var models = AppSettings.ScanLocalModels(_localDirectory.Text ?? ""); _localModel.ItemsSource = models; _localModel.SelectedIndex = models.Count > 0 ? 0 : -1; WorkspaceToast.Show(this, $"已发现 {models.Count} 个模型。"); return Task.CompletedTask; }));
+        var local = WorkspaceUi.Stack(ManagedUi.Setting(WorkspaceUi.Field("本地模型目录", _localDirectory),"localModelsDirectory"), ManagedUi.Setting(_localModel,"selectedLocalModel","detectedLocalModels"), ActionButton("扫描模型", () => { var models = AppSettings.ScanLocalModels(_localDirectory.Text ?? ""); _localModel.ItemsSource = models; _localModel.SelectedIndex = models.Count > 0 ? 0 : -1; WorkspaceToast.Show(this, $"已发现 {models.Count} 个模型。"); return Task.CompletedTask; }));
         apiBody.Children.Add(new Expander { Header = "本地模型目录与选择", Content = local, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch });
         var save = ActionButton("保存 API 配置", SaveAsync, true); save.HorizontalAlignment = HorizontalAlignment.Right; apiBody.Children.Add(save);
         var apiSettings = new Expander
@@ -227,34 +256,52 @@ public sealed class SettingsView : UserControl
             Header = Row("cloud", "API 设置", "配置云端转写服务、请求并发和超时", ActionButton("如何配置？", () => LaunchAsync("https://il.luyii.cn/guide.html#api-setup"))),
             Content = apiBody, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch
         };
-        var authoring = CategoryPage("制作与智能体", "配置音频转写服务和智能体制作连接", apiSettings, mcpSettings);
+        var authoring = CategoryPage("制作与智能体", "配置音频转写服务和智能体制作连接", ManagedUi.Wrap(apiSettings,()=>!ManagedRuntime.Allows("apiConfiguration")||ManagedRuntime.Policy.HideAsrConfiguration), ManagedUi.Wrap(mcpSettings,()=>!ManagedRuntime.Allows("mcp")));
         var maintenance = CategoryPage("数据与维护", "管理本机数据、缓存与诊断日志",
             Card("folder_open", "数据目录", "打开保存课程、制作工程和个人设置的文件夹", ActionButton("打开", () => LaunchAsync(AppDirectories.DataDirectory()))),
             Card("delete", "缓存", "释放可重新生成的临时文件，课程和制作数据保留", ActionButton("清理", ClearCacheAsync)),
             Card("folder_open", "日志", "警告和错误保存在数据目录的 logs 文件夹中", Actions(ActionButton("打开目录", () => LaunchAsync(AppLog.DirectoryPath)), ActionButton("清理", ClearLogsAsync))),
             Card("info", "调试模式", "开启后记录详细诊断信息", _debug));
-        var privacy = CategoryPage("隐私与关于", "查看数据使用选项、协议与版本信息",
+        var privacy = CategoryPage("隐私", "查看数据使用选项与协议",
             Card("chart", "匿名使用情况分析", "向阿里云发送匿名设备 ID、ASR 指标与 API 主机名、系统与硬件信息、红色错误提示原文及运行元数据，可随时关闭", _telemetry),
-            Card("document", "用户协议与隐私", "查看协议或撤回此前的同意", Actions(ActionButton("查看隐私说明", () => ShowLegalAsync("privacy_zh_cn.txt", "隐私说明")), ActionButton("撤回同意", WithdrawAsync))),
-            Card("info", "关于", "查看应用版本、作者与最终用户许可协议", ActionButton("查看", AboutAsync)));
+            Card("document", "用户协议与隐私", "查看协议或撤回此前的同意", Actions(ActionButton("查看隐私说明", () => ShowLegalAsync("privacy_zh_cn.txt", "隐私说明")), ActionButton("撤回同意", WithdrawAsync))));
+        var updatesPage = CategoryPage("更新", "检查应用版本，查看组织更新状态",
+            Card("download","检查更新","启动时异步读取 GitHub Latest，10 秒超时",Actions(_updateStatus,ActionButton("检查更新",()=>_updates?.CheckAsync(AppBuildInfo.Version)??Task.CompletedTask),ActionButton("查看发布",()=>LaunchAsync(_updates?.Result.ReleaseUrl??"https://github.com/luyii-code-1/Intensive_Listening/releases/latest")))),
+            ManagedUi.Feature(Card("download","组织更新","冷更新需点击更新开始下载；OTA 自动执行。安装时可能显示 UAC",Actions(_managedUpdateStatus,_installButton)),"updates"));
+        if(ManagedRuntime.Client is {} organization && organization.Status!="未加入管理")
+        {
+            var status=WorkspaceUi.Text(organization.Status,12);
+            var name = WorkspaceUi.Text("", 12);
+            void RefreshOrganization()
+            {
+                status.Text = organization.Status;
+                if (organization.Configuration is { } config) WorkspaceUi.OrganizationText(name, "当前由", config.OrganizationName, $"管理 · {organization.DeviceId.Split('-')[^1]}");
+                else { name.Inlines = null; name.Text = "尚未加入组织管理"; }
+            }
+            RefreshOrganization(); organization.Changed+=()=>Dispatcher.UIThread.Post(RefreshOrganization);
+            privacy.Children.Add(WorkspaceUi.SettingsRow("info", "组织管理", name, status, compact: true));
+        }
 
         var categories = new[]
         {
             new SettingsCategory("外观与字体", "color", appearance), new SettingsCategory("播放", "play", playback),
             new SettingsCategory("制作与智能体", "robot", authoring), new SettingsCategory("数据与维护", "folder_open", maintenance),
-            new SettingsCategory("隐私与关于", "info", privacy)
+            new SettingsCategory("隐私", "document", privacy), new SettingsCategory("更新", "download", updatesPage),
+            new SettingsCategory("组织管理", "info", ManagedRuntime.Client is {} mdn ? new MdnSettingsView(mdn) : WorkspaceUi.Text("独立播放器不提供组织注册。")),
+            new SettingsCategory("关于", "info", new AboutSettingsView(ShowUpdates))
         };
-        var navigation = new ListBox { ItemsSource = categories, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
+        var navigation = _categoryNavigation = new ListBox { ItemsSource = categories, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
         navigation.ItemTemplate = new FuncDataTemplate<SettingsCategory>((category, _) => category is null ? null : new StackPanel
         {
             Orientation = Orientation.Horizontal, Spacing = 10, Margin = new Thickness(4, 6),
             Children = { WorkspaceUi.Icon(category.Icon), WorkspaceUi.Text(category.Title) }
         });
-        var scroll = new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+        var categoryHost = new WorkspaceContentHost();
+        var scroll = new ScrollViewer { Content = categoryHost, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
         navigation.SelectionChanged += (_, _) =>
         {
             if (navigation.SelectedItem is not SettingsCategory category) return;
-            scroll.Content = category.Content; scroll.Offset = default;
+            categoryHost.Content = category.Content; scroll.Offset = default;
         };
         navigation.SelectedIndex = 0;
         var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("180,*"), Margin = new Thickness(20, 0, 24, 24) };
@@ -307,18 +354,26 @@ public sealed class SettingsView : UserControl
         if (trailing != null) { trailing.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(trailing, 4); row.Children.Add(trailing); }
         return row;
     }
-    private static Control Card(string symbol, string title, string description, Control trailing) => WorkspaceUi.SettingsRow(symbol, title, description, trailing, compact: true);
+    private Control Card(string symbol, string title, string description, Control trailing)
+    {
+        var row=WorkspaceUi.SettingsRow(symbol,title,description,trailing,compact:true);
+        string? setting=ReferenceEquals(trailing,_theme)?"themeMode":ReferenceEquals(trailing,_createProject)?"createProjectOnAudioImport":ReferenceEquals(trailing,_skip)?"skipOpeningPrompts":ReferenceEquals(trailing,_association)?"fileAssociationEnabled":ReferenceEquals(trailing,_debug)?"debugLogging":trailing is StackPanel panel && panel.Children.Contains(_font)?"transcriptFontSize":null;
+        if(setting is not null)return ManagedUi.Setting(row,setting);
+        return title is "缓存" or "日志"?ManagedUi.Feature(row,"dataMaintenance"):row;
+    }
     private static WrapPanel Actions(params Control[] controls) { var panel = new WrapPanel(); foreach (var c in controls) { c.Margin = new Thickness(0, 0, 8, 0); c.VerticalAlignment = VerticalAlignment.Center; panel.Children.Add(c); } return panel; }
     private Button ActionButton(string title, Func<Task> action, bool primary = false) => WorkspaceUi.Button(title, () => RunAsync(action), primary);
     private AppSettings ReadApi() => _settings with { AsrProvider = AsrProviderKind.Cloud, CloudBaseUrl = _baseUrl.Text?.Trim() ?? "", CloudEndpoint = _endpoint.Text?.Trim() ?? "", CloudModel = _model.Text?.Trim() ?? "", CloudApiKey = _key.Text?.Trim() ?? "", CloudTimeoutSeconds = (int)(_timeout.Value ?? 180), CloudConcurrency = (int)(_concurrency.Value ?? 10), CloudLanguage = "en", TranslateChineseToEnglish = true, LocalModelsDirectory = _localDirectory.Text?.Trim() ?? "", SelectedLocalModel = _localModel.SelectedItem as string ?? "", DetectedLocalModels = _localModel.ItemsSource?.OfType<string>().ToArray() ?? [] };
     public async Task SaveAsync()
     {
+        ManagedRuntime.Require("apiConfiguration"); if(ManagedRuntime.Policy.HideAsrConfiguration)throw new InvalidOperationException("该设置由您的组织管理。");
         await _preferenceSaves; var next = ReadApi();
         if (next.CloudBaseUrl.Length > 0 && (!Uri.TryCreate(next.CloudBaseUrl, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))) throw new InvalidOperationException("服务地址必须是 HTTP 或 HTTPS URL。");
         await PersistAsync(next); _settings = next; WorkspaceToast.Show(this, "API 配置已保存，云端转写配置已经更新。");
     }
     private async Task ImportApiAsync()
     {
+        ManagedRuntime.Require("apiConfiguration"); if(ManagedRuntime.Policy.HideAsrConfiguration)throw new InvalidOperationException("该设置由您的组织管理。");
         var path = await WorkspaceUi.Pick(this, "导入 API 配置", "zip"); if (path == null) return;
         var password = await SettingsPasswordDialog.ShowAsync(WorkspaceUi.Owner(this), false); if (password == null) return;
         await _preferenceSaves; var next = new ApiConfigurationArchive().Import(await File.ReadAllBytesAsync(path), password, _settings);
@@ -326,6 +381,7 @@ public sealed class SettingsView : UserControl
     }
     private async Task ExportApiAsync()
     {
+        ManagedRuntime.Require("apiConfiguration"); if(ManagedRuntime.Policy.HideAsrConfiguration)throw new InvalidOperationException("该设置由您的组织管理。");
         var password = await SettingsPasswordDialog.ShowAsync(WorkspaceUi.Owner(this), true); if (password == null) return;
         var path = await WorkspaceUi.Save(this, "导出 API 配置", "Intensive-Listening-API-配置.zip", "zip"); if (path == null) return;
         await File.WriteAllBytesAsync(path, new ApiConfigurationArchive().Export(ReadApi(), password)); WorkspaceToast.Show(this, "API 配置已导出，配置包已使用 AES-256 加密。");
@@ -340,15 +396,9 @@ public sealed class SettingsView : UserControl
     private async Task CopyAgentPromptAsync() { var discovery = await DiscoveryAsync(); await CopyAsync($"读取「{discovery["bootstrapPath"]}」文件并按其中流程操作。"); WorkspaceToast.Show(this, "一键操作提示已复制，直接发送给 AI 即可开始制作。"); }
     private async Task CopyMcpConfigurationAsync() { var discovery = await DiscoveryAsync(); var json = new JsonObject { ["mcpServers"] = new JsonObject { ["intensive-listening"] = new JsonObject { ["type"] = "http", ["url"] = discovery["mcpUrl"]!.DeepClone() } } }; await CopyAsync(json.ToJsonString(new JsonSerializerOptions { WriteIndented = true })); WorkspaceToast.Show(this, "MCP 配置已复制，可粘贴到 AI 客户端的 MCP 配置中。"); }
     private async Task CopyAsync(string text) { var clipboard = TopLevel.GetTopLevel(this)?.Clipboard ?? throw new InvalidOperationException("剪贴板不可用。"); await clipboard.SetTextAsync(text); }
-    private async Task ClearLogsAsync() { if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "清理日志？", "将删除日志目录中的现有日志文件。", "清理日志")) return; var bytes = await AppLog.ClearAsync(); WorkspaceToast.Show(this, $"日志已清理，已释放 {bytes / 1024d:0.0} KB。"); }
-    private async Task ClearCacheAsync() { var bytes = await AppDirectories.ClearCacheAsync(); WorkspaceToast.Show(this, $"缓存已清理，已释放 {bytes / (1024d * 1024):0.0} MB。"); }
+    private async Task ClearLogsAsync() { ManagedRuntime.Require("dataMaintenance"); if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "清理日志？", "将删除日志目录中的现有日志文件。", "清理日志")) return; var bytes = await AppLog.ClearAsync(); WorkspaceToast.Show(this, $"日志已清理，已释放 {bytes / 1024d:0.0} KB。"); }
+    private async Task ClearCacheAsync() { ManagedRuntime.Require("dataMaintenance"); var bytes = await AppDirectories.ClearCacheAsync(); WorkspaceToast.Show(this, $"缓存已清理，已释放 {bytes / (1024d * 1024):0.0} MB。"); }
     private async Task ShowLegalAsync(string filename, string title) => await AppDialogs.DocumentAsync(WorkspaceUi.Owner(this), title, (await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "assets", "legal", filename))).TrimEnd('\0'));
-    private async Task AboutAsync()
-    {
-        var choice = await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "关于 Intensive Listening", AppBuildInfo.Display + "\n数据格式 1\nBy Luyii\n界面字体：HarmonyOS Sans SC\nCopyright 2021 Huawei Device Co., Ltd.", "关闭", "字体许可", "用户协议");
-        if (choice == 1) await ShowLegalAsync("HarmonyOS-Sans-LICENSE.txt", "HarmonyOS Sans 字体许可");
-        if (choice == 2) await ShowLegalAsync("eula_zh_cn.txt", "用户协议");
-    }
     private async Task WithdrawAsync()
     {
         if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "撤回同意", "撤回用户协议与匿名数据分析同意后，应用会停止上报、清理待发送缓存并退出。课程与本机设置会保留；下次启动需重新确认协议和遥测选择。", "撤回并退出")) return;

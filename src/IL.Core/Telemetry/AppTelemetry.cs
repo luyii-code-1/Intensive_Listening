@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using IL.Core.Infrastructure;
 namespace IL.Core.Telemetry;
-public sealed class AppTelemetry(string version="2.0.0",ITelemetryTransport? transport=null,string? dataDirectory=null,bool? supportedPlatform=null)
+public sealed class AppTelemetry(string version="2.1.0",ITelemetryTransport? transport=null,string? dataDirectory=null,bool? supportedPlatform=null)
 {
     private readonly ITelemetryTransport _transport=transport??new NativeTelemetryTransport(); private readonly SemaphoreSlim _gate=new(1,1); private readonly bool _supported=supportedPlatform??(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS());
     private volatile bool _consent,_enabled; private bool _launchReported,_activeReported; public bool Enabled=>_enabled;
@@ -31,7 +31,18 @@ public sealed class AppTelemetry(string version="2.0.0",ITelemetryTransport? tra
         try
         {
             if (!CanSend || !report.UploadAllowed || !await _transport.CanReachCollectorAsync() || !CanSend) return false;
-            return await _transport.ErrorLogAsync(JsonSerializer.Serialize(new { kind = "crash_report", report.Id, report.OccurredAt, report.AppVersion, report.Platform, report.Architecture, report.ProcessId, report.Component, report.ExceptionType, report.Message, report.Details, report.ExitCode, report.Fatal }));
+            var fields = new Dictionary<string, string>
+            {
+                ["report_id"] = report.Id, ["occurred_at"] = report.OccurredAt.ToString("O"),
+                ["app_version"] = report.AppVersion, ["platform"] = report.Platform, ["architecture"] = report.Architecture,
+                ["process_id"] = report.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["component"] = report.Component, ["exception_type"] = report.ExceptionType,
+                ["message"] = CrashReportStore.Redact(report.Message), ["details"] = CrashReportStore.Redact(report.Details),
+                ["fatal"] = report.Fatal ? "true" : "false"
+            };
+            if (report.ExitCode is int exitCode) fields["exit_code"] = exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var uuid = await _transport.InstallUuidAsync(); if (!string.IsNullOrEmpty(uuid)) fields["install_uuid"] = uuid;
+            return CanSend && await _transport.EventAsync("crash_report", fields);
         }
         catch (Exception e) { AppLog.Warning("崩溃遥测暂未送达", e); return false; }
         finally { _gate.Release(); }

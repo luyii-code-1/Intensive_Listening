@@ -6,6 +6,7 @@ CommunityToolkit.Mvvm 8.4.0 - MIT - https://github.com/CommunityToolkit/dotnet
 LibVLCSharp 3.10.1 - LGPL-2.1-or-later - https://code.videolan.org/videolan/LibVLCSharp
 LibVLC Windows 3.0.24 - LGPL-2.1-or-later - https://code.videolan.org/videolan/vlc
 SharpZipLib 1.4.2 - MIT - https://github.com/icsharpcode/SharpZipLib
+YamlDotNet 16.3.0 - MIT - https://github.com/aaubry/YamlDotNet
 FFmpeg 9.0.1 essentials - GPLv3 - https://github.com/FFmpeg/FFmpeg/tree/n9.0.1
 ARMS RUM PC SDK 0.4.4 - Proprietary / Alibaba Cloud Terms
 

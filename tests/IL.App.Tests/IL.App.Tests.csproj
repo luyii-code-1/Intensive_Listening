@@ -7,4 +7,5 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup><Content Include="../fixtures/**" Link="fixtures/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="../../assets/tools/install-update.ps1" Link="fixtures/install-update.ps1" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

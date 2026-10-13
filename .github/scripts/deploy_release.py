@@ -31,9 +31,10 @@ def main() -> None:
         fcntl.flock(lock, fcntl.LOCK_EX)
         metadata = json.loads(incoming_metadata.read_text(encoding="utf-8"))
         tag = metadata.get("tag")
-        if not isinstance(tag, str) or not re.fullmatch(r"v2\.[0-9]+\.[0-9]+", tag):
+        match = re.fullmatch(r"v(2\.[0-9]+\.[0-9]+)(?:-release)?", tag) if isinstance(tag, str) else None
+        if not match:
             raise ValueError("Invalid Release tag")
-        version = tag[1:]
+        version = match.group(1)
         expected = {
             "windows": (f"Intensive-Listening-{version}-win-x64-Setup.exe", ".exe"),
             "macos": (f"Intensive-Listening-{version}-osx-arm64.dmg", ".dmg"),

@@ -11,6 +11,13 @@ internal static class Program
     public static int Main(string[] args)
     {
         Arguments=args;
+        var managedImport = Array.IndexOf(args, "--import-mdn-config");
+        if (managedImport >= 0)
+        {
+            if (managedImport + 2 >= args.Length) return 1;
+            try { return IL.Core.Management.ManagedConfigurationImport.Apply(args[managedImport + 1], args[managedImport + 2]); }
+            catch (Exception error) when (error is not OutOfMemoryException) { return 1; }
+        }
         var instanceVerification = Array.IndexOf(args, "--verify-instance");
         if (instanceVerification >= 0) return InstanceVerification.Run(args[instanceVerification + 1]);
         var instanceProbe = Array.IndexOf(args, "--instance-probe");

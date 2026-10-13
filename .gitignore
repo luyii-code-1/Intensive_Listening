@@ -33,3 +33,10 @@ docs/prototypes/
 *.dmp
 /.intensive_listening/
 /crash-reports/
+
+/mdn_server/data/
+/mdn_server/.venv/
+/mdn_server/dist/
+/mdn_server/build/
+/mdn_server/*.spec
+**/__pycache__/

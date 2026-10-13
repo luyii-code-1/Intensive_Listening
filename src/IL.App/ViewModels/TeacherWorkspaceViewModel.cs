@@ -28,6 +28,7 @@ public sealed class TeacherWorkspaceViewModel(CourseProjectStore store) : Observ
     public bool CanDeliver => Project is { Step: CourseProjectStep.Completed, HasAudio: true, HasTranscript: true };
     public Task SaveEditingAsync(CourseProject project) => SaveAsync(project with
     {
+        CreatorMachine = Environment.MachineName, CreatorAgent = "用户", UserEdited = true,
         Step = project.HasTranscript ? CourseProjectStep.Review : project.HasAudio ? CourseProjectStep.Transcription : CourseProjectStep.Audio
     });
     public async Task SaveReviewAsync()

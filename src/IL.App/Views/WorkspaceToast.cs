@@ -42,6 +42,7 @@ public sealed class WorkspaceToast : UserControl
 
     public static void Show(Control origin, string title, string message, bool error = false)
     {
+        title=IL.Core.Management.ManagedRuntime.Redact(title);message=IL.Core.Management.ManagedRuntime.Redact(message);
         if (TopLevel.GetTopLevel(origin) is not { } owner) return;
         if (!Hosts.TryGetValue(owner, out var host))
         {

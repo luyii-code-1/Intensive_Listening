@@ -96,6 +96,7 @@ public sealed class AppPrivateApiServer(Func<string,JsonObject,Task<object?>> di
     private void RequireAgent(string? uuid) { if(AgentActive) { if(_activeUuid!=null&&uuid!=_activeUuid)throw new AppPrivateApiException("agent_uuid_required","请使用已批准的智能体 MCP URL"); return; } if(_state=="PendingApproval")throw new AppPrivateApiException("pending_approval","Pending Approval"); if(_state=="UserRefused")throw new AppPrivateApiException("user_refused","User Refused"); AgentAccessDenied?.Invoke(); throw new AppPrivateApiException("agent_required","当前 event=User，请先以 event=Agent 建立智能体会话。"); }
     private async Task<object?> CallAsync(string method,JsonObject args,string? uuid)
     {
+        if(method is not ("app.status" or "agent.disconnect") && !IL.Core.Management.ManagedRuntime.Allows("mcp"))throw new AppPrivateApiException("organization_managed","该功能由您的组织管理。");
         if(method=="agent.register") { var name=args["agentName"]?.GetValue<string>(); if(string.IsNullOrWhiteSpace(name)||name.Length>80)throw new AppPrivateApiException("invalid_agent_name","智能体名称须为 1 至 80 个字符"); var id=Guid.NewGuid().ToString(); _agents[id]=new(name.Trim(),false); await SaveAgentsAsync(); return new {agentUuid=id,mcpUrl=$"http://127.0.0.1:{Port}/mcp?event=Agent&token={_token}&agentUuid={id}",@event="User"}; }
         if(method=="agent.changeEvent") { var ev=args["event"]?.ToString(); if(ev=="User") { var owner=_activeUuid??_pendingUuid; if(owner!=null&&owner!=uuid)throw new AppPrivateApiException("agent_uuid_required","请使用已注册的智能体 MCP URL"); DisconnectAgent(); return new {@event="User",connected=false}; } if(ev!="Agent")throw new AppPrivateApiException("invalid_event","event 须为 Agent 或 User"); var id=args["agentUuid"]?.ToString()??uuid; if(id==null||!_agents.ContainsKey(id))throw new AppPrivateApiException("agent_not_registered","请先调用 register_agent"); if(uuid!=null&&uuid!=id)throw new AppPrivateApiException("agent_uuid_mismatch","MCP URL 与智能体 UUID 不一致"); BeginApproval(_agents[id].Name,id); return Session(); }
         if(method=="agent.connect") { BeginApproval(args["agentName"]?.ToString(),null); return Session(); }
@@ -121,7 +122,7 @@ public sealed class AppPrivateApiServer(Func<string,JsonObject,Task<object?>> di
         try
         {
             var origin=r.Headers["Origin"]; if(origin!=null&&!new[] {"http://127.0.0.1","http://localhost",$"http://127.0.0.1:{Port}",$"http://localhost:{Port}"}.Contains(origin)) {response.StatusCode=403;reply=Error("invalid_origin","请求来源不受信任");}
-            else if(r.HttpMethod=="GET"&&path=="/test")reply=new {status="ok",version="2.0.0"};
+            else if(r.HttpMethod=="GET"&&path=="/test")reply=new {status="ok",version="2.1.0"};
             else if(r.Headers["Authorization"]!=$"Bearer {_token}"&&r.QueryString["token"]!=_token) {response.StatusCode=401;reply=Error("unauthorized","访问令牌无效");}
             else if(r.HttpMethod=="GET"&&path=="/v1/health")reply=new {ok=true,version=1,pid=Environment.ProcessId};
             else if(r.HttpMethod=="GET"&&path=="/v1/tools")reply=new {tools=McpToolCatalog.PublicTools};
@@ -149,7 +150,7 @@ public sealed class AppPrivateApiServer(Func<string,JsonObject,Task<object?>> di
         if(body["jsonrpc"]?.ToString()!="2.0"||body["method"] is not JsonValue)throw new AppPrivateApiException("invalid_request","MCP 请求必须是 JSON-RPC 2.0"); var method=body["method"]!.ToString(); var args=ObjectArgs(body,"params"); var id=body["id"]?.DeepClone(); if(id==null){response.StatusCode=202;return null;} object? result;
         switch(method)
         {
-            case "initialize": if((args["event"]?.ToString()??queryEvent)!="Agent")throw new AppPrivateApiException("invalid_event","MCP 启动须设置 event=Agent");if(uuid!=null&&!_agents.ContainsKey(uuid))throw new AppPrivateApiException("agent_not_registered","智能体 UUID 未注册");result=new {protocolVersion="2025-11-25",capabilities=new {tools=new {listChanged=false}},serverInfo=new {name="Intensive Listening",version="2.0.0"},instructions=Session()["instructions"]?.ToString()};break;
+            case "initialize": if((args["event"]?.ToString()??queryEvent)!="Agent")throw new AppPrivateApiException("invalid_event","MCP 启动须设置 event=Agent");if(uuid!=null&&!_agents.ContainsKey(uuid))throw new AppPrivateApiException("agent_not_registered","智能体 UUID 未注册");result=new {protocolVersion="2025-11-25",capabilities=new {tools=new {listChanged=false}},serverInfo=new {name="Intensive Listening",version="2.1.0"},instructions=Session()["instructions"]?.ToString()};break;
             case "ping":result=new {};break;
             case "tools/list":result=new {tools=McpToolCatalog.PublicTools};break;
             case "tools/call": var tool=McpToolCatalog.Find(args["name"]?.ToString()??"")??throw new AppPrivateApiException("tool_not_found","未知工具");var arguments=ObjectArgs(args,"arguments");try {var value=await CallAsync(tool["method"]!.ToString(),arguments,uuid);result=new {content=new[]{new {type="text",text=JsonSerializer.Serialize(value)}},isError=false};}catch(AppPrivateApiException e){result=new {content=new[]{new {type="text",text=$"{e.Code}: {e.Message}"}},isError=true};}break;

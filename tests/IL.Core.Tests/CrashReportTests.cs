@@ -48,15 +48,40 @@ public sealed class CrashReportTests : IDisposable
         var transport = new Transport(); var telemetry = new AppTelemetry(transport: transport, dataDirectory: _root, supportedPlatform: true); var report = new CrashReport { UploadAllowed = true };
         Assert.False(await telemetry.ReportCrashAsync(report));
         await telemetry.ApplyConsentAsync(true, true); Assert.False(await telemetry.ReportCrashAsync(report)); Assert.Empty(transport.Errors);
-        transport.Online = true; Assert.True(await telemetry.ReportCrashAsync(report)); Assert.Contains(report.Id, transport.Errors.Single());
+        transport.Online = true; Assert.True(await telemetry.ReportCrashAsync(report));
+        var crash = Assert.Single(transport.Events, e => e.Name == "crash_report");
+        Assert.Equal(report.Id, crash.Fields["report_id"]); Assert.Equal(report.ExceptionType, crash.Fields["exception_type"]);
+        Assert.Equal("true", crash.Fields["fatal"]); Assert.Empty(transport.Errors);
         await telemetry.ShutdownAsync(); Assert.Equal("", transport.StoppedPath); Assert.False(await telemetry.ReportCrashAsync(report));
+    }
+    [Fact]
+    public async Task CrashEventRetriesWithSameIdAndRedactsDiagnosticSecrets()
+    {
+        var transport = new Transport { Online = true, AcceptEvents = false };
+        var telemetry = new AppTelemetry(transport: transport, dataDirectory: _root, supportedPlatform: true);
+        await telemetry.ApplyConsentAsync(true, true);
+        var store = new CrashReportStore(_root);
+        var report = new CrashReport { UploadAllowed = true, Message = "Authorization: Bearer private-token", Details = "api_key=private-key", Fatal = false, ExitCode = 12 };
+        store.Save(report);
+        await store.FlushAsync(true, telemetry.ReportCrashAsync);
+        Assert.Null(store.Reports().Single().AcceptedByTelemetryAt);
+        transport.AcceptEvents = true;
+        await store.FlushAsync(true, telemetry.ReportCrashAsync);
+        await store.FlushAsync(true, telemetry.ReportCrashAsync);
+        var attempts = transport.Events.Where(e => e.Name == "crash_report").ToArray();
+        Assert.Equal(2, attempts.Length); Assert.All(attempts, e => Assert.Equal(report.Id, e.Fields["report_id"]));
+        Assert.Equal("false", attempts[1].Fields["fatal"]); Assert.Equal("12", attempts[1].Fields["exit_code"]);
+        Assert.DoesNotContain("private-token", attempts[1].Fields["message"]); Assert.DoesNotContain("private-key", attempts[1].Fields["details"]);
+        Assert.Empty(transport.Errors); Assert.NotNull(store.Reports().Single().AcceptedByTelemetryAt);
+        await telemetry.ShutdownAsync();
     }
     private sealed class Transport : ITelemetryTransport
     {
-        public bool Online; public string? StoppedPath; public readonly List<string> Errors = [];
+        public bool Online; public bool AcceptEvents = true; public string? StoppedPath; public readonly List<string> Errors = [];
+        public readonly List<(string Name, IReadOnlyDictionary<string, string> Fields)> Events = [];
         public Task<bool> StartAsync(string version, string cachePath) => Task.FromResult(true);
         public Task StopAsync(string cachePath) { StoppedPath = cachePath; return Task.CompletedTask; }
-        public Task<bool> EventAsync(string name, IReadOnlyDictionary<string, string> fields) => Task.FromResult(true);
+        public Task<bool> EventAsync(string name, IReadOnlyDictionary<string, string> fields) { Events.Add((name, fields)); return Task.FromResult(name != "crash_report" || AcceptEvents); }
         public Task<bool> ErrorLogAsync(string text) { Errors.Add(text); return Task.FromResult(true); }
         public Task<string?> InstallCycleAsync() => Task.FromResult<string?>(null);
         public Task<string?> InstallUuidAsync() => Task.FromResult<string?>(null);

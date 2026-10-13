@@ -39,6 +39,7 @@ class SnapshotTests(unittest.TestCase):
         self.failed = False
         self.existing = False
         self.source_moves = False
+        self.source_moves_after_merge = False
         self.publisher = FakeSync(self)
 
     def tearDown(self):
@@ -73,15 +74,40 @@ class SnapshotTests(unittest.TestCase):
     def test_snapshot_replaces_main_tree_and_preserves_binary_and_executable_mode(self):
         commit, tree = sync.snapshot(self.dev, self.main, self.git)
         self.assertEqual(self.git("rev-parse", f"{self.dev}^{{tree}}"), tree)
-        self.assertEqual(self.main, self.git("show", "-s", "--format=%P", commit))
+        self.assertEqual(f"{self.main} {self.dev}", self.git("show", "-s", "--format=%P", commit))
         self.assertEqual("100755", self.git("ls-tree", commit, "run.sh").split()[0])
         self.assertEqual("", self.git("ls-tree", commit, "old-main-only.txt"))
+        self.assertEqual(self.dev, self.git("merge-base", commit, self.dev))
 
     def test_full_sync_creates_pr_merges_and_verifies_native_git_tree(self):
         self.run_sync()
         self.assertIn(("pulls", "POST"), self.calls)
         self.assertIn(("pulls/7/merge", "PUT"), self.calls)
         self.assertEqual(self.git("rev-parse", f"{self.dev}^{{tree}}"), self.git("rev-parse", "origin/main^{tree}"))
+        self.assertEqual(self.remote_ref("main"), self.remote_ref("2.0-dev"))
+        self.assertEqual(self.dev, self.git("merge-base", "origin/main", self.dev))
+
+    def test_equal_trees_with_divergent_history_are_published_and_aligned(self):
+        legacy = self.git("commit-tree", self.git("rev-parse", f"{self.dev}^{{tree}}"), "-p", self.main, input="Legacy snapshot\n")
+        self.git("push", "origin", f"{legacy}:refs/heads/main")
+        self.run_sync()
+        self.assertIn(("pulls/7/merge", "PUT"), self.calls)
+        self.assertEqual(self.remote_ref("main"), self.remote_ref("2.0-dev"))
+        self.assertEqual(self.dev, self.git("merge-base", "origin/main", self.dev))
+
+    def test_development_behind_main_with_equal_tree_is_fast_forwarded(self):
+        merged = self.git("commit-tree", self.git("rev-parse", f"{self.dev}^{{tree}}"), "-p", self.dev, input="Published history\n")
+        self.git("push", "origin", f"{merged}:refs/heads/main")
+        self.run_sync()
+        self.assertEqual([], self.calls)
+        self.assertEqual(merged, self.remote_ref("2.0-dev"))
+
+    def test_source_moving_after_merge_is_preserved(self):
+        self.source_moves_after_merge = True
+        with self.assertRaisesRegex(RuntimeError, "changed during checks"):
+            self.run_sync()
+        self.assertEqual(self.moved_dev, self.remote_ref("2.0-dev"))
+        self.assertNotEqual(self.remote_ref("main"), self.remote_ref("2.0-dev"))
 
     def test_reuses_existing_sync_branch_and_pr(self):
         self.git("push", "origin", f"{self.main}:refs/heads/{sync.BRANCH}")
@@ -140,6 +166,9 @@ class FakeSync(sync.Sync):
             tree = fixture.git("rev-parse", f"{head}^{{tree}}")
             merged = fixture.git("commit-tree", tree, "-p", fixture.remote_ref("main"), "-p", head, input="Merge sync PR\n")
             fixture.git("push", "origin", f"{merged}:refs/heads/main")
+            if fixture.source_moves_after_merge:
+                fixture.moved_dev = fixture.git("commit-tree", tree, "-p", fixture.dev, input="Concurrent development\n")
+                fixture.git("push", "origin", f"{fixture.moved_dev}:refs/heads/2.0-dev")
             return {"merged": True, "sha": merged}
         return {"number": 7, "html_url": "https://example.invalid/pull/7"}
 

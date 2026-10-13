@@ -249,6 +249,8 @@ Windows 运行包写入 `artifacts/build/`，两个平台安装包均写入 `art
 
 `main` 为发布与默认分支，`2.0-dev` 用于日常开发，日常功能 PR 目标选择 `2.0-dev`。发布同步通过以 `main` 为目标的 PR 完成：以现有 `main` 为父提交，将开发分支的完整文件树写入同步分支，并验证源文件树一致。`main` 要求必需的 `build` 检查通过后才能合入；合入后再核对 `main` 与开发分支的文件树。
 
+专用 **Publish 2.0-dev snapshot to main** 工作流自动完成快照、创建或更新同步 PR、等待检查、合入及文件树核对。鉴权与使用步骤见 [开发分支同步 CI](docs/CI_SYNC.md)。
+
 **C# Windows build** 在开发与发布分支提交、PR、手动触发及 `v2.*` Release 发布时运行，完成现有测试、自包含构建、Windows 原生运行、独立播放器、单实例与 Inno Setup 安装包验证。手动触发与正式版 Release 还会在 Apple Silicon macOS runner 上构建、验证并打包 DMG。发布时两个安装包均附加到 Release，校验后通过专用 SSH 身份传到 `il.luyii.cn` 分发。
 
 ### 技术与源码结构

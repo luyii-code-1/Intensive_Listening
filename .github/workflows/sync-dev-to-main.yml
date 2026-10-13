@@ -45,7 +45,16 @@ jobs:
           permission-statuses: read
           permission-actions: read
 
+      - name: Validate repository access and configure Git authentication
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.IL_SYNC_TOKEN }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/2.0-dev" --silent
+          gh auth setup-git --hostname github.com
+
       - name: Check out repository
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.IL_SYNC_TOKEN }}
         uses: actions/checkout@v7
         with:
           fetch-depth: 0

@@ -74,6 +74,6 @@ public sealed class VadSlicer(string? ffmpegPath=null)
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(timeout??TimeSpan.FromSeconds(10));
         try{return ParseDuration(await RunFfmpegAsync(LocateFfmpeg(),["-hide_banner","-i",path,"-f","null","-"],deadline.Token));}
-        catch(OperationCanceledException)when(!ct.IsCancellationRequested){return null;}catch(IOException){return null;}catch(FormatException){return null;}
+        catch(OperationCanceledException)when(!ct.IsCancellationRequested){return null;}catch(IOException){return null;}catch(FormatException){return null;}catch(System.ComponentModel.Win32Exception){return null;}
     }
 }

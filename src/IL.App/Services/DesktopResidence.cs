@@ -15,6 +15,8 @@ public sealed class DesktopResidence : IDisposable
     private Task? _exit;
     private bool _exiting;
     private WindowState _visibleState = WindowState.Normal;
+    public Func<bool>? UpdateOnClosePending { get; set; }
+    public Func<Task>? UpdateOnClose { get; set; }
     public DesktopResidence(Window window, Func<Task> save, Func<Task> stop, Action shutdown, bool createTray = true)
     {
         _window = window; _save = save; _stop = stop; _shutdown = shutdown;
@@ -48,6 +50,7 @@ public sealed class DesktopResidence : IDisposable
         if (_exiting) return;
         if (args.CloseReason == WindowCloseReason.OSShutdown) { _ = ExitAsync(closeWindow: false); return; }
         args.Cancel = true;
+        if (UpdateOnClosePending?.Invoke() == true) { if (UpdateOnClose is not null) _ = UpdateOnClose(); return; }
         if (args.CloseReason == WindowCloseReason.ApplicationShutdown) { _ = ExitAsync(); return; }
         if (_window.WindowState != WindowState.Minimized) _visibleState = _window.WindowState;
         _window.Hide();

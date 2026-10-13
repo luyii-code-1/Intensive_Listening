@@ -40,6 +40,24 @@ public static class AppDialogs
     }
     public static async Task<bool> ConfirmAsync(Window owner, string title, string message, string accept = "确认") =>
         await ChooseAsync(owner, title, message, "取消", accept) == 1;
+    public static async Task<bool> UpdateCountdownAsync(Window owner, CancellationToken ct)
+    {
+        var seconds = 10;
+        var text = WorkspaceUi.Text("应用将在 10 秒后自动保存并更新。更新时请勿关闭计算机。");
+        var dialog = Create(owner, "即将更新", text);
+        dialog.CloseButtonText = "关闭窗口后更新";
+        var install = false;
+        var timer = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        timer.Tick += (_, _) =>
+        {
+            seconds--;
+            text.Text = $"应用将在 {seconds} 秒后自动保存并更新。更新时请勿关闭计算机。";
+            if (seconds == 0) { install = true; timer.Stop(); dialog.Hide(); }
+        };
+        using var cancellation = ct.Register(() => Avalonia.Threading.Dispatcher.UIThread.Post(() => dialog.Hide()));
+        try { timer.Start(); await dialog.ShowAsync(owner); return install; }
+        finally { timer.Stop(); }
+    }
     public static async Task<AgentApprovalDecision> ApproveAgentAsync(Window owner, string name)
     {
         var choice = await ChooseAsync(owner, "智能体请求接管", $"「{name}」请求读取与修改本机课程工程，并执行课程制作操作。批准后编辑区交由该智能体使用，可随时结束接管。", "拒绝", "批准接管", "关闭 MCP 接口");

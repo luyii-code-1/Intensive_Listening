@@ -25,11 +25,10 @@ public sealed class UpdateInstallerTests : IDisposable
         var result = await RunHelperAsync(exitCode, rejectUac);
         Assert.Equal(success, result.GetProperty("success").GetBoolean());
         var calls = File.ReadAllLines(Path.Combine(_root, "calls.jsonl")).Select(s => JsonDocument.Parse(s).RootElement.Clone()).ToArray();
-        Assert.True(calls.Any(c => c.GetProperty("kind").GetString() == "notice"), File.ReadAllText(Path.Combine(_root, "install-update.log")));
-        var notice = Assert.Single(calls, c => c.GetProperty("kind").GetString() == "notice");
-        Assert.Equal("您的组织正在更新您的应用", notice.GetProperty("title").GetString());
+        Assert.DoesNotContain(calls, c => c.GetProperty("kind").GetString() == "notice");
         var install = Assert.Single(calls, c => c.GetProperty("kind").GetString() == "install");
         Assert.Equal("RunAs", install.GetProperty("verb").GetString());
+        Assert.EndsWith("Intensive Listening更新.exe", install.GetProperty("path").GetString());
         var args = install.GetProperty("args").EnumerateArray().Select(a => a.GetString()).ToArray();
         Assert.Contains("/MDNUPDATE=1", args);
         Assert.Contains($"/DIR=\"{_root}\"", args);
@@ -91,7 +90,17 @@ public sealed class UpdateInstallerTests : IDisposable
         await Assert.ThrowsAsync<TimeoutException>(() => ManagedUpdater.StartHelperAsync(helper, Path.Combine(_root, "plan.json"), Path.Combine(_root, "ready"), CancellationToken.None, TimeSpan.FromSeconds(1)));
     }
 
-    private async Task<JsonElement> RunHelperAsync(int exitCode, bool rejectUac, bool invalidHash = false, bool invalidPlan = false)
+    [Fact]
+    public async Task DeferredUpdateDoesNotReopenWindow()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var result = await RunHelperAsync(0, false, reopen: false);
+        Assert.True(result.GetProperty("success").GetBoolean());
+        var calls = File.ReadAllLines(Path.Combine(_root, "calls.jsonl")).Select(s => JsonDocument.Parse(s).RootElement.Clone()).ToArray();
+        Assert.Single(calls, c => c.GetProperty("kind").GetString() == "install");
+        Assert.DoesNotContain(calls, c => c.GetProperty("kind").GetString() == "restart");
+    }
+    private async Task<JsonElement> RunHelperAsync(int exitCode, bool rejectUac, bool invalidHash = false, bool invalidPlan = false, bool reopen = true)
     {
         var package = Path.Combine(_root, "安装包.exe");
         await File.WriteAllBytesAsync(package, [0x4d, 0x5a, 0x01]);
@@ -101,7 +110,7 @@ public sealed class UpdateInstallerTests : IDisposable
             id = Guid.NewGuid(), version = "2.0.1", organization = "测试组织", installer = package,
             sha256 = invalidHash ? new string('0', 64) : Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(package))),
             size = 3, processId = int.MaxValue, startedAt = DateTime.UtcNow, executable = package,
-            appDirectory = _root, dataDirectory = _root, automaticOobe = true
+            appDirectory = _root, dataDirectory = _root, automaticOobe = true, reopen
         }, new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
         var wrapper = Path.Combine(_root, "wrapper.ps1");
         await File.WriteAllTextAsync(wrapper, """

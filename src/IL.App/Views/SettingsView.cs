@@ -267,7 +267,7 @@ public sealed class SettingsView : UserControl
             Card("document", "用户协议与隐私", "查看协议或撤回此前的同意", Actions(ActionButton("查看隐私说明", () => ShowLegalAsync("privacy_zh_cn.txt", "隐私说明")), ActionButton("撤回同意", WithdrawAsync))));
         var updatesPage = CategoryPage("更新", "检查应用版本，查看组织更新状态",
             Card("download","检查更新","启动时异步读取 GitHub Latest，10 秒超时",Actions(_updateStatus,ActionButton("检查更新",()=>_updates?.CheckAsync(AppBuildInfo.Version)??Task.CompletedTask),ActionButton("查看发布",()=>LaunchAsync(_updates?.Result.ReleaseUrl??"https://github.com/luyii-code-1/Intensive_Listening/releases/latest")))),
-            ManagedUi.Feature(Card("download","组织更新","冷更新需点击更新开始下载；OTA 自动执行。安装时可能显示 UAC",Actions(_managedUpdateStatus,_installButton)),"updates"));
+            ManagedUi.Feature(Card("download","组织更新","冷更新下载完成后点击安装；OTA 自动执行。安装时由用户确认 UAC",Actions(_managedUpdateStatus,_installButton)),"updates"));
         if(ManagedRuntime.Client is {} organization && organization.Status!="未加入管理")
         {
             var status=WorkspaceUi.Text(organization.Status,12);

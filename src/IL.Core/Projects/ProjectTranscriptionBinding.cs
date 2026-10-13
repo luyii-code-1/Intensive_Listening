@@ -2,6 +2,7 @@ using System.Text;
 using IL.Core.Ilp;
 using IL.Core.Infrastructure;
 using IL.Core.Transcription;
+using IL.Core.Audio;
 
 namespace IL.Core.Projects;
 
@@ -13,14 +14,17 @@ public sealed class ProjectTranscriptionBinding : IAsyncDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _workGate = new();
     private Task _work = Task.CompletedTask;
+    private readonly Func<string, Task<TimeSpan?>> _probeDuration;
     public event Action<CourseProject>? TranscriptBound;
-    public ProjectTranscriptionBinding(CourseProjectStore store, TranscriptionQueue queue)
-    { _store = store; _queue = queue; queue.Completed += Completed; }
+    public ProjectTranscriptionBinding(CourseProjectStore store, TranscriptionQueue queue, Func<string, Task<TimeSpan?>>? probeDuration = null)
+    { _store = store; _queue = queue; _probeDuration = probeDuration ?? (path => VadSlicer.ProbeDurationAsync(path)); queue.Completed += Completed; }
     public async Task<CourseProject> EnqueueAsync(CourseProject project)
     {
         // Cached results can finish immediately, so the project link must exist first.
         var id = Guid.NewGuid().ToString("N");
-        var updated = project with { TranscriptionJobId = id, Step = CourseProjectStep.Transcription, AutoQuestionPlanDeferred = false };
+        var duration = await _probeDuration(project.AudioPath!);
+        var updated = project with { TranscriptionJobId = id, Step = CourseProjectStep.Transcription, AutoQuestionPlanDeferred = false,
+            AudioDuration = duration > TimeSpan.Zero ? duration : project.AudioDuration };
         await _store.SaveAsync(updated);
         _queue.Enqueue(updated.Title, updated.AudioPath!, updated.AudioDuration, updated.Id, id);
         return updated;
@@ -37,7 +41,12 @@ public sealed class ProjectTranscriptionBinding : IAsyncDisposable
     public async Task RestorePendingAsync()
     {
         await FlushAsync();
-        foreach (var job in _queue.Jobs.Where(j => j.Status == TranscriptionJobStatus.Completed && !j.SrtConsumed)) await BindAsync(job);
+        foreach (var job in _queue.Jobs.Where(j => j.Status == TranscriptionJobStatus.Completed && !j.SrtConsumed))
+        {
+            try { await BindAsync(job); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            { AppLog.Error($"工程 {job.ProjectId} 的转写字幕恢复失败，保留结果待重试", e); }
+        }
     }
     public async Task<CourseProject?> BindAsync(TranscriptionJob job)
     {
@@ -45,9 +54,11 @@ public sealed class ProjectTranscriptionBinding : IAsyncDisposable
         await _gate.WaitAsync();
         try
         {
+            var duration = await _probeDuration(job.AudioPath);
             var updated = await _store.UpdateAsync(job.ProjectId, project =>
             {
                 if (project == null || project.TranscriptionJobId != job.Id) return null;
+                if (duration > TimeSpan.Zero && project.AudioPath == job.AudioPath) project = project with { AudioDuration = duration };
                 var cues = SrtParser.Parse(Encoding.UTF8.GetBytes(job.Srt), project.AudioDuration ?? TimeSpan.FromDays(7));
                 if (cues.Count == 0) return null;
                 return project with { Transcript = job.Srt, TranscriptionJobId = null, Step = CourseProjectStep.Review,
@@ -57,6 +68,12 @@ public sealed class ProjectTranscriptionBinding : IAsyncDisposable
             _queue.MarkSrtConsumed(job.Id);
             TranscriptBound?.Invoke(updated);
             return updated;
+        }
+        catch (IlpException e)
+        {
+            _queue.FailSrtBinding(job.Id, e.Message);
+            AppLog.Error($"工程 {job.ProjectId} 的转写字幕校验失败，原工程与识别结果已保留", e);
+            return null;
         }
         finally { _gate.Release(); }
     }

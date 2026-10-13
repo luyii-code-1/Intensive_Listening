@@ -240,13 +240,22 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
             CREATE TABLE IF NOT EXISTS policies(scope TEXT PRIMARY KEY, payload BLOB NOT NULL, revision INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS events(device_id TEXT, event_id TEXT, kind TEXT, happened TEXT, version TEXT, metrics TEXT, PRIMARY KEY(device_id,event_id));
             CREATE TABLE IF NOT EXISTS audit(at REAL, action TEXT, target TEXT);
+            CREATE TABLE IF NOT EXISTS update_tasks(id TEXT PRIMARY KEY, scope TEXT, version TEXT, mode TEXT, created REAL, payload BLOB);
+            CREATE TABLE IF NOT EXISTS update_receipts(task_id TEXT, device_id TEXT, status TEXT, progress INTEGER, message TEXT, at REAL, PRIMARY KEY(task_id,device_id));
         """)
         conn.execute("INSERT OR IGNORE INTO policies VALUES(?,?,?)", ("all", store.encode(DEFAULT_POLICY), 1))
         if "leave_allowed" not in {r[1] for r in conn.execute("PRAGMA table_info(devices)")}:
             conn.execute("ALTER TABLE devices ADD COLUMN leave_allowed INTEGER NOT NULL DEFAULT 0")
         if "realtime" not in {r[1] for r in conn.execute("PRAGMA table_info(devices)")}:
             conn.execute("ALTER TABLE devices ADD COLUMN realtime INTEGER NOT NULL DEFAULT 0")
-    app = FastAPI(title="Intensive Listening MDN", version="2.1.0", docs_url=None, redoc_url=None, openapi_url=None)
+        for column, declaration in [("alias", "TEXT NOT NULL DEFAULT ''"), ("latency", "INTEGER"), ("last_poll", "REAL")]:
+            if column not in {r[1] for r in conn.execute("PRAGMA table_info(devices)")}:
+                conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {declaration}")
+        for row in conn.execute("SELECT scope,payload FROM policies").fetchall():
+            update = store.decode(row["payload"]).get("update")
+            if update:
+                conn.execute("INSERT OR IGNORE INTO update_tasks VALUES(?,?,?,?,?,?)", (update["id"], row["scope"], update["version"], update["mode"], time.time(), store.encode(update)))
+    app = FastAPI(title="Intensive Listening MDN", version="2.1.0.1", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=not config.get("disable_ssl", False), same_site="strict", max_age=3600)
     template_directory = expand_web(root)
     templates = Jinja2Templates(directory=str(template_directory))
@@ -319,7 +328,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
                     await socket.close(code=4400)
                     break
                 device(socket)
-                await connections.send(socket, {"type": "heartbeat"})
+                await connections.send(socket, {"type": "heartbeat", "sentAt": json.loads(text).get("sentAt")})
         except HTTPException:
             await socket.close(code=4403)
         except (WebSocketDisconnect, RuntimeError, OSError):
@@ -383,11 +392,75 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
 
     @app.get("/api/policy")
     def policy(request: Request):
-        result = policy_for(device(request))
+        identifier = device(request)
+        with db() as conn:
+            conn.execute("UPDATE devices SET last_poll=?, realtime=? WHERE id=?", (time.time(), int(bool(connections.peers.get(identifier))), identifier))
+        result = policy_for(identifier)
         if "transcriptBlurIntensity" not in request.headers.get("x-il-capabilities", "").split(","):
             result["settings"].pop("transcriptBlurIntensity", None)
             result["lockedSettings"] = [name for name in result.get("lockedSettings", []) if name != "transcriptBlurIntensity"]
         return result
+
+    @app.post("/api/connection")
+    async def connection_state(request: Request):
+        identifier = device(request)
+        body = await request.json()
+        latency = body.get("latency")
+        if not isinstance(latency, int) or not 0 <= latency <= 60000:
+            raise HTTPException(422, "延迟无效")
+        with db() as conn:
+            conn.execute("UPDATE devices SET latency=? WHERE id=?", (latency, identifier))
+        return {"accepted": True}
+
+    @app.post("/api/updates/{task_id}/receipt")
+    async def update_receipt(task_id: str, request: Request):
+        identifier = device(request)
+        body = await request.json()
+        status = body.get("status")
+        progress = body.get("progress", 0)
+        if status not in ("received", "downloading", "ready", "deferred", "installing", "success", "failed") or not isinstance(progress, int) or not 0 <= progress <= 100:
+            raise HTTPException(422, "更新状态无效")
+        with db() as conn:
+            task = conn.execute("SELECT * FROM update_tasks WHERE id=?", (task_id,)).fetchone()
+            if not task or task["scope"] not in ("all", identifier):
+                raise HTTPException(404, "更新任务不存在")
+            conn.execute("INSERT INTO update_receipts VALUES(?,?,?,?,?,?) ON CONFLICT(task_id,device_id) DO UPDATE SET status=excluded.status, progress=excluded.progress, message=excluded.message, at=excluded.at",
+                         (task_id, identifier, status, progress, str(body.get("message", ""))[:512], time.time()))
+        return {"accepted": True}
+
+    @app.post("/admin/device/alias")
+    def device_alias(request: Request, device_id: str = Form(...), alias: str = Form(""), form_token: str = Form(...)):
+        csrf(request, form_token)
+        if len(alias.strip()) > 80:
+            raise HTTPException(422, "别名最多 80 个字符")
+        with db() as conn:
+            scope_exists(conn, device_id)
+            conn.execute("UPDATE devices SET alias=? WHERE id=?", (alias.strip(), device_id))
+        return RedirectResponse("/admin?view=devices", 303)
+
+    @app.post("/admin/updates/clear")
+    def clear_update_history(request: Request, form_token: str = Form(...)):
+        csrf(request, form_token)
+        with db() as conn:
+            active = {store.decode(r[0]).get("update", {}).get("id") for r in conn.execute("SELECT payload FROM policies") if store.decode(r[0]).get("update")}
+            for row in conn.execute("SELECT id FROM update_tasks").fetchall():
+                if row[0] not in active:
+                    conn.execute("DELETE FROM update_receipts WHERE task_id=?", (row[0],))
+                    conn.execute("DELETE FROM update_tasks WHERE id=?", (row[0],))
+        return RedirectResponse("/admin?view=updates", 303)
+
+    @app.post("/admin/updates/retry")
+    async def retry_update(request: Request, task_id: str = Form(...), device_id: str = Form(...), form_token: str = Form(...)):
+        csrf(request, form_token)
+        with db() as conn:
+            row = conn.execute("SELECT payload FROM update_tasks WHERE id=?", (task_id,)).fetchone()
+            if not row:
+                raise HTTPException(404, "任务不存在")
+            update = store.decode(row[0])
+        update["id"] = str(uuid.uuid4())
+        write_update(device_id, update)
+        await connections.notify(device_id)
+        return RedirectResponse("/admin?view=updates", 303)
 
     @app.post("/api/telemetry")
     def telemetry(request: Request, event: Telemetry):
@@ -430,12 +503,24 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
         return RedirectResponse("/", 303)
 
     @app.get("/admin")
-    def dashboard(request: Request, scope: str = "all"):
+    def dashboard(request: Request, scope: str = "all", q: str = "", kind: str = "", event_device: str = "", page: int = 1):
         admin(request)
         with db() as conn:
             clients = [dict(r) for r in conn.execute("SELECT * FROM devices ORDER BY last_seen DESC")]
             row = conn.execute("SELECT * FROM policies WHERE scope=?", (scope,)).fetchone()
-            events = conn.execute("SELECT device_id,kind,happened,version,metrics FROM events ORDER BY rowid DESC LIMIT 100").fetchall()
+            filters = []; parameters = []
+            if q:
+                filters.append("(e.metrics LIKE ? OR e.device_id LIKE ? OR d.name LIKE ? OR d.alias LIKE ? OR e.version LIKE ?)")
+                parameters.extend(["%" + q + "%"] * 5)
+            if kind:
+                filters.append("e.kind=?"); parameters.append(kind)
+            if event_device:
+                filters.append("e.device_id=?"); parameters.append(event_device)
+            where = " WHERE " + " AND ".join(filters) if filters else ""
+            event_count = conn.execute("SELECT count(*) FROM events e LEFT JOIN devices d ON d.id=e.device_id" + where, parameters).fetchone()[0]
+            events = [dict(r) for r in conn.execute("SELECT e.*, coalesce(nullif(d.alias,''),d.name,e.device_id) AS device_name FROM events e LEFT JOIN devices d ON d.id=e.device_id" + where + " ORDER BY e.rowid DESC LIMIT 100 OFFSET ?", parameters + [max(0, page - 1) * 100])]
+            kinds = [r[0] for r in conn.execute("SELECT DISTINCT kind FROM events ORDER BY kind")]
+            update_feedback = [dict(r) for r in conn.execute("SELECT t.id, t.version, t.mode, t.created, d.id device_id, coalesce(nullif(d.alias,''),d.name) device_name, coalesce(r.status,'waiting') status, r.progress, r.message, r.at FROM update_tasks t JOIN devices d ON t.scope='all' OR t.scope=d.id LEFT JOIN update_receipts r ON r.task_id=t.id AND r.device_id=d.id ORDER BY t.created DESC, d.name")]
         payload = store.decode(row["payload"]) if row else {}
         # API keys stay out of HTML; an unchanged sentinel retains their encrypted value.
         for name in ("cloudApiKey",):
@@ -443,18 +528,37 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
                 payload["settings"][name] = "__KEEP_SECRET__"
         current_update = payload.pop("update", None)
         for client in clients:
+            client["original_name"] = client["name"]
+            client["name"] = client["alias"] or client["name"]
             client["online"] = is_online(client)
             client["seen_text"] = datetime.fromtimestamp(client["last_seen"]).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        return templates.TemplateResponse(request=request, name="admin.html", context={"organization": config["organization_name"], "clients": clients, "scope": scope, "policy": json.dumps(payload, ensure_ascii=False, indent=2), "payload": payload, "csrf": request.session["csrf"], "features": FEATURES, "settings": SCHEMA, "events": events, "message": request.query_params.get("message", ""), "server_url": config["public_url"], "certificate": config.get("certificate_sha256", ""), "online_count": sum(c["online"] for c in clients), "current_update": current_update, "lesson_tasks": lesson_distribution.dashboard()})
+            client["connection_text"] = connection_text(client)
+        labels = {"startup": "启动", "online": "在线", "asr": "语音识别", "crash": "崩溃", "error_track": "错误跟踪"}
+        for event in events:
+            event["label"] = labels.get(event["kind"], event["kind"])
+            metric_labels = {"platform": "系统", "architecture": "架构", "durationMs": "耗时（ms）", "success": "识别成功", "errorType": "错误类型", "exceptionType": "异常类型", "component": "组件", "fatal": "致命错误", "exitCode": "退出码", "stack": "调用堆栈"}
+            metrics = json.loads(event["metrics"])
+            event["fields"] = [(metric_labels.get(key, key), "是" if value is True else "否" if value is False else "\n".join(value) if isinstance(value, list) else str(value)) for key, value in metrics.items()]
+            event["happened"] = datetime.fromisoformat(event["happened"]).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        for feedback in update_feedback:
+            feedback["at_text"] = datetime.fromtimestamp(feedback["at"] or feedback["created"]).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        extra = {"q": q, "kind": kind, "event_device": event_device, "page": max(1,page), "event_count": event_count, "kinds": kinds, "update_feedback": update_feedback}
+        return templates.TemplateResponse(request=request, name="admin.html", context={**extra, "organization": config["organization_name"], "clients": clients, "scope": scope, "policy": json.dumps(payload, ensure_ascii=False, indent=2), "payload": payload, "csrf": request.session["csrf"], "features": FEATURES, "settings": SCHEMA, "events": events, "message": request.query_params.get("message", ""), "server_url": config["public_url"], "certificate": config.get("certificate_sha256", ""), "online_count": sum(c["online"] for c in clients), "current_update": current_update, "lesson_tasks": lesson_distribution.dashboard()})
 
     def is_online(row):
-        return bool(row["enabled"] and (row["id"] in connections.peers if row["realtime"] else time.time() - row["last_seen"] < 90))
+        return bool(row["enabled"] and (bool(connections.peers.get(row["id"])) if row["realtime"] else time.time() - row["last_seen"] < 90))
+
+    def connection_text(row):
+        if connections.peers.get(row["id"]):
+            return "实时模式 - " + (str(row["latency"]) if row["latency"] is not None else "--") + "ms"
+        stamp = row["last_poll"]
+        return "轮询模式 " + (datetime.fromtimestamp(stamp).astimezone().strftime("%H:%M:%S") if stamp else "尚未轮询")
 
     @app.get("/admin/status")
     def online_status(request: Request):
         admin(request)
         with db() as conn:
-            return {"devices": [{"id": row["id"], "online": is_online(row), "enabled": bool(row["enabled"])} for row in conn.execute("SELECT * FROM devices")]}
+            return {"devices": [{"id": row["id"], "online": is_online(row), "enabled": bool(row["enabled"]), "connection": connection_text(row)} for row in conn.execute("SELECT * FROM devices")]}
 
     def scope_exists(conn, scope):
         if scope != "all" and not conn.execute("SELECT id FROM devices WHERE id=?", (scope,)).fetchone():
@@ -531,7 +635,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
         import re
         try:
             valid_url(url, allow_http=True)
-            if mode not in ("ota", "cold") or not re.fullmatch(r"\d+\.\d+\.\d+", version) or not re.fullmatch(r"[a-fA-F0-9]{64}", sha256) or not 0 < size <= 2 * 1024**3:
+            if mode not in ("ota", "cold") or not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", version) or not re.fullmatch(r"[a-fA-F0-9]{64}", sha256) or not 0 < size <= 2 * 1024**3:
                 raise ValueError("更新字段无效。")
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
@@ -547,6 +651,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
             row = conn.execute("SELECT payload FROM policies WHERE scope=?", (scope,)).fetchone()
             payload = store.decode(row[0]) if row else {}
             payload["update"] = update
+            conn.execute("INSERT INTO update_tasks VALUES(?,?,?,?,?,?)", (update["id"], scope, update["version"], update["mode"], time.time(), store.encode(update)))
             write_policy(conn, scope, payload)
             conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), "update", scope))
 
@@ -554,7 +659,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
     async def upload_update(request: Request, scope: str, mode: str, version: str, filename: str):
         csrf(request, request.headers.get("x-csrf-token", ""))
         import re
-        if mode not in ("ota", "cold") or not re.fullmatch(r"\d+\.\d+\.\d+", version) or not filename.lower().endswith(".exe"):
+        if mode not in ("ota", "cold") or not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", version) or not filename.lower().endswith(".exe"):
             raise HTTPException(422, "请选择 EXE 安装包并填写有效版本与更新方式。")
         with db() as conn:
             scope_exists(conn, scope)
@@ -590,7 +695,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None) -> Fa
     def download_package(identifier: uuid.UUID, request: Request):
         device_id = device(request)
         update = policy_for(device_id).get("update")
-        if not update or update["id"] != str(identifier):
+        if not update or urlparse(update["url"]).path != "/api/packages/" + str(identifier):
             raise HTTPException(403, "安装包未下发到当前设备。")
         path = packages / (str(identifier) + ".exe")
         if not path.is_file():
@@ -665,7 +770,7 @@ def main():
     args.data = args.data.resolve()
     path = args.data / "config.bin"
     store = SecretStore()
-    print("Intensive Listening MDN 2.1.0")
+    print("Intensive Listening MDN 2.1.0(1)")
     print("数据目录：" + str(args.data))
     if args.init and path.exists():
         raise ValueError("已有配置，初始化不会覆盖。")

@@ -13,7 +13,7 @@ public sealed class ManagedUpdateDownloader(string root, string publicKey, strin
         using var rsa = RSA.Create(); rsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(publicKey), out _);
         if (!rsa.VerifyData(Encoding.UTF8.GetBytes(update.SignedContent), Convert.FromBase64String(update.Signature), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)) throw new InvalidOperationException("更新签名校验失败。");
     }
-    public async Task<string> DownloadAsync(ManagedUpdate update, CancellationToken ct)
+    public async Task<string> DownloadAsync(ManagedUpdate update, CancellationToken ct, Action<int>? progress = null)
     {
         Validate(update); Directory.CreateDirectory(root);
         var path = Path.Combine(root, Guid.Parse(update.Id).ToString("N") + ".exe");
@@ -32,7 +32,14 @@ public sealed class ManagedUpdateDownloader(string root, string publicKey, strin
             await using (var output = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 65536, true))
             {
                 var buffer = new byte[65536]; long total = 0; int count;
-                while ((count = await input.ReadAsync(buffer, deadline.Token)) > 0) { total += count; if (total > update.Size) throw new InvalidOperationException("安装包超出声明大小。"); await output.WriteAsync(buffer.AsMemory(0, count), deadline.Token); }
+                var lastProgress = -1;
+                while ((count = await input.ReadAsync(buffer, deadline.Token)) > 0)
+                {
+                    total += count; if (total > update.Size) throw new InvalidOperationException("安装包超出声明大小。");
+                    await output.WriteAsync(buffer.AsMemory(0, count), deadline.Token);
+                    var percent = (int)(total * 100 / update.Size);
+                    if (percent / 5 != lastProgress / 5 || lastProgress < 0) { lastProgress = percent; progress?.Invoke(percent); }
+                }
             }
             await VerifyAsync(part, update, deadline.Token); File.Move(part, path, true); return path;
         }

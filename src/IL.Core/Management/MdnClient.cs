@@ -168,6 +168,13 @@ public sealed class MdnClient : IAsyncDisposable
                         using var json = JsonDocument.Parse(buffer.AsMemory(0, count));
                         var kind = json.RootElement.GetProperty("type").GetString();
                         if (kind is "ready" or "policy") await SynchronizeAsync(session.Token);
+                        else if (kind == "heartbeat" && json.RootElement.TryGetProperty("sentAt", out var sent) && sent.TryGetInt64(out var stamp))
+                        {
+                            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(config.Server, "api/connection"));
+                            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+                            request.Content = JsonContent.Create(new { latency = (int)Math.Clamp(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - stamp, 0, 60000) });
+                            using var response = await _http.SendAsync(request, session.Token);
+                        }
                     }
                 }
                 finally { session.Cancel(); socket.Abort(); try { await heartbeat; } catch (OperationCanceledException) { } catch (WebSocketException) { } }
@@ -184,8 +191,8 @@ public sealed class MdnClient : IAsyncDisposable
     {
         while (!ct.IsCancellationRequested)
         {
+            await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "heartbeat", sentAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }), WebSocketMessageType.Text, true, ct);
             await Task.Delay(TimeSpan.FromSeconds(25), ct);
-            await socket.SendAsync(Encoding.UTF8.GetBytes("{\"type\":\"heartbeat\"}"), WebSocketMessageType.Text, true, ct);
         }
     }
     public string? DownloadCredential(Uri target) => Configuration is {} config && target.Scheme == config.Server.Scheme && target.Authority == config.Server.Authority ? _token : null;
@@ -212,6 +219,7 @@ public sealed class MdnClient : IAsyncDisposable
             Report("online", new { });
             await FlushEventsAsync(ct);
             await FlushCrashesAsync(ct); Changed?.Invoke();
+            await FlushUpdateReceiptsAsync(ct);
         }
         finally { _request.Release(); }
     }
@@ -227,6 +235,42 @@ public sealed class MdnClient : IAsyncDisposable
             using var response = await _http.SendAsync(request, ct); return response.IsSuccessStatusCode;
         }
         finally { _request.Release(); }
+    }
+    private readonly SemaphoreSlim _feedbackGate = new(1, 1);
+    private string FeedbackPath => Path.Combine(_root, "update-receipts.bin");
+    public async Task ReportUpdateAsync(string id, string status, string message = "", int progress = 0)
+    {
+        await _feedbackGate.WaitAsync();
+        try
+        {
+            Directory.CreateDirectory(_root);
+            var pending = File.Exists(FeedbackPath) ? JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(WindowsSecretStore.Load(FeedbackPath)) ?? new() : new Dictionary<string, JsonElement>();
+            pending[Guid.Parse(id).ToString("D")] = JsonSerializer.SerializeToElement(new { status, message, progress });
+            WindowsSecretStore.Save(FeedbackPath, JsonSerializer.Serialize(pending));
+        }
+        finally { _feedbackGate.Release(); }
+        try { using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)); await FlushUpdateReceiptsAsync(timeout.Token); }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { }
+    }
+    private async Task FlushUpdateReceiptsAsync(CancellationToken ct)
+    {
+        if (Configuration is null || _token is null) return;
+        await _feedbackGate.WaitAsync(ct);
+        try
+        {
+            if (!File.Exists(FeedbackPath)) return;
+            var pending = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(WindowsSecretStore.Load(FeedbackPath)) ?? new();
+            foreach (var pair in pending.ToArray())
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/updates/" + pair.Key + "/receipt"));
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+                request.Content = JsonContent.Create(pair.Value);
+                using var response = await _http.SendAsync(request, ct);
+                if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound) break;
+                pending.Remove(pair.Key); WindowsSecretStore.Save(FeedbackPath, JsonSerializer.Serialize(pending));
+            }
+        }
+        finally { _feedbackGate.Release(); }
     }
     private async Task<bool> SendEventAsync(object payload, CancellationToken ct)
     {

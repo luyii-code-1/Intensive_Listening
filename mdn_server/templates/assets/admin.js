@@ -9,6 +9,7 @@ async function refreshOnline(){
    const row=document.querySelector(`[data-id="${device.id}"]`);if(!row)continue;
    const state=!device.enabled?"disabled":device.online?"online":"offline";
    row.dataset.status=state;const badge=row.querySelector(".badge");badge.classList.toggle("online",state==="online");badge.textContent=state==="disabled"?"已禁用":state==="online"?"在线":"离线";
+   const connection=row.querySelector(".connection-state");if(connection)connection.textContent=device.connection;
    if(device.online)count++;
   }
   document.getElementById("online-count").textContent=count;

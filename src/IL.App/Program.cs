@@ -11,6 +11,8 @@ internal static class Program
     public static int Main(string[] args)
     {
         Arguments=args;
+        if (args.Length == 2 && args[0] == "--update-feedback-only")
+            return ManagedUpdater.ReportInstallerResultAsync(args[1]).GetAwaiter().GetResult();
         var managedImport = Array.IndexOf(args, "--import-mdn-config");
         if (managedImport >= 0)
         {

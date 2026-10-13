@@ -28,7 +28,9 @@ public static partial class SrtParser
             var content = lines[(timeLine + 1)..];
             if (content.Any(line => TimePattern().IsMatch(line.Trim()))) throw Invalid("SRT 片段之间需要空行分隔");
             var cueText = string.Join('\n', content).Trim();
-            if (cueText.Length == 0 || end <= start || end > mediaDuration) throw Invalid("SRT 包含空文本或无效时间范围");
+            if (cueText.Length == 0) throw Invalid($"SRT 第 {cues.Count + 1} 个片段文本为空");
+            if (end <= start) throw Invalid($"SRT 第 {cues.Count + 1} 个片段结束时间必须晚于开始时间（{Timestamp(start)} --> {Timestamp(end)}）");
+            if (end > mediaDuration) throw Invalid($"SRT 第 {cues.Count + 1} 个片段结束时间 {Timestamp(end)} 超出音频时长 {Timestamp(mediaDuration)}");
             if (cues.Count > 0 && start < cues[^1].End) throw Invalid("SRT 片段时间存在重叠");
             cues.Add(new(start, end, cueText));
         }

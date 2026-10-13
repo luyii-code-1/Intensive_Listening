@@ -53,6 +53,38 @@ class ManagementTests(unittest.TestCase):
         self.client.post("/admin/device", data={"device_id": self.identifier, "action": "disable", "form_token": csrf})
         self.assertEqual(self.client.get("/api/policy", headers=self.headers).status_code, 403)
 
+    def test_alias_diagnostic_search_and_connection_display(self):
+        csrf = self.login()
+        self.assertEqual(self.client.post("/admin/device/alias", data={"device_id": self.identifier, "alias": "教室一", "form_token": csrf}).status_code, 200)
+        self.client.post("/api/telemetry", headers=self.headers, json={"id": "searchable", "kind": "asr", "occurredAt": "2026-10-14T00:00:00+08:00", "appVersion": "2.1.0.1", "metrics": {"success": False, "errorType": "InvalidTranscript", "durationMs": 100}})
+        html = self.client.get("/admin?view=telemetry&q=教室一&kind=asr").text
+        self.assertIn("InvalidTranscript", html); self.assertIn("识别成功", html)
+        self.assertNotIn("InvalidTranscript", self.client.get("/admin?view=telemetry&q=unmatched").text)
+        self.client.get("/api/policy", headers=self.headers)
+        self.assertIn("轮询模式", self.client.get("/admin/status").json()["devices"][0]["connection"])
+        with self.client.websocket_connect("/api/connect", headers=self.headers) as socket:
+            socket.receive_json()
+            self.client.post("/api/connection", headers=self.headers, json={"latency": 42})
+            self.assertEqual(self.client.get("/admin/status").json()["devices"][0]["connection"], "实时模式 - 42ms")
+
+    def test_update_receipts_retry_and_history_cleanup(self):
+        csrf = self.login()
+        fields = {"form_token": csrf, "scope": self.identifier, "mode": "ota", "version": "2.1.0.1", "url": "https://mdn.example.edu/setup.exe", "sha256": "a"*64, "size": 1024}
+        self.assertEqual(self.client.post("/admin/update", data=fields).status_code, 200)
+        task = self.client.get("/api/policy", headers=self.headers).json()["update"]
+        receipt = "/api/updates/" + task["id"] + "/receipt"
+        self.assertEqual(self.client.post(receipt, headers=self.headers, json={"status": "downloading", "progress": 35}).status_code, 200)
+        self.assertIn("35%", self.client.get("/admin?view=updates").text)
+        other = self.register(str(uuid.uuid4()))
+        self.assertEqual(self.client.post(receipt, headers={"Authorization":"Bearer "+other}, json={"status":"success"}).status_code, 404)
+        self.client.post(receipt, headers=self.headers, json={"status":"failed", "message":"UAC cancelled"})
+        self.assertEqual(self.client.post("/admin/updates/retry", data={"form_token":csrf,"task_id":task["id"],"device_id":self.identifier}).status_code, 200)
+        retry = self.client.get("/api/policy", headers=self.headers).json()["update"]
+        self.assertNotEqual(task["id"], retry["id"])
+        self.assertEqual(self.client.post("/admin/updates/clear", data={"form_token":csrf}).status_code, 200)
+        self.assertNotIn(task["id"], self.client.get("/admin?view=updates").text)
+        self.assertIn(retry["id"], self.client.get("/admin?view=updates").text)
+
     def test_expired_admin_session_returns_login_and_preserves_api_auth(self):
         response = self.client.get("/admin", follow_redirects=False)
         self.assertEqual(response.status_code, 303)

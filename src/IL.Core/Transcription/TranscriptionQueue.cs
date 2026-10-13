@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using IL.Core.Asr;
+using IL.Core.Infrastructure;
 namespace IL.Core.Transcription;
 public sealed class TranscriptionQueue : IAsyncDisposable
 {
@@ -42,9 +43,25 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     public void Retry(string id)
     {
         var job=JobById(id);if(job==null||job.Status is not (TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted))return;
+        if (job.Status == TranscriptionJobStatus.Failed && job.Srt is not null && job.AudioMd5 is not null && job.CacheProfile is not null)
+            cache.Invalidate(job.AudioMd5, job.CacheProfile);
         Update(id,j=>j with{Status=TranscriptionJobStatus.Queued,Stage=TranscriptionStage.Queued,Message="等待前面的任务完成。",Fraction=null,StartedAt=null,FinishedAt=null,Duplicate=null,Srt=null,SrtConsumed=false},true);Pump();
     }
     public void MarkSrtConsumed(string id)=>Update(id,j=>j with{SrtConsumed=true,Srt=null},true);
+    public void FailSrtBinding(string id, string reason)
+    {
+        var job = JobById(id);
+        if (job is not { Status: TranscriptionJobStatus.Completed, SrtConsumed: false }) return;
+        if (job.AudioMd5 is not null && job.CacheProfile is not null)
+        {
+            try { cache.Invalidate(job.AudioMd5, job.CacheProfile); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            { AppLog.Error("无效字幕缓存停用失败", e); }
+        }
+        Update(id, j => j.Status == TranscriptionJobStatus.Completed && !j.SrtConsumed
+            ? j with { Status = TranscriptionJobStatus.Failed, Fraction = null, Message = "字幕绑定失败：" + reason + "。原工程已保留，可重新转写。" }
+            : j, true);
+    }
     public void Remove(string id){if(JobById(id)?.IsTerminal==true)Delete(id);}
     public void Delete(string id)
     {

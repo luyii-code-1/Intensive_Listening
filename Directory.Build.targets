@@ -1,0 +1,76 @@
+<Project>
+  <Target Name="MapReleasePackageSourcePaths" BeforeTargets="CoreCompile"
+          Condition="'$(Configuration)' == 'Release' and '$(NuGetPackageRoot)' != ''">
+    <PropertyGroup>
+      <PathMap>$(PathMap),$(NuGetPackageRoot)=/_/packages/</PathMap>
+    </PropertyGroup>
+  </Target>
+  <!-- Avalonia's XAML compiler emits documents after Roslyn applies PathMap. -->
+  <UsingTask TaskName="MapAvaloniaSymbolPaths" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll"
+             Condition="'$(Configuration)' == 'Release' and '$(AvaloniaBuildTasksLocation)' != ''">
+    <ParameterGroup>
+      <AssemblyPath ParameterType="System.String" Required="true" />
+      <SourceRoot ParameterType="System.String" Required="true" />
+      <BuildTasksPath ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Reference Include="$(AvaloniaBuildTasksLocation)" />
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="Mono.Cecil" />
+      <Code Type="Method" Language="cs"><![CDATA[
+        public override bool Execute()
+        {
+            System.Reflection.Assembly.LoadFrom(BuildTasksPath);
+            return MapPaths();
+        }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private bool MapPaths()
+        {
+        if (!File.Exists(Path.ChangeExtension(AssemblyPath, ".pdb"))) return true;
+        using (var assembly = AssemblyDefinition.ReadAssembly(AssemblyPath,
+            new ReaderParameters { ReadSymbols = true, InMemory = true }))
+        {
+            var changed = false;
+            var root = Path.GetFullPath(SourceRoot).TrimEnd((char)92, '/') + Path.DirectorySeparatorChar;
+            Action<TypeDefinition> mapType = null;
+            mapType = type =>
+            {
+                foreach (var method in type.Methods)
+                    foreach (var point in method.DebugInformation.SequencePoints)
+                    {
+                        var document = point.Document;
+                        if (document.Url.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                        {
+                            document.Url = "/_/" + document.Url.Substring(root.Length).Replace((char)92, '/');
+                            changed = true;
+                        }
+                    }
+                foreach (var nested in type.NestedTypes) mapType(nested);
+            };
+            foreach (var module in assembly.Modules)
+                foreach (var type in module.Types) mapType(type);
+            if (changed)
+            {
+                var temporary = AssemblyPath + ".mapped.dll";
+                var symbols = Path.ChangeExtension(temporary, ".pdb");
+                try
+                {
+                    assembly.Write(temporary, new WriterParameters { WriteSymbols = true });
+                    File.Copy(temporary, AssemblyPath, true);
+                    File.Copy(symbols, Path.ChangeExtension(AssemblyPath, ".pdb"), true);
+                }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); if (File.Exists(symbols)) File.Delete(symbols); }
+            }
+        }
+        return true;
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="MapReleaseAvaloniaSymbolPaths" AfterTargets="CompileAvaloniaXaml"
+          Condition="'$(Configuration)' == 'Release' and '$(AvaloniaBuildTasksLocation)' != ''">
+    <MapAvaloniaSymbolPaths AssemblyPath="%(IntermediateAssembly.FullPath)" SourceRoot="$(MSBuildThisFileDirectory)" BuildTasksPath="$(AvaloniaBuildTasksLocation)" />
+  </Target>
+</Project>

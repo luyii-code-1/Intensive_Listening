@@ -22,12 +22,20 @@ public sealed class ManagedUpdater : IDisposable
     public string Status { get; private set; } = "尚无组织更新任务";
     public bool IsBusy => _busy || _automaticPending;
     public bool HasUpdate => _offered is not null && _offered == EligibleUpdate();
-    public bool CanUpdate => HasUpdate && !IsBusy;
+    public bool CanUpdate => HasUpdate && !IsBusy && !_journal.Attempted(_offered!.Id);
     public bool CanInstall => CanUpdate && _ready == _offered && _file is not null;
     public event Action? Changed;
     public event Action<ManagedUpdate>? NotificationRequested;
     public Func<Task>? AutomaticInstall { get; set; }
-    public ManagedUpdater(MdnClient client, string data) : this(() => client.Policy, () => client.Configuration, client.DownloadCredential, data, AppBuildInfo.Version) { }
+    private MdnClient? _client;
+    public bool DeferredUntilClose { get; private set; }
+    public bool ReopenAfterUpdate { get; set; } = true;
+    public bool SkipUpdateOobe { get; set; }
+    public string? UpdateMode => _offered?.Mode;
+    public bool CanInstallDeferred => DeferredUntilClose && _ready is not null && _ready == EligibleUpdate();
+    public ManagedUpdater(MdnClient client, string data) : this(() => client.Policy, () => client.Configuration, client.DownloadCredential, data, AppBuildInfo.Version) { _client = client; }
+    public void DeferUntilClose() { DeferredUntilClose = true; ReopenAfterUpdate = false; _ = FeedbackAsync("deferred", "用户选择关闭窗口后更新"); }
+    private Task FeedbackAsync(string status, string message = "", int progress = 0) => _offered is not null && _client is not null ? _client.ReportUpdateAsync(_offered.Id, status, message, progress) : Task.CompletedTask;
     internal ManagedUpdater(Func<ManagedPolicy> policy, Func<MdnConfiguration?> configuration, Func<Uri, string?> credential,
         string data, string version, Func<ManagedUpdate, CancellationToken, Task<string>>? download = null)
     {
@@ -45,7 +53,16 @@ public sealed class ManagedUpdater : IDisposable
         var config = _configuration() ?? throw new InvalidOperationException("尚未加入组织管理。");
         return new(Root, config.UpdatePublicKey, config.ServerCertificateSha256, config.Server, _credential(new Uri(update.Url)));
     }
-    private Task<string> DownloadAsync(ManagedUpdate update, CancellationToken ct) => Downloader(update).DownloadAsync(update, ct);
+    private readonly SemaphoreSlim _progressGate = new(1, 1);
+    private int _latestProgress;
+    private async Task SendProgressAsync(int value)
+    {
+        _latestProgress = value;
+        await _progressGate.WaitAsync();
+        try { await FeedbackAsync("downloading", progress: _latestProgress); }
+        finally { _progressGate.Release(); }
+    }
+    private Task<string> DownloadAsync(ManagedUpdate update, CancellationToken ct) => Downloader(update).DownloadAsync(update, ct, value => _ = SendProgressAsync(value));
     public void RecordResult(string id, string? version, bool success)
     {
         if (success && version == _version && Guid.TryParse(id, out _)) _journal.MarkCompleted(id, version);
@@ -65,15 +82,14 @@ public sealed class ManagedUpdater : IDisposable
                 Changed?.Invoke(); return;
             }
             var alreadyOffered = _offered == update;
-            if (!alreadyOffered) { _offered = _ready = null; _file = null; }
+            if (!alreadyOffered) { _offered = _ready = null; _file = null; DeferredUntilClose = false; }
             Downloader(update).Validate(update); _offered = update;
-            if (_journal.NoticeOnce(update.Id)) NotificationRequested?.Invoke(update);
             if (update.Mode == "cold")
             {
-                if (!alreadyOffered) Status = $"您的组织发布了版本 {update.Version}，点击更新开始下载并安装";
+                automatic = update;
             }
             else if (_journal.Attempted(update.Id))
-                Status = $"组织更新 {update.Version} 已尝试，可点击更新手动重试";
+                Status = $"组织更新 {update.Version} 已尝试，等待管理员重试指令";
             else if (!_automaticPending && AutomaticInstall is not null)
             { Status = $"您的组织正在更新您的应用至 {update.Version}"; _automaticPending = true; automatic = update; }
             Changed?.Invoke();
@@ -82,6 +98,11 @@ public sealed class ManagedUpdater : IDisposable
         { _offered = _ready = null; _file = null; Status = "组织更新描述校验失败，请联系管理员"; Changed?.Invoke(); }
         finally { _gate.Release(); }
         if (automatic is null) return;
+        if (automatic.Mode == "cold")
+        {
+            if (await PrepareAsync() && _journal.NoticeOnce(automatic.Id)) NotificationRequested?.Invoke(automatic);
+            return;
+        }
         try
         {
             if (automatic == EligibleUpdate() && await PrepareAsync() && automatic == EligibleUpdate() && _journal.AttemptOnce(automatic.Id)) await AutomaticInstall!();
@@ -98,14 +119,17 @@ public sealed class ManagedUpdater : IDisposable
             if (update is null || _offered != update) return false;
             if (_ready == update && _file is not null) return true;
             Status = "正在下载并校验组织更新…"; Changed?.Invoke();
+            await FeedbackAsync("received"); await FeedbackAsync("downloading");
             var file = await _download(update, _stop.Token);
+            await _progressGate.WaitAsync(_stop.Token); _progressGate.Release();
             if (update != EligibleUpdate()) { _ready = null; _file = null; Status = "组织更新任务已撤销或变更"; return false; }
             _ready = update; _file = file; Status = $"组织更新 {update.Version} 已校验，准备安装";
+            await FeedbackAsync("ready", progress: 100);
             return true;
         }
         catch (OperationCanceledException) { return false; }
         catch (Exception e) when (e is not OutOfMemoryException)
-        { Status = "组织更新下载或校验失败，可点击更新重试"; return false; }
+        { Status = "组织更新下载或校验失败，可点击更新重试"; await FeedbackAsync("failed", Status); return false; }
         finally { _busy = false; _gate.Release(); Changed?.Invoke(); }
     }
     public async Task LaunchInstallerAsync()
@@ -119,12 +143,30 @@ public sealed class ManagedUpdater : IDisposable
             var helper = Path.Combine(Root, "install-update.ps1");
             await File.WriteAllTextAsync(helper, await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "tools", "install-update.ps1")), new UTF8Encoding(true), _stop.Token);
             var plan = Path.Combine(Root, "plan.json");
-            File.WriteAllText(plan, JsonSerializer.Serialize(new { id = _ready.Id, version = _ready.Version, organization = _configuration()?.OrganizationName, installer = _file, sha256 = _ready.Sha256, size = _ready.Size, processId = Environment.ProcessId, startedAt = Process.GetCurrentProcess().StartTime.ToUniversalTime(), executable = Environment.ProcessPath, appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar), dataDirectory = _data, automaticOobe = _policy().AutomaticOobe }));
+            File.WriteAllText(plan, JsonSerializer.Serialize(new { id = _ready.Id, version = _ready.Version, organization = _configuration()?.OrganizationName, installer = _file, sha256 = _ready.Sha256, size = _ready.Size, processId = Environment.ProcessId, startedAt = Process.GetCurrentProcess().StartTime.ToUniversalTime(), executable = Environment.ProcessPath, appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar), dataDirectory = _data, automaticOobe = SkipUpdateOobe, reopen = ReopenAfterUpdate, feedback = true }));
+            await FeedbackAsync("installing");
             await StartHelperAsync(helper, plan, Path.Combine(Root, Guid.NewGuid().ToString("N") + ".ready"), _stop.Token);
             _journal.AttemptOnce(_ready.Id); Status = "正在安装组织更新，应用即将重新启动";
         }
-        catch { _busy = false; Status = "更新助手启动失败，应用已保留；请查看 data/updates/install-update.log 并重试"; throw; }
+        catch { _busy = false; Status = "更新助手启动失败，应用已保留；请查看 data/updates/install-update.log 并重试"; await FeedbackAsync("failed", "更新助手启动失败"); throw; }
         finally { Changed?.Invoke(); }
+    }
+    internal static async Task<int> ReportInstallerResultAsync(string data)
+    {
+        try
+        {
+            var result = JsonSerializer.Deserialize<JsonElement>(await File.ReadAllTextAsync(Path.Combine(data, "updates", "result.json")));
+            var id = result.GetProperty("id").GetString()!;
+            var version = result.TryGetProperty("version", out var value) ? value.GetString() : null;
+            var success = result.GetProperty("success").GetBoolean() && version == AppBuildInfo.Version;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await using var client = new MdnClient(data, AppBuildInfo.Version);
+            try { await client.SynchronizeAsync(timeout.Token); } catch (Exception e) when (e is not OutOfMemoryException) { }
+            await client.ReportUpdateAsync(id, success ? "success" : "failed", success ? "已成功更新到 " + version : "安装未完成或用户取消 UAC", success ? 100 : 0);
+            if (success) new ManagedUpdateJournal(Path.Combine(data, "updates")).MarkCompleted(id, version!);
+            return 0;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException) { return 1; }
     }
     internal static async Task StartHelperAsync(string helper, string plan, string ready, CancellationToken ct, TimeSpan? timeout = null)
     {

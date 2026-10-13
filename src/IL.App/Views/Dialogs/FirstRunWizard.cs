@@ -207,7 +207,7 @@ internal sealed class FirstRunWizard : Border
                 var brand = Brand(_windows ? 80 : 76); brand.Name = "OobeWelcomeLogo"; brand.Margin = new Thickness(0, 0, 0, 8); body.Children.Add(brand);
                 var brandTitle = CenterText("Intensive Listening", _windows ? 32 : 22, true);
                 if (_windows) brandTitle.FontWeight = FontWeight.Bold;
-                body.Children.Add(brandTitle); body.Children.Add(CenterText("欢迎使用精听课程制作与播放"));
+                body.Children.Add(brandTitle); body.Children.Add(CenterText(AppBuildInfo.SuccessfulUpdateVersion is {} updated ? $"已成功更新到 v{updated}" : "欢迎使用精听课程制作与播放"));
                 var build = CenterText(AppBuildInfo.Display, 12); build.Name = "OobeBuildInfo"; build.Opacity = .65; build.Margin = new Thickness(0, 4, 0, 0); body.Children.Add(build);
                 if (_welcomeOnly && _initial.EulaAcceptedVersion.Length == 0)
                 { body.Children.Add(Consent("用户协议", _agreement, _accepted, value => _accepted = value)); body.Children.Add(Consent("隐私说明", _privacy, _privateAccepted, value => _privateAccepted = value)); }

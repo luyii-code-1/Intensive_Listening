@@ -335,17 +335,30 @@ public sealed class StudentView : UserControl
         var lessonId = _vm.CurrentLesson?.Id;
         var panel = new StackPanel { Spacing = 7 };
         panel.Children.Add(Text($"第 {question.Number} 题  {question.Title}", 20, true));
-        var options = new ListBox { SelectionMode = SelectionMode.Single, Background = Brushes.Transparent, BorderThickness = new Thickness(0), ItemsSource = question.Options.Select((option, index) => $"{(char)('A' + index)}. {option}").ToArray() };
+        var optionRows = question.Options.Select((option, index) => new TextBlock { Text = $"{(char)('A' + index)}. {option}", TextWrapping = TextWrapping.Wrap }).ToArray();
+        var options = new ListBox { SelectionMode = SelectionMode.Single, Background = Brushes.Transparent, BorderThickness = new Thickness(0), ItemsSource = optionRows };
+        void RefreshFeedback()
+        {
+            var revealed = _revealedAnswers.Contains(question.Id);
+            for (var i = 0; i < optionRows.Length; i++)
+            {
+                var correct = revealed && question.AnswerIndex == i;
+                var wrong = revealed && options.SelectedIndex == i && question.AnswerIndex != i;
+                optionRows[i].Text = $"{(char)('A' + i)}. {question.Options[i]}" + (correct ? "  ✓" : wrong ? "  ✗" : "");
+                if (correct || wrong) optionRows[i].Foreground = new SolidColorBrush(Color.Parse(correct ? "#218739" : "#D13438"));
+                else optionRows[i].ClearValue(TextBlock.ForegroundProperty);
+            }
+        }
         if (_selectedAnswers.TryGetValue(question.Id, out var selected) && selected < question.Options.Count) options.SelectedIndex = selected;
-        options.SelectionChanged += async (_, _) => { if (options.SelectedIndex >= 0 && lessonId is not null) { _selectedAnswers[question.Id] = options.SelectedIndex; await _vm.SaveAnswerStateAsync(lessonId, question.Id, selected: options.SelectedIndex); } };
+        options.SelectionChanged += async (_, _) => { RefreshFeedback(); if (options.SelectedIndex >= 0 && lessonId is not null) { _selectedAnswers[question.Id] = options.SelectedIndex; await _vm.SaveAnswerStateAsync(lessonId, question.Id, selected: options.SelectedIndex); } };
         if (question.Options.Count > 0) panel.Children.Add(options);
         if (question.AnswerIndex is { } answer)
         {
-            var answerText = Text($"答案：{(char)('A' + answer)}", 14, true); answerText.IsVisible = _revealedAnswers.Contains(question.Id);
-            var reveal = new Button { Content = answerText.IsVisible ? "隐藏答案" : "显示答案", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 1, 0, 0) };
-            reveal.Click += async (_, _) => { if (!_revealedAnswers.Add(question.Id)) _revealedAnswers.Remove(question.Id); answerText.IsVisible = _revealedAnswers.Contains(question.Id); reveal.Content = answerText.IsVisible ? "隐藏答案" : "显示答案"; if (lessonId is not null) await _vm.SaveAnswerStateAsync(lessonId, question.Id, revealed: answerText.IsVisible); };
-            panel.Children.Add(reveal); panel.Children.Add(answerText);
+            var reveal = new Button { Content = _revealedAnswers.Contains(question.Id) ? "隐藏答案" : "显示答案", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 1, 0, 0) };
+            reveal.Click += async (_, _) => { if (!_revealedAnswers.Add(question.Id)) _revealedAnswers.Remove(question.Id); RefreshFeedback(); var revealed = _revealedAnswers.Contains(question.Id); reveal.Content = revealed ? "隐藏答案" : "显示答案"; if (lessonId is not null) await _vm.SaveAnswerStateAsync(lessonId, question.Id, revealed: revealed); };
+            panel.Children.Add(reveal);
         }
+        RefreshFeedback();
         return panel;
     }
     private void ClearTranscript()

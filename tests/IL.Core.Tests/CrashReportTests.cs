@@ -49,7 +49,7 @@ public sealed class CrashReportTests : IDisposable
         Assert.False(await telemetry.ReportCrashAsync(report));
         await telemetry.ApplyConsentAsync(true, true); Assert.False(await telemetry.ReportCrashAsync(report)); Assert.Empty(transport.Errors);
         transport.Online = true; Assert.True(await telemetry.ReportCrashAsync(report));
-        var crash = Assert.Single(transport.Events, e => e.Name == "crash_report");
+        var crash = Assert.Single(transport.Events, e => e.Name == "error_track");
         Assert.Equal(report.Id, crash.Fields["report_id"]); Assert.Equal(report.ExceptionType, crash.Fields["exception_type"]);
         Assert.Equal("true", crash.Fields["fatal"]); Assert.Empty(transport.Errors);
         await telemetry.ShutdownAsync(); Assert.Equal("", transport.StoppedPath); Assert.False(await telemetry.ReportCrashAsync(report));
@@ -68,7 +68,7 @@ public sealed class CrashReportTests : IDisposable
         transport.AcceptEvents = true;
         await store.FlushAsync(true, telemetry.ReportCrashAsync);
         await store.FlushAsync(true, telemetry.ReportCrashAsync);
-        var attempts = transport.Events.Where(e => e.Name == "crash_report").ToArray();
+        var attempts = transport.Events.Where(e => e.Name == "error_track").ToArray();
         Assert.Equal(2, attempts.Length); Assert.All(attempts, e => Assert.Equal(report.Id, e.Fields["report_id"]));
         Assert.Equal("false", attempts[1].Fields["fatal"]); Assert.Equal("12", attempts[1].Fields["exit_code"]);
         Assert.DoesNotContain("private-token", attempts[1].Fields["message"]); Assert.DoesNotContain("private-key", attempts[1].Fields["details"]);
@@ -81,7 +81,7 @@ public sealed class CrashReportTests : IDisposable
         public readonly List<(string Name, IReadOnlyDictionary<string, string> Fields)> Events = [];
         public Task<bool> StartAsync(string version, string cachePath) => Task.FromResult(true);
         public Task StopAsync(string cachePath) { StoppedPath = cachePath; return Task.CompletedTask; }
-        public Task<bool> EventAsync(string name, IReadOnlyDictionary<string, string> fields) { Events.Add((name, fields)); return Task.FromResult(name != "crash_report" || AcceptEvents); }
+        public Task<bool> EventAsync(string name, IReadOnlyDictionary<string, string> fields) { Events.Add((name, fields)); return Task.FromResult(name != "error_track" || AcceptEvents); }
         public Task<bool> ErrorLogAsync(string text) { Errors.Add(text); return Task.FromResult(true); }
         public Task<string?> InstallCycleAsync() => Task.FromResult<string?>(null);
         public Task<string?> InstallUuidAsync() => Task.FromResult<string?>(null);

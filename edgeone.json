@@ -1,0 +1,6 @@
+{
+  "buildCommand": "node scripts/build.mjs",
+  "installCommand": "node --version",
+  "outputDirectory": "dist",
+  "nodeVersion": "22.11.0"
+}

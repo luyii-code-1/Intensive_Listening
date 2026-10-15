@@ -44,14 +44,9 @@ export async function onRequest({ request }) {
       responseHeaders.set('X-Content-Type-Options', 'nosniff');
       responseHeaders.set('Cache-Control', upstream.status === 200 && !headers.has('Range')
         ? 'public, max-age=3600' : 'no-store');
-      const response = new Response(request.method === 'HEAD' ? null : upstream.body, {
+      return new Response(request.method === 'HEAD' ? null : upstream.body, {
         status: upstream.status, headers: responseHeaders,
       });
-      // Set after construction: some runtimes infer zero length for a null HEAD body.
-      if (request.method === 'HEAD' && upstream.headers.has('Content-Length')) {
-        response.headers.set('Content-Length', upstream.headers.get('Content-Length'));
-      }
-      return response;
     }
     return failure(502, 'Too many download redirects');
   } catch {

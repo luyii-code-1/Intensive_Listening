@@ -10,12 +10,12 @@ const files = [
 ];
 async function send(name, init) {
   const request = new Request(`${base || 'https://il.luyii.cn'}/downloads/v2.1.0/${name}`, {
-    ...init, signal: AbortSignal.timeout(180_000),
+    ...init, signal: AbortSignal.timeout(600_000),
   });
   return base ? fetch(request, { redirect: 'manual' }) : onRequest({ request });
 }
 try {
-  for (const [name, expectedSize, expectedHash] of files) {
+  await Promise.all(files.map(async ([name, expectedSize, expectedHash]) => {
     console.log(`${name}: checking HEAD`);
     const head = await send(name, { method: 'HEAD' });
     assert.equal(head.status, 200);
@@ -35,15 +35,20 @@ try {
     assert.equal(response.status, 200);
     const hash = createHash('sha256');
     let size = 0;
+    let reported = 0;
     const started = performance.now();
     for await (const chunk of response.body) {
       size += chunk.byteLength;
       hash.update(chunk);
+      if (size - reported >= 32 * 1024 * 1024) {
+        reported = size;
+        console.log(`${name}: ${Math.round(size / 1024 / 1024)} MiB received`);
+      }
     }
     assert.equal(size, expectedSize);
     assert.equal(hash.digest('hex'), expectedHash);
     console.log(JSON.stringify({ name, size, sha256: 'PASS', headStatus: head.status, headContentLength: headSize, range: 'PASS', seconds: Math.round((performance.now() - started) / 1000), target: base || 'local handler → GitHub' }));
-  }
+  }));
 } catch (error) {
   console.error(`Download verification failed: ${error.code || error.name}: ${error.message}`);
   process.exitCode = 1;

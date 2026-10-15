@@ -166,6 +166,7 @@ class IntensiveListeningApp {
     this.initTelemetryAndLegal();
     this.initPwaServiceWorker();
     this.initGlobalAudioUnlock();
+    this.loadIlpFromUrlParam();
   }
 
   // --- Theme Handling ---
@@ -572,6 +573,92 @@ class IntensiveListeningApp {
       await this.loadLesson(lessonRecord);
     } catch (err) {
       this.showAlert('加载示例失败', err.message || err);
+    }
+  }
+
+  /**
+   * 深链：?ilppath=<URL>
+   * 打开页面时自动下载该地址的 .ilp 精听包并载入播放。
+   * 仅接受 http/https；成功或失败后都会把参数从地址栏清掉，避免刷新重复下载。
+   */
+  async loadIlpFromUrlParam() {
+    let raw = null;
+    try {
+      raw = new URLSearchParams(window.location.search).get('ilppath');
+    } catch { return; }
+    if (!raw || !raw.trim()) return;
+
+    const stripParam = () => {
+      try {
+        const u = new URL(window.location.href);
+        u.searchParams.delete('ilppath');
+        history.replaceState(null, '', u.pathname + u.search + u.hash);
+      } catch { /* 地址栏清理失败不影响主流程 */ }
+    };
+
+    let url;
+    try {
+      url = new URL(raw.trim(), window.location.href);
+    } catch {
+      stripParam();
+      this.showAlert('链接无效', `无法解析 ilppath 地址：${raw}`);
+      return;
+    }
+
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      stripParam();
+      this.showAlert('链接无效', `ilppath 只支持 http 与 https 地址，收到的是 ${url.protocol}`);
+      return;
+    }
+
+    stripParam();
+    this.showAlert('正在下载课程包', url.href);
+
+    let blob;
+    try {
+      const resp = await fetch(url.href, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
+      if (!resp.ok) throw new Error(`服务器返回 ${resp.status} ${resp.statusText}`);
+      blob = await resp.blob();
+    } catch (err) {
+      const why = (err && err.message) ? err.message : String(err);
+      this.showAlert('下载失败', [
+        `无法从下列地址获取课程包：`,
+        url.href,
+        '',
+        why,
+        '',
+        '若跨域访问被拦截，需该资源所在服务器允许 CORS；也可下载 .ilp 后用「导入精听包」打开。'
+      ].join('\n'));
+      return;
+    }
+
+    const name = decodeURIComponent((url.pathname.split('/').pop() || '')).trim() || 'course.ilp';
+    try {
+      const parsed = await parseIlpPackage(blob);
+      const lessonRecord = {
+        id: parsed.manifest.packageUuid || ('ilp-' + Date.now()),
+        manifest: parsed.manifest,
+        cues: parsed.cues,
+        audioBlob: parsed.audioBlob,
+        audioUrl: parsed.audioUrl,
+        lastOpenedAt: Date.now(),
+        progressPosition: 0,
+        revealedCloze: []
+      };
+      await lessonStorage.saveLesson(lessonRecord);
+      this.reportTelemetryEvent('import_ilp', {
+        title: parsed.manifest.title,
+        cuesCount: parsed.cues.length,
+        source: 'ilppath'
+      });
+      this.hideAlert();
+      await this.loadLesson(lessonRecord);
+    } catch (err) {
+      let message = (err && err.message) ? err.message : String(err);
+      if (message.includes("Can't find end of central directory") || message.includes('corrupted zip')) {
+        message = `下载到的 “${name}” 不是有效的 .ilp 精听包（或文件已损坏）。`;
+      }
+      this.showAlert('文件解析失败', message);
     }
   }
 
@@ -1566,6 +1653,10 @@ class IntensiveListeningApp {
     this.dom.alertModal.style.display = 'flex';
   }
 
+  hideAlert() {
+    if (this.dom.alertModal) this.dom.alertModal.style.display = 'none';
+  }
+
   // --- Legal Modal & Telemetry ---
   showLegalModal(tab = 'agreement') {
     this.switchLegalTab(tab);
@@ -1701,7 +1792,7 @@ class IntensiveListeningApp {
 
   reportTelemetryEvent(name, properties = {}) {
     const payload = {
-      app_version: '1.2.1+12',
+      app_version: '1.3.0+13',
       commit_id: 'winui3',
       ...properties,
       timestamp: Date.now()

@@ -1701,8 +1701,8 @@ class IntensiveListeningApp {
 
   reportTelemetryEvent(name, properties = {}) {
     const payload = {
-      app_version: '1.1.0+10',
-      commit_id: '64b1338',
+      app_version: '1.2.0+11',
+      commit_id: 'winui3',
       ...properties,
       timestamp: Date.now()
     };
@@ -1882,7 +1882,7 @@ class IntensiveListeningApp {
       }, 400);
     } else {
       if (this.dom.adblockRetryMsg) {
-        this.dom.adblockRetryMsg.style.color = 'var(--accent-red)';
+        this.dom.adblockRetryMsg.style.color = 'var(--accent)';
         this.dom.adblockRetryMsg.textContent = '检测到遥测通道仍被拦截。请确认已关闭拦截插件（如 uBlock Origin / AdGuard 等）或将本站加入白名单后重试。';
       }
     }

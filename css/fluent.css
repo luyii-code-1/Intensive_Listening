@@ -1,99 +1,110 @@
 /* Fluent Design System CSS - Matching Dart Intensive Listening App */
 
 :root {
-  /* 字体：中文界面黑体，英文听力材料衬线 */
-  --font-family: 'SourceHanSansSC', 'Source Han Sans SC', 'Segoe UI', -apple-system,
-                 BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* ── 字体：WinUI 3 用 Segoe UI Variable；英文听力材料另用衬线 ── */
+  --font-family: 'Segoe UI Variable Text', 'Segoe UI', 'Source Han Sans SC',
+                 -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-en: 'Source Serif 4', 'Source Serif Pro', Georgia, 'Times New Roman',
              'Source Han Sans SC', 'PingFang SC', 'Microsoft YaHei', serif;
 
-  /* 品牌朱红：取自 logo #B80F28。红只标「当前」或「主操作」 */
+  /* ── 强调色：品牌红 #B80F28（取自 logo.svg）──
+     WinUI 3 强调色斜面：浅色用暗色阶，深色用亮色阶。纯色，无渐变。 */
   --accent: #B80F28;
-  --accent-hover: #8E0B1E;
-  --accent-pressed: #6E0817;
-  --accent-tint: #F6E7E9;
-  --accent-tint-hover: #EFD6D9;
-  --accent-light: #F6E7E9;
-  --accent-text: #ffffff;
+  --accent-hover: #A00D22;
+  --accent-pressed: #870B1C;
+  --accent-tint: rgba(184, 15, 40, 0.0605);
+  --accent-tint-hover: rgba(184, 15, 40, 0.0876);
+  --accent-light: rgba(184, 15, 40, 0.0605);
+  --accent-text: #FFFFFF;
+  --accent-text-on: #FFFFFF;
 
-  /* WinUI 3 Motion Tokens */
+  /* ── WinUI 3 动效（FastInSlowOut / Point-to-Point）── */
   --ease-standard: cubic-bezier(0.8, 0, 0.2, 1);
   --ease-decel: cubic-bezier(0.1, 0.9, 0.2, 1);
   --ease-accel: cubic-bezier(0.7, 0, 1, 0.5);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   --trans-micro: 90ms ease-out;
-  --trans-fast: 160ms var(--ease-decel);
-  --trans-normal: 240ms var(--ease-decel);
-  --trans-slow: 340ms var(--ease-decel);
-  --trans-spring: 320ms var(--ease-spring);
+  --trans-fast: 150ms var(--ease-decel);
+  --trans-normal: 250ms var(--ease-decel);
+  --trans-slow: 350ms var(--ease-decel);
+  --trans-spring: 300ms var(--ease-spring);
 
-  /* Light Theme —— 中性纸面 */
-  --bg-app: #F3F3F1;
-  --bg-mica: radial-gradient(1200px circle at 50% 0px, rgba(255, 255, 255, 0.55) 0%, rgba(243, 243, 241, 0.96) 100%), #F3F3F1;
-  --bg-card: #ffffff;
-  --bg-card-header: #F7F7F5;
-  --bg-surface: #ffffff;
-  --bg-input: #ffffff;
-  --bg-btn: #ffffff;
-  --bg-btn-hover: #EAEAE6;
-  --bg-btn-pressed: #E0E0DB;
+  /* ── 浅色主题（Fluent 2 主题资源）──
+     SolidBackgroundFillColorBase / CardBackgroundFillColorDefault /
+     ControlFillColor* / ControlStrokeColor* / TextFillColor* */
+  --bg-app: #F3F3F3;
+  --bg-mica: #F3F3F3;
+  --bg-card: rgba(255, 255, 255, 0.70);
+  --bg-card-header: rgba(249, 249, 249, 0.50);
+  --bg-surface: #FFFFFF;
+  --bg-input: rgba(255, 255, 255, 0.70);
+  --bg-btn: rgba(255, 255, 255, 0.70);
+  --bg-btn-hover: rgba(249, 249, 249, 0.50);
+  --bg-btn-pressed: rgba(249, 249, 249, 0.30);
+  --bg-subtle-hover: rgba(0, 0, 0, 0.0373);
+  --bg-subtle-pressed: rgba(0, 0, 0, 0.0236);
 
-  --border-card: #D8D8D2;
-  --border-btn: #C6C6C0;
-  --border-btn-bottom: #A8A8A2;
-  --border-divider: #E2E2DC;
+  --border-card: rgba(0, 0, 0, 0.0578);
+  --border-btn: rgba(0, 0, 0, 0.0578);
+  --border-btn-bottom: rgba(0, 0, 0, 0.1622);
+  --border-divider: rgba(0, 0, 0, 0.0698);
 
-  --text-primary: #1B1F24;
-  --text-secondary: #586068;
-  --text-caption: #7A828A;
-  --text-disabled: #A8AEB4;
+  --text-primary: rgba(0, 0, 0, 0.8956);
+  --text-secondary: rgba(0, 0, 0, 0.6063);
+  --text-caption: rgba(0, 0, 0, 0.4458);
+  --text-disabled: rgba(0, 0, 0, 0.3614);
 
-  /* 内容面平铺；投影只留给浮层与对话框 */
+  /* ── 浮层与遮罩 ── */
+  --smoke: rgba(0, 0, 0, 0.3255);
   --shadow-card: none;
   --shadow-hover: none;
-  --shadow-flyout: 0 12px 28px rgba(27, 31, 36, 0.16), 0 2px 8px rgba(27, 31, 36, 0.08);
-  --shadow-dialog: 0 24px 48px rgba(27, 31, 36, 0.24), 0 4px 16px rgba(27, 31, 36, 0.12);
+  --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.14);
+  --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.24), 0 2px 21px rgba(0, 0, 0, 0.14);
 
-  --radius-sm: 3px;
-  --radius-md: 5px;
-  --radius-lg: 7px;
+  /* ── WinUI 3 圆角：控件 4px，浮层 8px ── */
+  --radius-sm: 4px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
   --radius-pill: 9999px;
 }
 
 [data-theme="dark"] {
-  --accent: #E85A68;
-  --accent-hover: #F07482;
-  --accent-pressed: #C24452;
-  --accent-tint: rgba(232, 90, 104, 0.16);
-  --accent-tint-hover: rgba(232, 90, 104, 0.26);
-  --accent-light: rgba(232, 90, 104, 0.20);
-  --accent-text: #ffffff;
+  --accent: #B80F28;
+  --accent-hover: #D33145;
+  --accent-pressed: #E05B6B;
+  --accent-tint: rgba(184, 15, 40, 0.12);
+  --accent-tint-hover: rgba(184, 15, 40, 0.20);
+  --accent-light: rgba(184, 15, 40, 0.12);
+  --accent-text: #FFFFFF;
 
-  --bg-app: #1B1B1B;
-  --bg-mica: radial-gradient(1200px circle at 50% 0px, rgba(58, 58, 58, 0.62) 0%, rgba(27, 27, 27, 0.98) 100%), #1B1B1B;
-  --bg-card: #242424;
-  --bg-card-header: #1F1F1F;
-  --bg-surface: #262626;
-  --bg-input: #161616;
-  --bg-btn: #262626;
-  --bg-btn-hover: #333333;
-  --bg-btn-pressed: #1A1A1A;
+  --bg-app: #202020;
+  --bg-mica: #202020;
+  --bg-card: rgba(255, 255, 255, 0.0512);
+  --bg-card-header: rgba(255, 255, 255, 0.0328);
+  --bg-surface: #2C2C2C;
+  --bg-input: rgba(255, 255, 255, 0.0605);
+  --bg-btn: rgba(255, 255, 255, 0.0605);
+  --bg-btn-hover: rgba(255, 255, 255, 0.0419);
+  --bg-btn-pressed: rgba(255, 255, 255, 0.0241);
+  --bg-subtle-hover: rgba(255, 255, 255, 0.0605);
+  --bg-subtle-pressed: rgba(255, 255, 255, 0.0419);
 
-  --border-card: rgba(255, 255, 255, 0.10);
-  --border-btn: rgba(255, 255, 255, 0.18);
-  --border-btn-bottom: rgba(255, 255, 255, 0.26);
-  --border-divider: rgba(255, 255, 255, 0.10);
+  --border-card: rgba(255, 255, 255, 0.0698);
+  --border-btn: rgba(255, 255, 255, 0.0698);
+  --border-btn-bottom: rgba(255, 255, 255, 0.1622);
+  --border-divider: rgba(255, 255, 255, 0.0837);
 
-  --text-primary: rgba(255, 255, 255, 0.94);
-  --text-secondary: rgba(255, 255, 255, 0.68);
-  --text-caption: rgba(255, 255, 255, 0.46);
-  --text-disabled: rgba(255, 255, 255, 0.24);
+  --text-primary: #FFFFFF;
+  --text-secondary: rgba(255, 255, 255, 0.786);
+  --text-caption: rgba(255, 255, 255, 0.5442);
+  --text-disabled: rgba(255, 255, 255, 0.3628);
 
+  --smoke: rgba(0, 0, 0, 0.30);
   --shadow-card: none;
   --shadow-hover: none;
-  --shadow-flyout: 0 16px 36px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
-  --shadow-dialog: 0 28px 56px rgba(0, 0, 0, 0.7), 0 4px 18px rgba(0, 0, 0, 0.5);
+  --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.26);
+  --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.42), 0 2px 21px rgba(0, 0, 0, 0.28);
 }
 
 /* Reset and Global Styles */
@@ -220,7 +231,6 @@ body {
 
 .icon-btn:active {
   background-color: var(--bg-btn-pressed);
-  transform: scale(0.92);
 }
 
 .app-logo-mark {
@@ -230,7 +240,6 @@ body {
   flex-shrink: 0;
   display: inline-block;
   vertical-align: middle;
-  box-shadow: 0 1px 4px rgba(184, 15, 40, 0.25);
 }
 
 .app-title {
@@ -278,22 +287,24 @@ body {
 }
 
 /* Fluent Buttons */
+/* WinUI 3 Button —— 32px 高，4px 圆角，状态只换填充，不位移不缩放 */
 .fluent-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 6px 14px;
+  min-height: 32px;
+  padding: 4px 11px 5px;
   font-size: 14px;
   font-family: inherit;
   font-weight: 400;
+  line-height: 20px;
   border-radius: var(--radius-sm);
   background-color: var(--bg-btn);
   border: 1px solid var(--border-btn);
-  border-bottom-color: var(--border-btn-bottom);
   color: var(--text-primary);
   cursor: pointer;
-  transition: all var(--trans-fast), transform var(--trans-micro);
+  transition: background-color var(--trans-fast), border-color var(--trans-fast), color var(--trans-fast);
   white-space: nowrap;
   outline: none;
   box-sizing: border-box;
@@ -301,44 +312,46 @@ body {
 
 .fluent-btn:hover {
   background-color: var(--bg-btn-hover);
-  box-shadow: var(--shadow-card);
-  transform: translateY(-0.5px);
 }
 
 .fluent-btn:active {
   background-color: var(--bg-btn-pressed);
-  transform: scale(0.97);
 }
 
 .fluent-btn:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 
 .fluent-btn:disabled {
-  opacity: 0.45;
+  background-color: var(--bg-btn-pressed);
+  border-color: var(--border-btn);
+  color: var(--text-disabled);
   cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
 }
 
+/* WinUI 3 Accent Button —— 纯色填充，Hover/Pressed 只换色阶 */
 .fluent-btn.filled {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(0, 0, 0, 0.05) 100%), var(--accent);
+  background-color: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
-  font-weight: 500;
-  box-shadow: 0 1px 3px rgba(209, 52, 56, 0.25);
+  font-weight: 400;
 }
 
 .fluent-btn.filled:hover {
-  filter: brightness(1.08);
-  box-shadow: 0 2px 8px rgba(209, 52, 56, 0.4);
-  transform: translateY(-0.5px);
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .fluent-btn.filled:active {
-  filter: brightness(0.92);
-  transform: scale(0.97);
+  background-color: var(--accent-pressed);
+  border-color: var(--accent-pressed);
+}
+
+.fluent-btn.filled:disabled {
+  background-color: var(--bg-btn-pressed);
+  border-color: var(--border-btn);
+  color: var(--text-disabled);
 }
 
 .fluent-btn.play-btn {
@@ -350,26 +363,48 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 14px rgba(209, 52, 56, 0.35);
   transition: transform var(--trans-spring), box-shadow var(--trans-fast), filter var(--trans-fast);
 }
 
 .fluent-btn.play-btn:hover {
-  transform: scale(1.08);
-  box-shadow: 0 6px 20px rgba(209, 52, 56, 0.48);
 }
 
 .fluent-btn.play-btn:active {
-  transform: scale(0.93);
 }
 
 .fluent-btn.play-btn #play-icon {
   margin-left: 2px; /* optical centering for triangle */
 }
 
+/* WinUI 3 Button 小号 —— 24px 高 */
 .fluent-btn.sm {
-  padding: 3px 8px;
-  font-size: 13px;
+  min-height: 24px;
+  padding: 2px 8px 3px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.fluent-btn.lg {
+  min-height: 40px;
+  padding: 8px 16px 9px;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+/* 次级描边按钮（列表项动作） */
+.fluent-btn.outline {
+  background-color: transparent;
+  border-color: var(--border-btn-bottom);
+  color: var(--text-primary);
+}
+
+.fluent-btn.outline:hover {
+  background-color: var(--bg-btn-hover);
+  border-color: var(--border-btn-bottom);
+}
+
+.fluent-btn.outline:active {
+  background-color: var(--bg-btn-pressed);
 }
 
 /* Main Workspace */
@@ -462,7 +497,6 @@ body {
 
 .empty-logo-mark {
   border-radius: 14px;
-  box-shadow: 0 8px 24px rgba(184, 15, 40, 0.28);
   transition: transform var(--trans-spring);
   display: block;
   margin-left: auto;
@@ -470,7 +504,6 @@ body {
 }
 
 .empty-logo-mark:hover {
-  transform: scale(1.08);
 }
 
 .empty-title {
@@ -529,9 +562,8 @@ body {
 
 .lesson-row:hover {
   background-color: var(--accent-tint);
-  border-color: rgba(209, 52, 56, 0.3);
+  border-color: rgba(184, 15, 40, 0.3);
   box-shadow: var(--shadow-hover);
-  transform: translateY(-1px);
 }
 
 .lesson-row-info {
@@ -632,7 +664,6 @@ body {
 .fluent-card {
   background-color: var(--bg-card);
   border: 1px solid var(--border-card);
-  border-top-color: rgba(255, 255, 255, 0.45);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
   padding: 18px 20px;
@@ -643,7 +674,6 @@ body {
 }
 
 [data-theme="dark"] .fluent-card {
-  border-top-color: rgba(255, 255, 255, 0.12);
 }
 
 .question-title {
@@ -679,14 +709,12 @@ body {
 
 .option-item:hover {
   background-color: var(--bg-btn-hover);
-  transform: translateX(3px);
 }
 
 .option-item.selected {
   background-color: var(--bg-btn-hover);
   border-color: var(--text-primary);
   font-weight: 500;
-  transform: translateX(3px);
 }
 
 .option-radio {
@@ -762,25 +790,41 @@ body {
   width: 100%;
 }
 
+/* WinUI 3 Slider —— 4px 轨、2px 圆角；已播部分用拇指阴影实心填充，不用渐变 */
 .fluent-slider {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
   height: 4px;
   border-radius: 2px;
-  background: linear-gradient(to right, var(--accent) var(--progress, 0%), rgba(0, 0, 0, 0.15) var(--progress, 0%));
+  background-color: var(--border-btn-bottom);
   outline: none;
   cursor: pointer;
-  transition: height var(--trans-fast);
+  overflow: hidden;
 }
 
-[data-theme="dark"] .fluent-slider {
-  background: linear-gradient(to right, var(--accent) var(--progress, 0%), rgba(255, 255, 255, 0.2) var(--progress, 0%));
+.fluent-slider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
-.slider-wrapper:hover .fluent-slider,
-.fluent-slider:hover {
-  height: 6px;
+/* 拇指向左投射实心块，即已播进度 */
+.fluent-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  border: 2px solid var(--bg-app);
+  cursor: pointer;
+  transition: background-color var(--trans-fast);
+}
+
+.fluent-slider::-moz-range-progress {
+  background-color: var(--accent);
+  height: 4px;
+  border-radius: 2px;
 }
 
 .fluent-slider::-webkit-slider-thumb {
@@ -791,7 +835,6 @@ body {
   border-radius: 50%;
   background-color: var(--accent);
   border: 3px solid #ffffff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
   cursor: pointer;
   transition: transform var(--trans-spring), box-shadow var(--trans-fast), background-color var(--trans-fast);
 }
@@ -801,13 +844,11 @@ body {
 }
 
 .fluent-slider:hover::-webkit-slider-thumb {
-  transform: scale(1.24);
-  box-shadow: 0 2px 8px rgba(209, 52, 56, 0.45);
+  background-color: var(--accent-hover);
 }
 
 .fluent-slider:active::-webkit-slider-thumb {
-  transform: scale(1.36);
-  background-color: var(--accent-hover);
+  background-color: var(--accent-pressed);
 }
 
 .time-row {
@@ -856,10 +897,10 @@ body {
 }
 
 .checkbox-box {
-  width: 16px;
-  height: 16px;
-  border-radius: 3px;
-  border: 1px solid var(--text-secondary);
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border-btn-bottom);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -872,7 +913,6 @@ body {
 }
 
 .fluent-checkbox:active .checkbox-box {
-  transform: scale(0.92);
 }
 
 .fluent-checkbox.checked .checkbox-box {
@@ -951,12 +991,10 @@ body {
 
 .strip-item:hover {
   background-color: var(--bg-btn-hover);
-  transform: translateY(-1px);
   box-shadow: var(--shadow-card);
 }
 
 .strip-item:active {
-  transform: scale(0.95);
 }
 
 .strip-item.active {
@@ -982,7 +1020,6 @@ body {
 .transcript-card {
   background-color: var(--bg-card);
   border: 1px solid var(--border-card);
-  border-top-color: rgba(255, 255, 255, 0.4);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
   overflow: hidden;
@@ -990,7 +1027,6 @@ body {
 }
 
 [data-theme="dark"] .transcript-card {
-  border-top-color: rgba(255, 255, 255, 0.12);
 }
 
 .transcript-card.active {
@@ -1124,9 +1160,9 @@ body {
 
 /* Cloze Words Styling with Spring Reveal Animation */
 @keyframes clozeRevealPulse {
-  0% { transform: scale(0.94); filter: brightness(1.2); }
+  0% { transform: scale(0.94); }
   50% { transform: scale(1.05); }
-  100% { transform: scale(1); filter: brightness(1); }
+  100% { transform: scale(1); }
 }
 
 .cloze-word {
@@ -1149,7 +1185,6 @@ body {
 .cloze-word.hidden:hover {
   filter: blur(4px);
   background-color: var(--accent-tint-hover);
-  transform: translateY(-1px);
 }
 
 .cloze-word.revealed {
@@ -1165,10 +1200,11 @@ body {
 .transcript-card-header.is-expander {
   display: flex;
   align-items: center;
-  padding: 8px 14px;
+  min-height: 48px;
+  padding: 12px 16px;
   background-color: var(--bg-card-header);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-secondary);
   transition: background-color var(--trans-fast);
   user-select: none;
@@ -1313,7 +1349,6 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(209, 52, 56, 0.35);
 }
 
 .brand-heading {
@@ -1470,7 +1505,6 @@ body {
   max-height: 88vh;
   background-color: var(--bg-card);
   border: 1px solid var(--border-card);
-  border-top-color: rgba(255, 255, 255, 0.45);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dialog);
   display: flex;
@@ -1480,7 +1514,6 @@ body {
 }
 
 [data-theme="dark"] .adblock-modal {
-  border-top-color: rgba(255, 255, 255, 0.12);
 }
 
 .adblock-header {
@@ -1502,7 +1535,6 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(209, 52, 56, 0.35);
 }
 
 .adblock-heading {
@@ -1529,7 +1561,7 @@ body {
 
 .adblock-notice-box {
   background-color: var(--accent-tint);
-  border: 1px solid rgba(209, 52, 56, 0.22);
+  border: 1px solid rgba(184, 15, 40, 0.22);
   border-radius: var(--radius-md);
   padding: 12px 16px;
   font-size: 13px;
@@ -1581,7 +1613,7 @@ body {
 .adblock-retry-msg {
   padding: 8px 12px;
   border-radius: var(--radius-sm);
-  background-color: rgba(209, 52, 56, 0.12);
+  background-color: rgba(184, 15, 40, 0.12);
   color: var(--accent);
   font-size: 13px;
   font-weight: 500;
@@ -1712,7 +1744,6 @@ body {
 }
 
 .return-btn-float .fluent-btn {
-  box-shadow: 0 4px 14px rgba(209, 52, 56, 0.35);
   border-radius: var(--radius-pill);
   padding: 6px 14px;
   font-weight: 500;
@@ -1744,7 +1775,6 @@ body {
 .fluent-dialog {
   background-color: var(--bg-card);
   border: 1px solid var(--border-card);
-  border-top-color: rgba(255, 255, 255, 0.45);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dialog);
   width: 100%;
@@ -1756,7 +1786,6 @@ body {
 }
 
 [data-theme="dark"] .fluent-dialog {
-  border-top-color: rgba(255, 255, 255, 0.12);
 }
 
 @keyframes dialogZoomIn {
@@ -1824,7 +1853,7 @@ body {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(209, 52, 56, 0.08);
+  background-color: rgba(184, 15, 40, 0.08);
   border: 3px dashed var(--accent);
   z-index: 3000;
   display: none;

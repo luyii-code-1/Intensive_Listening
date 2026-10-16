@@ -76,6 +76,26 @@ export class SrtParser {
    * @param {number} seconds
    * @returns {string}
    */
+  /**
+   * 把 cue 数组写回 SRT 文本（导出 .ilp 用）
+   * @param {SrtCue[]} cues
+   * @returns {string}
+   */
+  static serialize(cues = []) {
+    const pad = (n, w) => String(Math.max(0, Math.floor(n))).padStart(w, '0');
+    const stamp = (sec) => {
+      const s = Math.max(0, Number(sec) || 0);
+      const ms = Math.round((s % 1) * 1000);
+      const total = Math.floor(s);
+      return pad(Math.floor(total / 3600), 2) + ':' +
+             pad(Math.floor(total / 60) % 60, 2) + ':' +
+             pad(total % 60, 2) + ',' + pad(ms, 3);
+    };
+    return cues.map((cue, i) =>
+      (i + 1) + '\n' + stamp(cue.start) + ' --> ' + stamp(cue.end) + '\n' + (cue.text || '')
+    ).join('\n\n') + (cues.length ? '\n' : '');
+  }
+
   static formatDuration(seconds) {
     if (isNaN(seconds) || seconds < 0) seconds = 0;
     const totalSeconds = Math.floor(seconds);

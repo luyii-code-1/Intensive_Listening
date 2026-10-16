@@ -1,5 +1,5 @@
 import { SrtParser, tokenizeLessonText } from './srt-parser.js';
-import { parseIlpPackage, normalizeExercises } from './ilp-parser.js';
+import { parseIlpPackage, normalizeExercises, buildIlpPackage } from './ilp-parser.js';
 import { lessonStorage } from './storage.js';
 
 class IntensiveListeningApp {
@@ -94,6 +94,7 @@ class IntensiveListeningApp {
       // Modals
       fileInfoModal: document.getElementById('file-info-modal'),
       btnCloseInfoModal: document.getElementById('btn-close-info-modal'),
+      btnDownloadIlp: document.getElementById('btn-download-ilp'),
       deleteModal: document.getElementById('delete-modal'),
       btnCancelDelete: document.getElementById('btn-cancel-delete'),
       btnConfirmDelete: document.getElementById('btn-confirm-delete'),
@@ -339,6 +340,7 @@ class IntensiveListeningApp {
     }, { passive: true });
 
     // Modals
+    if (this.dom.btnDownloadIlp) this.dom.btnDownloadIlp.addEventListener('click', () => this.downloadCurrentLesson());
     this.dom.fileInfoBtn.addEventListener('click', () => this.showFileInfoModal());
     this.dom.btnCloseInfoModal.addEventListener('click', () => this.hideFileInfoModal());
 
@@ -577,6 +579,40 @@ class IntensiveListeningApp {
   }
 
   /**
+   * 把当前课程打包成完整 .ilp 存到本地。
+   * 数据全部来自本机已保存的音频、字幕与题目，不再走网络。
+   */
+  async downloadCurrentLesson() {
+    const lesson = this.currentLesson;
+    if (!lesson) {
+      this.showAlert('没有可导出的课程', '请先打开一门课程，再点击「下载 .ilp」。');
+      return;
+    }
+    try {
+      const blob = await buildIlpPackage(lesson);
+      const rawTitle = (lesson.manifest && lesson.manifest.title) || 'course';
+      const safe = String(rawTitle).replace(/[\/:*?"<>|]/g, '_').trim() || 'course';
+      const fileName = safe + '.ilp';
+
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = fileName;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
+
+      this.reportTelemetryEvent('export_ilp', { title: rawTitle, size: blob.size });
+      if (this.dom.fileInfoModal) this.dom.fileInfoModal.style.display = 'none';
+      this.showAlert('已导出', fileName + '（' + Math.round(blob.size / 1024) + ' KB）已保存到本地。');
+    } catch (err) {
+      this.showAlert('导出失败', (err && err.message) ? err.message : String(err));
+    }
+  }
+
+  /**
    * 深链：?ilppath=<URL>
    * 打开页面时自动下载该地址的 .ilp 精听包并载入播放。
    * 仅接受 http/https；成功或失败后都会把参数从地址栏清掉，避免刷新重复下载。
@@ -584,7 +620,8 @@ class IntensiveListeningApp {
   async loadIlpFromUrlParam() {
     let raw = null;
     try {
-      raw = new URLSearchParams(window.location.search).get('ilppath');
+      const params = new URLSearchParams(window.location.search);
+      raw = params.get('ilppath');
     } catch { return; }
     if (!raw || !raw.trim()) return;
 
@@ -1792,7 +1829,7 @@ class IntensiveListeningApp {
 
   reportTelemetryEvent(name, properties = {}) {
     const payload = {
-      app_version: '1.3.0+13',
+      app_version: '1.4.0+14',
       commit_id: 'winui3',
       ...properties,
       timestamp: Date.now()

@@ -273,3 +273,51 @@ export async function parseIlpPackage(fileOrBuffer) {
     audioUrl
   };
 }
+
+/**
+ * 把已加载的课程重新打包成完整 .ilp（ZIP：manifest.json + 音频 + transcript.srt）
+ * 全部数据来自本机 IndexedDB，不再走网络。
+ * @param {{manifest:any, cues:any[], audioBlob:Blob}} lesson
+ * @returns {Promise<Blob>}
+ */
+export async function buildIlpPackage(lesson) {
+  if (typeof JSZip === 'undefined') {
+    throw new Error('JSZip 库未加载，无法打包 .ilp 精听包');
+  }
+  const manifest = lesson.manifest || lesson.manifestRaw;
+  if (!manifest) throw new Error('课程缺少描述信息，无法导出');
+  if (!lesson.audioBlob) throw new Error('课程缺少音频数据，无法导出');
+
+  const audioPath = manifest.audioPath || 'audio.mp3';
+  const transcriptPath = manifest.transcriptPath || 'transcript.srt';
+
+  // exercises: clozeWordIndexes 的 Set 需要还原成普通数组才能 JSON 序列化
+  const ex = manifest.exercises || {};
+  const cloze = {};
+  const rawCloze = ex.clozeWordIndexes || ex.cloze || {};
+  for (const [k, v] of Object.entries(rawCloze)) {
+    const arr = Array.isArray(v) ? v : (v instanceof Set ? Array.from(v) : []);
+    cloze[String(k)] = arr.map(i => parseInt(i, 10)).filter(i => !isNaN(i) && i >= 0);
+  }
+
+  const manifestOut = {
+    title: manifest.title || '未命名课程',
+    packageUuid: manifest.packageUuid || ('ilp-' + Date.now()),
+    packageVersion: manifest.packageVersion || 1,
+    audioPath,
+    transcriptPath,
+    durationMs: manifest.durationMs || 0,
+    exercises: {
+      materials: Array.isArray(ex.materials) ? ex.materials : [],
+      questions: Array.isArray(ex.questions) ? ex.questions : [],
+      clozeWordIndexes: cloze
+    }
+  };
+
+  const zip = new JSZip();
+  zip.file('manifest.json', JSON.stringify(manifestOut, null, 2));
+  zip.file(transcriptPath, SrtParser.serialize(lesson.cues || []));
+  zip.file(audioPath, lesson.audioBlob, { binary: true });
+
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+}

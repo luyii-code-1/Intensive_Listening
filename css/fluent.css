@@ -1,9 +1,26 @@
+/* HarmonyOS Sans SC —— 打包子集（约 500KB/字重），离线可用 */
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  src: url('../fonts/HarmonyOSSansSC-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  src: url('../fonts/HarmonyOSSansSC-Bold.woff2') format('woff2');
+  font-weight: 600 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Fluent Design System CSS - Matching Dart Intensive Listening App */
 
 :root {
-  /* ── 字体：WinUI 3 用 Segoe UI Variable；英文听力材料另用衬线 ── */
-  --font-family: 'Segoe UI Variable Text', 'Segoe UI', 'Source Han Sans SC',
-                 -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* ── 字体：HarmonyOS Sans SC（打包子集，离线可用）；英文听力材料另用衬线 ── */
+  --font-family: 'HarmonyOS Sans SC', 'HarmonyOS Sans', 'Source Han Sans SC',
+                 'Segoe UI', -apple-system, BlinkMacSystemFont,
+                 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-en: 'Source Serif 4', 'Source Serif Pro', Georgia, 'Times New Roman',
              'Source Han Sans SC', 'PingFang SC', 'Microsoft YaHei', serif;
 
@@ -215,8 +232,8 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-sm);
   background: transparent;
   border: none;
@@ -293,12 +310,12 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 32px;
-  padding: 4px 11px 5px;
-  font-size: 14px;
+  min-height: 36px;
+  padding: 6px 14px 7px;
+  font-size: 15px;
   font-family: inherit;
   font-weight: 400;
-  line-height: 20px;
+  line-height: 22px;
   border-radius: var(--radius-sm);
   background-color: var(--bg-btn);
   border: 1px solid var(--border-btn);
@@ -355,12 +372,12 @@ body {
 }
 
 .fluent-btn.play-btn {
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  min-height: 44px;
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  min-height: 56px;
   padding: 0;
-  border-radius: var(--radius-md);
+  border-radius: 16px;
 }
 
 .fluent-btn.play-btn:hover {
@@ -375,17 +392,17 @@ body {
 
 /* WinUI 3 Button 小号 —— 24px 高 */
 .fluent-btn.sm {
-  min-height: 24px;
-  padding: 2px 8px 3px;
-  font-size: 12px;
-  line-height: 18px;
+  min-height: 28px;
+  padding: 3px 11px 4px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .fluent-btn.lg {
-  min-height: 40px;
-  padding: 8px 16px 9px;
-  font-size: 16px;
-  line-height: 24px;
+  min-height: 44px;
+  padding: 10px 18px 11px;
+  font-size: 17px;
+  line-height: 26px;
 }
 
 /* 次级描边按钮（列表项动作） */
@@ -547,13 +564,12 @@ body {
 .lesson-row {
   display: flex;
   align-items: center;
-  height: 84px;
+  min-height: 76px;
   background-color: var(--bg-card);
   border: 1px solid var(--border-card);
-  border-radius: var(--radius-md);
-  padding: 0 20px;
-  box-shadow: var(--shadow-card);
-  transition: all var(--trans-fast);
+  border-radius: var(--radius-sm);
+  padding: 12px 18px;
+  transition: background-color var(--trans-fast), border-color var(--trans-fast);
   cursor: pointer;
 }
 
@@ -590,14 +606,10 @@ body {
 .progress-track {
   width: 140px;
   height: 4px;
-  background-color: rgba(0, 0, 0, 0.08);
+  background-color: var(--border-btn-bottom);
   border-radius: 2px;
   overflow: hidden;
   position: relative;
-}
-
-[data-theme="dark"] .progress-track {
-  background-color: rgba(255, 255, 255, 0.12);
 }
 
 .progress-fill {
@@ -675,7 +687,7 @@ body {
 
 .question-title {
   font-family: var(--font-en);
-  font-size: 17.5px;
+  font-size: 19.5px;
   font-weight: 600;
   line-height: 1.62;
   margin-bottom: 14px;
@@ -701,7 +713,7 @@ body {
   cursor: pointer;
   transition: background-color var(--trans-fast), border-color var(--trans-fast), transform var(--trans-fast);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 15.5px;
 }
 
 .option-item:hover {
@@ -715,8 +727,8 @@ body {
 }
 
 .option-radio {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   border: 2px solid var(--text-secondary);
   margin-right: 10px;
@@ -894,8 +906,8 @@ body {
 }
 
 .checkbox-box {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 4px;
   border: 1px solid var(--border-btn-bottom);
   display: inline-flex;
@@ -975,8 +987,8 @@ body {
 }
 
 .strip-item {
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 5px 12px;
+  font-size: 13px;
   border-radius: var(--radius-sm);
   background-color: var(--bg-btn);
   border: 1px solid var(--border-btn);
@@ -1056,14 +1068,14 @@ body {
 }
 
 .card-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
   flex: 1;
 }
 
 .card-badge {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-caption);
 }
 
@@ -1138,9 +1150,9 @@ body {
 
 .cue-time {
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
-  width: 52px;
+  width: 58px;
   flex-shrink: 0;
   margin-top: 3px;
   font-variant-numeric: tabular-nums;
@@ -1149,8 +1161,8 @@ body {
 .cue-text {
   flex: 1;
   font-family: var(--font-en);
-  font-size: 16.5px;
-  line-height: 1.62;
+  font-size: 18px;
+  line-height: 1.66;
   color: var(--text-primary);
   word-break: break-word;
 }
@@ -1197,8 +1209,8 @@ body {
 .transcript-card-header.is-expander {
   display: flex;
   align-items: center;
-  min-height: 48px;
-  padding: 12px 16px;
+  min-height: 52px;
+  padding: 14px 18px;
   background-color: var(--bg-card-header);
   cursor: pointer;
   font-size: 14px;
@@ -1665,7 +1677,7 @@ body {
   z-index: 2000;
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-flyout);
   padding: 6px 10px;
   display: flex;
@@ -1887,11 +1899,16 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  min-height: 44px;
+  font-size: 15px;
   color: var(--text-secondary);
   cursor: pointer;
   border-bottom: 2px solid transparent;
-  transition: all var(--trans-fast);
+  transition: color var(--trans-fast), border-color var(--trans-fast);
+}
+
+.mobile-tab:hover {
+  color: var(--text-primary);
 }
 
 .mobile-tab.active {
@@ -2100,7 +2117,7 @@ body {
 }
 
 .course-title {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   line-height: 1.45;
   color: var(--text-primary);
@@ -2109,13 +2126,13 @@ body {
 }
 
 .course-meta {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-caption);
   font-variant-numeric: tabular-nums;
 }
 
 .question-meta {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-caption);
   margin-bottom: 6px;
 }

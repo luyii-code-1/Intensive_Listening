@@ -1853,7 +1853,7 @@ class IntensiveListeningApp {
 
   reportTelemetryEvent(name, properties = {}) {
     const payload = {
-      app_version: '1.4.1+15',
+      app_version: '1.5.0+16',
       commit_id: 'winui3',
       ...properties,
       timestamp: Date.now()

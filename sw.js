@@ -1,7 +1,7 @@
 // Intensive Listening Web Player - Service Worker
 // Version: 1.0.0 (Offline PWA)
 
-const CACHE_NAME = 'il-pwa-1.4.1+15';
+const CACHE_NAME = 'il-pwa-1.5.0+16';
 
 const PRECACHE_RESOURCES = [
   './',
@@ -9,6 +9,8 @@ const PRECACHE_RESOURCES = [
   './manifest.json',
   './favicon.ico',
   './css/fluent.css',
+  './fonts/HarmonyOSSansSC-Regular.woff2',
+  './fonts/HarmonyOSSansSC-Bold.woff2',
   './js/app.js',
   './js/ilp-parser.js',
   './js/srt-parser.js',

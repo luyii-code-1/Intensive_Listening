@@ -82,8 +82,8 @@
           </svg>
         </button>
 
-        <a href="https://github.com/luyii-code-1/Intensive_Listening/tree/web-edition" target="_blank" rel="noopener" class="app-version-badge" id="app-version-badge" title="版本: 1.4.0+14 (点击查看源码)">
-          <span class="version-text">1.4.0+14</span>
+        <a href="https://github.com/luyii-code-1/Intensive_Listening/tree/web-edition" target="_blank" rel="noopener" class="app-version-badge" id="app-version-badge" title="版本: 1.4.1+15 (点击查看源码)">
+          <span class="version-text">1.4.1+15</span>
           <span class="commit-text">winui3</span>
         </a>
 
@@ -184,6 +184,7 @@
             <div id="question-card" class="fluent-card">
               <div id="no-question-text" class="question-title" style="text-align: center; color: var(--text-secondary); margin: 30px 0;">当前题目未设置</div>
               <div id="question-content" style="display: none;">
+                <div class="question-meta" id="question-meta">当前材料</div>
                 <h3 id="current-question-title" class="question-title"></h3>
                 <div id="question-options" class="question-options"></div>
                 <div class="answer-box">
@@ -196,6 +197,13 @@
 
           <!-- Controls Container (Desktop / In-page) -->
           <div id="desktop-controls" class="controls-container">
+            <!-- 课程信息：对齐桌面端，标题居中 + 时长句数 + 文件信息 -->
+            <div class="course-info">
+              <div id="course-title" class="course-title"></div>
+              <div id="course-meta" class="course-meta tabular-nums"></div>
+              <button id="btn-panel-file-info" class="fluent-btn">文件信息</button>
+            </div>
+
             <!-- Progress Slider -->
             <div class="slider-wrapper">
               <input type="range" id="seek-slider" class="fluent-slider" min="0" max="1000" value="0" step="1">
@@ -207,7 +215,6 @@
 
             <!-- Control Buttons -->
             <div class="controls-row">
-              <button id="btn-prev-question" class="fluent-btn" title="上一题">上一题</button>
               <button id="btn-prev-sentence" class="fluent-btn" title="上一句">上一句</button>
               <button id="btn-play-toggle" class="fluent-btn filled play-btn" title="播放 / 暂停">
                 <svg id="play-icon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
@@ -219,6 +226,9 @@
                 </svg>
               </button>
               <button id="btn-next-sentence" class="fluent-btn" title="下一句">下一句</button>
+            </div>
+            <div class="controls-row controls-row-secondary">
+              <button id="btn-prev-question" class="fluent-btn" title="上一题">上一题</button>
               <button id="btn-next-question" class="fluent-btn" title="下一题">下一题</button>
             </div>
 

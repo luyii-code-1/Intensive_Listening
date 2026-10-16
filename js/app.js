@@ -95,6 +95,10 @@ class IntensiveListeningApp {
       fileInfoModal: document.getElementById('file-info-modal'),
       btnCloseInfoModal: document.getElementById('btn-close-info-modal'),
       btnDownloadIlp: document.getElementById('btn-download-ilp'),
+      btnPanelFileInfo: document.getElementById('btn-panel-file-info'),
+      courseTitle: document.getElementById('course-title'),
+      courseMeta: document.getElementById('course-meta'),
+      questionMeta: document.getElementById('question-meta'),
       deleteModal: document.getElementById('delete-modal'),
       btnCancelDelete: document.getElementById('btn-cancel-delete'),
       btnConfirmDelete: document.getElementById('btn-confirm-delete'),
@@ -341,6 +345,7 @@ class IntensiveListeningApp {
 
     // Modals
     if (this.dom.btnDownloadIlp) this.dom.btnDownloadIlp.addEventListener('click', () => this.downloadCurrentLesson());
+    if (this.dom.btnPanelFileInfo) this.dom.btnPanelFileInfo.addEventListener('click', () => this.showFileInfoModal());
     this.dom.fileInfoBtn.addEventListener('click', () => this.showFileInfoModal());
     this.dom.btnCloseInfoModal.addEventListener('click', () => this.hideFileInfoModal());
 
@@ -723,6 +728,7 @@ class IntensiveListeningApp {
     // Set UI Header & View State
     this.dom.app.setAttribute('data-view', 'player');
     this.dom.appTitle.textContent = lesson.manifest.title;
+    if (this.dom.courseTitle) this.dom.courseTitle.textContent = lesson.manifest.title || '';
     this.dom.appTitle.title = lesson.manifest.title;
     this.dom.backBtn.style.display = 'inline-flex';
     this.dom.fileInfoBtn.style.display = 'inline-flex';
@@ -759,6 +765,11 @@ class IntensiveListeningApp {
     });
 
     // Set mobile tab to question by default
+    if (this.dom.courseMeta) {
+      const dur = SrtParser.formatDuration(this.duration || 0);
+      const n = (this.cues || []).length;
+      this.dom.courseMeta.textContent = (this.duration ? dur + ' · ' : '') + n + ' 句';
+    }
     this.dom.playerView.setAttribute('data-tab', 'question');
     document.querySelectorAll('.mobile-tab').forEach(t => {
       t.classList.toggle('active', t.getAttribute('data-tab') === 'question');
@@ -1096,6 +1107,11 @@ class IntensiveListeningApp {
     this.dom.noQuestionText.style.display = 'none';
     this.dom.questionContent.style.display = 'block';
     this.dom.currentQuestionTitle.textContent = `第 ${currentQ.number} 题  ${currentQ.title}`;
+    {
+      const ex = this.currentLesson && this.currentLesson.manifest ? this.currentLesson.manifest.exercises : null;
+      const mat = ex && currentQ.materialId ? ex.materials.find(m => m.id === currentQ.materialId) : null;
+      this.updateQuestionMeta(mat || null);
+    }
 
     // Options rendering
     this.dom.questionOptions.innerHTML = '';
@@ -1329,6 +1345,14 @@ class IntensiveListeningApp {
 
       this.dom.questionStrip.appendChild(stripBtn);
     });
+  }
+
+  updateQuestionMeta(material) {
+    if (!this.dom.questionMeta) return;
+    if (!material) { this.dom.questionMeta.textContent = '当前材料'; return; }
+    const ex = this.currentLesson && this.currentLesson.manifest ? this.currentLesson.manifest.exercises : null;
+    const count = ex ? ex.questions.filter(q => q.materialId === material.id).length : 0;
+    this.dom.questionMeta.textContent = '当前材料' + (count ? ' · ' + count + ' 题' : '');
   }
 
   renderTranscriptPane() {
@@ -1829,7 +1853,7 @@ class IntensiveListeningApp {
 
   reportTelemetryEvent(name, properties = {}) {
     const payload = {
-      app_version: '1.4.0+14',
+      app_version: '1.4.1+15',
       commit_id: 'winui3',
       ...properties,
       timestamp: Date.now()

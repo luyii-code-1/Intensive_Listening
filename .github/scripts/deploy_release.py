@@ -31,7 +31,7 @@ def main() -> None:
         fcntl.flock(lock, fcntl.LOCK_EX)
         metadata = json.loads(incoming_metadata.read_text(encoding="utf-8"))
         tag = metadata.get("tag")
-        match = re.fullmatch(r"v(2\.[0-9]+\.[0-9]+)(?:-release)?", tag) if isinstance(tag, str) else None
+        match = re.fullmatch(r"v(2\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)(?:-release)?", tag) if isinstance(tag, str) else None
         if not match:
             raise ValueError("Invalid Release tag")
         version = match.group(1)

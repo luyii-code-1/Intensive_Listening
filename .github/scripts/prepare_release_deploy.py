@@ -26,7 +26,7 @@ def main() -> None:
         raise SystemExit("usage: prepare_release_deploy.py RELEASE_JSON WINDOWS_DIR MACOS_DIR OUTPUT_JSON")
     release = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     tag = release["tag_name"]
-    match = re.fullmatch(r"v(2\.[0-9]+\.[0-9]+)(?:-release)?", tag)
+    match = re.fullmatch(r"v(2\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)(?:-release)?", tag)
     if release.get("draft") or release.get("prerelease") or not match:
         raise ValueError("Expected a published stable 2.x Release")
 

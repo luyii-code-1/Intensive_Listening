@@ -41,13 +41,16 @@ Web 播放器是**独立于桌面版的版本系列**（桌面版 `2.x.y`，播�
 - **`web.json`**：官网侧的中间文件，记录 `{"webPlayer": "1.5.0+16"}`，由 `scripts/sync-web-version.mjs` 从 `sw.js` 生成，`build.mjs` 读它替换 `__WEB_VERSION__`。取不到时页面显示「未知」，而不是一个可能错误的旧版本号。
 - **构建号递增**：`scripts/bump-web-version.mjs` 只递增 `+N`，不动 `1.x.y` 主版本——主版本由人决定。发版 CI 会调用它并推送 `web-edition`，触发该站自动重建。
 
-版本号一共出现在四处，bump 脚本会一次改全（漏改任一都会错配）：
+版本号一共出现在五处，bump 脚本会一次改全（漏改任一都会错配）：
 
 | 位置 | 内容 |
 | --- | --- |
 | `sw.js` | `CACHE_NAME = 'il-pwa-1.5.0+17'` |
 | `index.html` | `<span class="version-text">` 与 `title="版本: …"` |
+| `index.html` | `<span class="commit-text">`（构建来源提交的短 SHA） |
 | `js/app.js` | `app_version: '1.5.0+17'` |
+
+**为什么必须同批改**：`web-edition` 的 `sw.js` 把 `PRECACHE_RESOURCES` 列为预缓存，取用是 **cache-first**（`caches.match(request)` 命中即返回），旧缓存只在 `activate` 里按 `CACHE_NAME` 清理。所以产物变了而 `CACHE_NAME` 没变，**用户会一直拿旧副本**。构建号递增的触发条件也因此对齐预缓存清单（见 `web-edition` 分支的 `bump-version.yml`），而不是对齐「像代码的文件」。
 
 ## 下载按钮的境内加速
 

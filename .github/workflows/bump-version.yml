@@ -1,0 +1,106 @@
+name: Bump player version and sync the site
+
+# Web 播放器（本分支）的版本串维护，以及官网 PWA 版本同步。
+#
+# 为什么挂在 push 而不是 Release：播放器改动大多是改一行 CSS，未必伴随桌面版发版；
+# 挂在 Release 上会让这些改动不 bump 构建号 → CACHE_NAME 不变 → 资源是 cache-first
+# 取用的（PRECACHE_RESOURCES 命中即返回，旧缓存只在 activate 按 CACHE_NAME 清理）
+# → 用户一直拿旧代码。反过来，只改桌面端时挂 Release 又会白白 bump。
+#
+# 为什么不会自我循环：GitHub 不会为「用仓库自带 GITHUB_TOKEN 推送」产生的
+# push 事件启动工作流，所以本工作流的 bump 提交不会再次触发自己。
+# 下面的 `if` 是第二道保险，防止手工用别的凭据推了 bump 提交时重复 bump。
+on:
+  push:
+    branches: [web-edition]
+    paths:
+      - 'js/**'
+      - 'css/**'
+      - 'index.html'
+      - 'sw.js'
+      - 'manifest.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 与 release-metadata.yml 共用同一组：两者都会推 website 分支，串行避免竞争。
+concurrency:
+  group: website-release-metadata
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # 折叠块标量：表达式里含 `: `，写成单行会被 YAML 误判为映射。
+    if: >-
+      github.event_name != 'push' ||
+      !contains(github.event.head_commit.message, 'chore(release): Bump version to')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out the website branch for the bump script
+        uses: actions/checkout@v7
+        with:
+          ref: website
+          path: site-tools
+          token: ${{ github.token }}
+
+      - name: Check out the player branch
+        uses: actions/checkout@v7
+        with:
+          path: player
+          # fetch-depth: 0 让 bump 提交能安全地 rebase 到最新 HEAD 之上。
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Bump the build number
+        id: bump
+        run: |
+          set -euo pipefail
+          before="$(node site-tools/scripts/bump-web-version.mjs --print-version player)"
+          node site-tools/scripts/bump-web-version.mjs player "$GITHUB_SHA"
+          after="$(node site-tools/scripts/bump-web-version.mjs --print-version player)"
+          if [[ "$before" == "$after" ]]; then
+            echo '::error::版本号没有变化，检查 bump-web-version.mjs 的改写规则。'
+            exit 1
+          fi
+          echo "version=$after" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push the bump
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        working-directory: player
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::notice::版本号已是 $VERSION，无需提交。"
+            exit 0
+          fi
+          git commit -m "chore(release): Bump version to $VERSION ($GITHUB_SHA)"
+          # 工作流运行期间该分支可能又有新提交，先 rebase 再推，避免非快进被拒。
+          git pull --rebase origin web-edition
+          git push origin HEAD:web-edition
+
+      # 官网构建时读 web.json 显示 PWA 版本，因此这里同步它，顺带触发官网重建。
+      - name: Sync the version onto the website
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd site-tools
+          node scripts/sync-web-version.mjs ../player .
+          if git diff --quiet -- web.json; then
+            echo "::notice::官网 web.json 已是 $VERSION。"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web.json
+          git commit -m "site: track the Web player version at $VERSION"
+          git pull --rebase origin website
+          git push origin HEAD:website

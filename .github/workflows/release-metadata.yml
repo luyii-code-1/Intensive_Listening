@@ -1,7 +1,10 @@
 name: Publish website release metadata
 
-# 发版后把 Release 元数据写进 website 分支的 downloads/latest.json，并同步
+# 发版后把桌面版 Release 元数据写进 website 分支的 downloads/latest.json，并同步
 # release.js 的兜底版本号。website 分支的 EdgeOne 自动构建随即重新部署。
+#
+# 只管桌面版版本。Web 播放器（web-edition）是独立版本线，由该分支上的
+# bump-version.yml 负责——它的改动未必伴随桌面版发版，挂在 Release 上会漏 bump。
 #
 # 必须位于本仓库（student_app）的默认分支 main：release 事件只运行默认分支上的
 # 工作流，放在 website 分支上永远不会触发。步骤里检出的是 website 分支——两个
@@ -19,6 +22,7 @@ on:
 permissions:
   contents: write
 
+# 与 web-edition 的 bump-version.yml 共用同一组：两者都会推 website 分支。
 concurrency:
   group: website-release-metadata
   cancel-in-progress: false
@@ -73,10 +77,13 @@ jobs:
           npm test
           npm run build
           grep -q "$TAG" dist/downloads/latest.json
-          if grep -q '__VERSION__' dist/index.html; then
-            echo '::error::index.html 里仍有未替换的 __VERSION__ 占位符。'
-            exit 1
-          fi
+          # __WEB_VERSION__ 由已提交的 web.json 提供，不属于本工作流，但残留即构建出错。
+          for placeholder in __VERSION__ __WEB_VERSION__; do
+            if grep -q "$placeholder" dist/index.html; then
+              echo "::error::index.html 里仍有未替换的 $placeholder 占位符。"
+              exit 1
+            fi
+          done
 
       - name: Commit and push
         if: steps.resolve.outputs.changed == 'true'

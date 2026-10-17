@@ -1,0 +1,166 @@
+name: Bump player version and sync the site
+
+# Web 播放器（本分支）的版本串维护，以及官网 PWA 版本同步。
+#
+# 为什么挂在 push 而不是 Release：播放器改动大多是改一行 CSS，未必伴随桌面版发版；
+# 挂在 Release 上会让这些改动不 bump 构建号 → CACHE_NAME 不变 → 资源是 cache-first
+# 取用的（PRECACHE_RESOURCES 命中即返回，旧缓存只在 activate 按 CACHE_NAME 清理）
+# → 用户一直拿旧代码。反过来，只改桌面端时挂 Release 又会白白 bump。
+#
+# 为什么不会自我循环：GitHub 不会为「用仓库自带 GITHUB_TOKEN 推送」产生的
+# push 事件启动工作流，所以本工作流的 bump 提交不会再次触发自己。
+# 下面的 `if` 是第二道保险，防止手工用别的凭据推了 bump 提交时重复 bump。
+#
+# paths 的对齐准则：**跟着 sw.js 的 PRECACHE_RESOURCES 走，不是跟着「感觉像
+# 代码的文件」走**。凡在预缓存清单里的产物，改了而不 bump 都会让用户卡在旧副本。
+# 当前的预缓存产物为：
+#   /、index.html、manifest.json、favicon.ico、css/fluent.css、fonts/*.woff2、
+#   js/*.js、lib/jszip.min.js、sample.ilp、icons/*
+# 下面逐条覆盖（根路径与 index.html 同项）。新增预缓存资源时，这里要同步加。
+# 不放进 paths 的同类项：只有 README/文档，改了不影响产物。
+on:
+  push:
+    branches: [web-edition]
+    paths:
+      - 'js/**'
+      - 'css/**'
+      - 'fonts/**'
+      - 'icons/**'
+      - 'lib/**'
+      - 'sample.ilp'
+      - 'favicon.ico'
+      - 'index.html'
+      - 'sw.js'
+      - 'manifest.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 与 release-metadata.yml 共用同一组：两者都会推 website 分支，串行避免竞争。
+concurrency:
+  group: website-release-metadata
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # 折叠块标量：表达式里含 `: `，写成单行会被 YAML 误判为映射。
+    if: >-
+      github.event_name != 'push' ||
+      !contains(github.event.head_commit.message, 'chore(release): Bump version to')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out the website branch for the bump script
+        uses: actions/checkout@v7
+        with:
+          ref: website
+          path: site-tools
+          token: ${{ github.token }}
+
+      - name: Check out the player branch
+        uses: actions/checkout@v7
+        with:
+          path: player
+          # fetch-depth: 0 让 bump 提交能安全地 rebase 到最新 HEAD 之上。
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      # commit-text 的语义（已逐一核对历史）：
+      #
+      #   它写的是「产出该版本的构建所**基于**的提交」——即被 bump 掉的那次产物改动，
+      #   而不是 bump 提交自身（那只是 chore(release) 空转，不引入任何产物变化）。
+      #   等价判据：commit-text == bump 提交的父提交。
+      #
+      # 历次 Bump version 提交全部符合：1.0.1+8/274b776→6d0f5ac、
+      # 1.0.1+9/25f9062→274b776、64b1338→25f9062、1.1.0+10/9049c8a→64b1338。
+      # 历史上的 bump 提交信息也把父提交写在括号里，与本处格式一致。
+      #
+      # 反例（不是准则，勿照抄）：1.2.1+12 起 commit-text 退化为手写占位 winui3，
+      # 一直继承到 1.5.0+16；1.5.0+16 本身也不是 bump 提交，而是功能提交自写版本号。
+      #
+      # 循环保证 base 恒等于 bump 提交的父提交：每轮都重新 fetch+rebase、重取 base、
+      # 按新 base 重写 commit-text 后再推。「推送瞬间远端又前进」因此在本轮内收敛，
+      # 而不是失败后等下一次触发（那样会多消耗一次构建）。
+      #
+      # 重复 bump 由「远端最新的 bump 提交是否已针对**触发本次运行的提交**」判断
+      # （即 github.sha，被推的那个头提交）。两条错误判据，都已实测排除：
+      #
+      #   1. **不能用「bump 前后版本号是否相等」**：脚本不幂等，每跑一次就 +1，
+      #      重跑时 before=1.5.0+17、after=1.5.0+18，永远不等，拦不住重复 bump。
+      #   2. **不能拿 `rev-parse HEAD` 与提交信息里的 base 比对**：前者是 bump 提交
+      #      自身、后者是它的父提交，两者本就差一层、恒不相等，所以**该跳过时不跳过**
+      #      （等于没有保护）。实测：rev-parse HEAD=3fbf902、括号里=46ff119、
+      #      而触发提交=46ff119——只有与触发提交比对才相等。
+      - name: Bump and push the version
+        id: push
+        env:
+          # 触发本次运行的提交（push 事件即被推的头提交）。用于判断本次是否已被 bump 过。
+          TRIGGER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cd player
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for attempt in 1 2 3; do
+            # 清场：上一轮若在 commit 前失败会留下脏工作区，rebase 会直接拒绝。
+            # 实测 `git rebase` 遇未提交改动报 "cannot rebase: You have unstaged changes."
+            git reset --hard
+            git fetch --quiet origin web-edition
+            git rebase origin/web-edition
+            base="$(git rev-parse HEAD)"
+            before="$(node ../site-tools/scripts/bump-web-version.mjs --print-version .)"
+
+            # 重复 bump 判据：远端最新提交若是「为本次触发提交所做的 bump」，说明并发
+            # 运行（或重跑）已经做过。**不能用「bump 前后版本号是否相等」**——实测那恒
+            # 不成立：脚本每跑一次就 +1，重跑时 before=1.5.0+17、after=1.5.0+18。
+            # 提交信息括号里记的就是当时的 base（即那次 bump 的父提交）。
+            last="$(git log -1 --format=%s origin/web-edition)"
+            last_base="$(printf '%s' "$last" | sed -n 's/.*(\([0-9a-f]\{7,\}\)).*/\1/p')"
+            if [[ -n "$last_base" && "$TRIGGER" == "$last_base"* ]]; then
+              echo "::notice::$TRIGGER 已 bump 过（$last），跳过以免重复递增。"
+              echo "version=$before" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            # 按当前 base 重写五处版本串（含 commit-text）；--print-version 只读。
+            node ../site-tools/scripts/bump-web-version.mjs . "$base"
+            version="$(node ../site-tools/scripts/bump-web-version.mjs --print-version .)"
+            git add -A
+            if git diff --cached --quiet; then
+              echo "::notice::版本号已是 $version，无需提交。"
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git commit -m "chore(release): Bump version to $version ($base)"
+            if git push origin HEAD:web-edition; then
+              echo "已推送 $before -> $version @ $base"
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::第 $attempt 次推送被拒（远端已前进），重新同步后重试。"
+            git reset --hard "$base"
+          done
+          echo '::error::连续三次推送被拒，web-edition 可能正被高频推送。'
+          exit 1
+
+      # 官网构建时读 web.json 显示 PWA 版本，因此这里同步它，顺带触发官网重建。
+      - name: Sync the version onto the website
+        env:
+          VERSION: ${{ steps.push.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd site-tools
+          node scripts/sync-web-version.mjs ../player .
+          if git diff --quiet -- web.json; then
+            echo "::notice::官网 web.json 已是 $VERSION。"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web.json
+          git commit -m "site: track the Web player version at $VERSION"
+          git pull --rebase origin website
+          git push origin HEAD:website

@@ -1,0 +1,20 @@
+{
+  "tag": "v2.1.0",
+  "name": "Intensive Listening 2 Resonance · 2.1.0",
+  "assets": {
+    "windows": {
+      "filename": "Intensive-Listening-2.1.0-win-x64-Setup.exe",
+      "path": "downloads/Intensive-Listening-2.1.0-win-x64-Setup.exe",
+      "size": 154540989,
+      "sha256": "3c5db26d8d24c4d424fa1e913bb3698b2a012676f4ee63217d06fd63e8107b86",
+      "source": "https://github.com/luyii-code-1/Intensive_Listening/releases/download/v2.1.0/Intensive-Listening-2.1.0-win-x64-Setup.exe"
+    },
+    "macos": {
+      "filename": "Intensive-Listening-2.1.0-osx-arm64.dmg",
+      "path": "downloads/Intensive-Listening-2.1.0-osx-arm64.dmg",
+      "size": 123101025,
+      "sha256": "849d556da6f89e2ab4a3517a01437458695b89880f744c04833a108b64bad0e1",
+      "source": "https://github.com/luyii-code-1/Intensive_Listening/releases/download/v2.1.0/Intensive-Listening-2.1.0-osx-arm64.dmg"
+    }
+  }
+}

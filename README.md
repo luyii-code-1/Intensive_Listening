@@ -4,8 +4,36 @@
 
 - 站点入口 `index.html`，教程 `guide.html`
 - 样式 `styles.css`，视觉语言「考卷与红笔」，与 Web 播放器同源
-- `release.js` 在 `downloads/latest.json` 存在时把下载链接切到本站镜像；不存在则回退 GitHub Release 直链，无需配置
+- `release.js` 按 `downloads/latest.json`（发版 CI 写入）切换下载按钮与版本显示，无需手工改版本
+- 下载按钮默认走境内加速节点（见下），节点不可用时回退 GitHub Release 直链
 - `assets/` 品牌标识、界面标本与教程配图
+
+## 版本号与发版联动
+
+版本号只有一个来源：`downloads/latest.json` 的 `tag`。发版后由 `student_app` 侧的 `.github/workflows/release-metadata.yml` 写入，随后 `website` 分支的 EdgeOne 自动构建重新部署站点。
+
+数据流：
+
+```text
+GitHub Release published
+  └─ student_app/.github/workflows/release-metadata.yml
+     （必须放在该仓库的默认分支 main 上，release 事件只运行默认分支的工作流）
+       ├─ 校验 tag 是最新稳定版 v2.x，取 Release 元数据
+       ├─ node scripts/publish-release.mjs release.json .
+       │    ├─ 写 downloads/latest.json（附件名/size/sha256/Release 来源）
+       │    └─ 重写 release.js 的 DEFAULT_TAG
+       └─ npm test && npm run build 后 push 到 website 分支
+            └─ EdgeOne 自动构建
+                 └─ node scripts/build.mjs 用 tag 替换 index.html/guide.html 的 __VERSION__
+```
+
+因此改版本号只需一处：发一次 Release，其余自动跟随。
+
+- **`__VERSION__` 占位符**：写在 `index.html` / `guide.html` 的源码里的版本位置，构建时替换为不带 `v` 的版本号。`tests/publish-release.test.mjs` 与 CI 都会检查产物里没有残留占位符。
+- **`DEFAULT_TAG`**：`release.js` 里的兜底版本号，仅当 `latest.json` 缺失或不可用时使用。由 CI 同步重写，正常情况无需手工维护。
+- 若 Release 不是当前最新稳定版（回填旧版），工作流会跳过，避免 `release.js` 的「最新版」语义被破坏。
+
+## 下载按钮的境内加速
 
 配套分支：
 
@@ -15,6 +43,26 @@
 | `web-edition` | 浏览器精听播放器（PWA） | `web.il.luyii.cn` |
 
 设计说明见工作区 `PWAedition/DESIGN.md` 与 `PWAedition/ACCEPTANCE.md`。
+
+## 下载按钮的境内加速
+
+`release.js` 按 `downloads/latest.json` 里的 `assets.*.source` 构造下载地址，并逐个探测 `MIRRORS` 中的加速节点：对候选地址发 `HEAD`，返回 2xx 才采用，全部失败则回退 GitHub 直链。因此**加速节点只影响下载速度，不影响安装包来源**——最终取到的仍是同一份 Release 附件。
+
+节点收录条件：就同一个 Release 附件回传 `Access-Control-Allow-Origin`（否则浏览器 `HEAD` 探测必然失败，节点永远不会被选中）。当前顺序为 `gh-proxy.org` → `v4.gh-proxy.org` → `gh-proxy.com`；`ghproxy.net` 因不回传 CORS 头而未收录。
+
+2026-10-17 本机 4 MB Range 实测（单机数据，不代表用户端）：
+
+| 节点 | 速度 |
+| --- | --- |
+| `gh-proxy.org` | 113–282 KB/s，3/3 完成 |
+| `gh-proxy.com` | 13–41 KB/s，多次超时 |
+| `v4.gh-proxy.org` | 25–28 KB/s，3/3 超时 |
+| `ghproxy.net` | 9.7 KB/s，超时；且无 CORS 头 |
+| GitHub 直链（对照） | 27 KB/s，超时 |
+
+2026-10-17 验证：走 `gh-proxy.org` 完整下载 Windows 包 154540989 字节，**SHA-256 与 GitHub Release 公布值一致**，确认加速节点回传的确实是原包（耗时 852 秒，181 KB/s）。该次验证的元数据随后作为 `downloads/latest.json` 的初值提交，因此线上不再依赖硬编码版本号。
+
+`tests/download-links.test.mjs` 覆盖节点选择、逐个回退、全失败回退直链、元数据缺失/损坏时退回 `DEFAULT_TAG`，以及元数据被篡改成非 Release 域名时不动按钮。
 
 ## EdgeOne 同域下载代理验证
 

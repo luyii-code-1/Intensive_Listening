@@ -472,6 +472,12 @@ code {
   font-variant-numeric: tabular-nums;
 }
 
+.download-meta a { color: var(--il-brand); text-decoration: underline; }
+.download-actions .download-mirror-note {
+  margin: -10px 0 20px;
+  line-height: 1.6;
+}
+
 .web-player-box {
   border-top: 1px solid var(--il-rule);
   padding-top: 18px;

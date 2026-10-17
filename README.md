@@ -47,10 +47,21 @@ Web 播放器是**独立于桌面版的版本系列**（桌面版 `2.x.y`，播�
 | --- | --- |
 | `sw.js` | `CACHE_NAME = 'il-pwa-1.5.0+17'` |
 | `index.html` | `<span class="version-text">` 与 `title="版本: …"` |
-| `index.html` | `<span class="commit-text">`（构建来源提交的短 SHA） |
+| `index.html` | `<span class="commit-text">`（见下：语义为「产出该版本的构建所基于的提交」） |
 | `js/app.js` | `app_version: '1.5.0+17'` |
 
 **为什么必须同批改**：`web-edition` 的 `sw.js` 把 `PRECACHE_RESOURCES` 列为预缓存，取用是 **cache-first**（`caches.match(request)` 命中即返回），旧缓存只在 `activate` 里按 `CACHE_NAME` 清理。所以产物变了而 `CACHE_NAME` 没变，**用户会一直拿旧副本**。构建号递增的触发条件也因此对齐预缓存清单（见 `web-edition` 分支的 `bump-version.yml`），而不是对齐「像代码的文件」。
+
+**`commit-text` 的语义**：它写的是「产出该版本的构建所**基于**的提交」——即被 bump 掉的那次产物改动，**不是** bump 提交自身（那只是 `chore(release)` 空转，不引入任何产物变化）。
+
+依据是历史配对，`commit-text` 恒等于 bump 提交的**父提交**：
+
+| 版本 | `commit-text` | bump 提交 | 父提交 |
+| --- | --- | --- | --- |
+| `1.0.1+9` | `25f9062` | `64b1338` | `25f9062` |
+| `1.2.1+12` | `9236223` | `4167c8b` | `9236223` |
+
+历史上的 bump 提交信息也写成 `Bump version to <版本> (<父提交>)`，与此一致。CI 用 `$GITHUB_SHA` 实现是正确的：触发工作流的 push 提交就是那次产物改动，也就是 bump 提交的父提交。
 
 ## 下载按钮的境内加速
 

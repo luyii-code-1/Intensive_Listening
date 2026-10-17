@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nextVersion, bumpSource, readVersion } from '../scripts/bump-web-version.mjs';
+import { nextVersion, bumpSource, stampCommit, readVersion, readCommit } from '../scripts/bump-web-version.mjs';
 
 const SW = "// Version: 1.0.0 (Offline PWA)\nconst CACHE_NAME = 'il-pwa-1.5.0+16';\n";
 const HTML = [
   '<a class="app-version-badge" title="版本: 1.5.0+16 (点击查看源码)">',
   '  <span class="version-text">1.5.0+16</span>',
+  '  <span class="commit-text">winui3</span>',
+  '</a>',
 ].join('\n');
 const APP = "      app_version: '1.5.0+16',\n";
 
@@ -47,4 +49,26 @@ test('readVersion round-trips with bumpSource output', () => {
   const bumped = bumpSource(SW, 'sw.js', '17');
   assert.equal(readVersion(bumped), '1.5.0+17');
   assert.throws(() => readVersion("const CACHE_NAME = 'il-pwa';"), /找不到 CACHE_NAME/);
+});
+
+// 提交标识与版本号并排显示，历史上填过短哈希，后来成了手写的 winui3 占位。
+test('stampCommit writes the short SHA over the placeholder', () => {
+  const stamped = stampCommit(HTML, 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2');
+  assert.equal(readCommit(stamped), 'a1b2c3d');
+  assert.match(stamped, /<span class="commit-text">a1b2c3d<\/span>/);
+  assert.match(stamped, /<span class="version-text">1\.5\.0\+16<\/span>/, '不动版本串');
+});
+
+test('stampCommit keeps the existing value when no commit is given', () => {
+  assert.equal(stampCommit(HTML, undefined), HTML);
+  assert.equal(stampCommit(HTML, ''), HTML);
+});
+
+test('stampCommit rejects values that are not a git SHA', () => {
+  assert.throws(() => stampCommit(HTML, 'winui3'), /无法识别的提交标识/);
+  assert.throws(() => stampCommit(HTML, 'a1b2c3d <script>'), /无法识别的提交标识/);
+});
+
+test('readCommit fails loudly when the badge is missing', () => {
+  assert.throws(() => readCommit('<a class="app-version-badge"></a>'), /找不到 <span class="commit-text">/);
 });

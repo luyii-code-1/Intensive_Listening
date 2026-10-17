@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.VisualTree;
 using IL.App.Views.Dialogs;
+using IL.Core.Infrastructure;
 
 namespace IL.App.Views;
 
@@ -35,6 +36,11 @@ internal sealed class SpringListCollection<T>(Control owner, IList<T> items, Fun
             else
             {
                 if (!row.Wanted) { row.Wanted = true; row.ExitVersion++; _ = row.Motion.To(response: .28); }
+                else if (!row.Entering && !row.Motion.IsRunning && row.Frame.Opacity < .999)
+                {
+                    AppLog.Operation("list", $"恢复中断的行动画 key={key} opacity={row.Frame.Opacity}");
+                    _ = row.Motion.To(response: .28);
+                }
                 if (!ReferenceEquals(row.Frame.Child, content)) row.Frame.Child = content;
             }
             row.Container.IsHitTestVisible = true; desired.Add(row.Container);
@@ -52,6 +58,7 @@ internal sealed class SpringListCollection<T>(Control owner, IList<T> items, Fun
             _ = RemoveAsync(row);
         }
         ArrangeMotion();
+        AppLog.Debug($"列表更新 owner={owner.GetType().Name} keys={string.Join(',', keys)} rows={items.Count} outgoing={outgoing.Length}");
     }
     private void CapturePositions()
     {
@@ -72,7 +79,12 @@ internal sealed class SpringListCollection<T>(Control owner, IList<T> items, Fun
             owner.LayoutUpdated -= _arranged; _arranged = null;
             foreach (var row in _rows.Values)
             {
-                if (!row.Container.IsAttachedToVisualTree() || row.Container.Bounds.Height <= 0) { row.Entering = false; continue; }
+                if (!row.Container.IsAttachedToVisualTree() || row.Container.Bounds.Height <= 0)
+                {
+                    if (row.Wanted) row.Motion.Set();
+                    AppLog.Operation("list", $"布局尚未就绪，恢复行可见 key={row.Container.Tag} height={row.Container.Bounds.Height} wanted={row.Wanted}");
+                    row.Entering = false; continue;
+                }
                 if (row.Entering && row.Wanted)
                 {
                     row.Motion.Set(0, y: FirstRunWizard.MotionReduced() ? 0 : 8, scale: FirstRunWizard.MotionReduced() ? 1 : .985);

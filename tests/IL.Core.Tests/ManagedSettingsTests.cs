@@ -9,6 +9,18 @@ namespace IL.Core.Tests;
 public sealed class ManagedSettingsTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void StartupPreferenceRemainsPersonalAcrossManagedSettings(bool preference)
+    {
+        var personal = AppSettings.Defaults() with { StartAtLogin = preference };
+        var restored = AppSettings.FromJson(personal.ToJson());
+        Assert.Equal(preference, restored.StartAtLogin);
+        Assert.DoesNotContain("startAtLogin", ManagedPolicy.SettingNames);
+        var effective = new ManagedPolicy { LockAllSettings = true }.Apply(restored);
+        Assert.Equal(preference, effective.StartAtLogin);
+    }
+    [Theory]
     [InlineData(false, false, 6)]
     [InlineData(true, false, 5)]
     [InlineData(false, true, 1)]

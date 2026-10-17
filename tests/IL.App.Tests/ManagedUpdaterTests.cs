@@ -30,14 +30,69 @@ public sealed class ManagedUpdaterTests : IDisposable
     public void Dispose() { _key.Dispose(); if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 
     [Fact]
-    public async Task ColdSameVersionWaitsForClickAndNotifiesOnceAcrossRestarts()
+    public async Task ReplacementDuringDownloadCancelsOldWorkAndProcessesLatestPush()
+    {
+        var old = Offer(); var latest = Offer("cold", "2.1.2"); _policy = new() { Update = old };
+        var entered = new TaskCompletionSource(); var cancelled = false; var downloads = new List<string>();
+        using var client = Create(async (update, ct) =>
+        {
+            downloads.Add(update.Id);
+            if (update.Id == old.Id)
+            {
+                entered.TrySetResult();
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+                catch (OperationCanceledException) { cancelled = true; throw; }
+            }
+            return "verified.exe";
+        });
+        var refreshing = client.RefreshAsync(); await entered.Task;
+        _policy = new() { Update = latest };
+        var pushed = client.RefreshAsync();
+        await Task.WhenAll(refreshing, pushed).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(cancelled); Assert.Equal(new[] { old.Id, latest.Id }, downloads);
+        Assert.Equal(latest.Id, client.UpdateId); Assert.True(client.CanInstall);
+    }
+    [Fact]
+    public async Task AutomaticFailureDoesNotLoseAReplacementWaitingInTheQueue()
+    {
+        _policy = new() { Update = Offer("ota") };
+        var entered = new TaskCompletionSource(); var release = new TaskCompletionSource();
+        using var client = Create();
+        client.AutomaticInstall = async () => { entered.TrySetResult(); await release.Task; throw new InvalidOperationException("dialog failed"); };
+        var refreshing = client.RefreshAsync(); await entered.Task;
+        var latest = Offer("cold", "2.1.2"); _policy = new() { Update = latest };
+        var replacement = client.RefreshAsync(); release.TrySetResult();
+        await Task.WhenAll(refreshing, replacement).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(latest.Id, client.UpdateId); Assert.True(client.CanInstall);
+    }
+    [Fact]
+    public async Task SignatureFailureIsReportedToTheTaskInsteadOfStayingUnreceived()
+    {
+        var task = Offer() with { Signature = Convert.ToBase64String(new byte[256]) };
+        _policy = new() { Update = task };
+        var feedback = new List<(string Id, string Status, string Message)>();
+        var config = new MdnConfiguration { ServerUrl = "http://127.0.0.1:9/", DisableSsl = true, UpdatePublicKey = Convert.ToBase64String(_key.ExportSubjectPublicKeyInfo()) };
+        using var client = new ManagedUpdater(() => _policy, () => config, _ => null, _root, "2.0.1", feedback: (update, status, message, _) =>
+        { feedback.Add((update.Id, status, message)); return Task.CompletedTask; });
+        await client.RefreshAsync();
+        Assert.Contains(feedback, item => item.Id == task.Id && item.Status == "failed" && item.Message.Contains("签名"));
+        Assert.False(client.HasUpdate);
+    }
+    [Theory]
+    [InlineData("2.1.2.0", "2.1.2", true)]
+    [InlineData("2.1.2", "2.1.2.0", true)]
+    [InlineData("2.1.2", "2.1.1.9", false)]
+    public void VersionComparisonTreatsMissingRevisionAsZero(string installed, string offered, bool allowed)
+        => Assert.Equal(allowed, ManagedUpdateJournal.AllowsVersion(installed, offered));
+    [Fact]
+    public async Task ColdSameVersionDownloadsBeforeNoticeAndWaitsForClickToInstall()
     {
         _policy = new() { Update = Offer() };
         using (var client = Create())
         {
             var notices = 0; client.NotificationRequested += _ => notices++;
             await client.RefreshAsync(); await client.RefreshAsync();
-            Assert.Equal(1, notices); Assert.Equal(0, _downloads); Assert.True(client.CanUpdate); Assert.False(client.CanInstall);
+            Assert.Equal(1, notices); Assert.Equal(1, _downloads); Assert.True(client.CanUpdate); Assert.True(client.CanInstall);
             Assert.True(await client.PrepareAsync()); Assert.Equal(1, _downloads); Assert.True(client.CanInstall);
         }
         using var restarted = Create(); var repeated = 0; restarted.NotificationRequested += _ => repeated++;
@@ -101,14 +156,27 @@ public sealed class ManagedUpdaterTests : IDisposable
         var entered = new TaskCompletionSource(); var release = new TaskCompletionSource();
         using (var client = Create(async (_, ct) => { entered.SetResult(); await release.Task.WaitAsync(ct); return "unused.exe"; }))
         {
-            await client.RefreshAsync(); var preparing = client.PrepareAsync(); await entered.Task;
+            var preparing = client.RefreshAsync(); await entered.Task;
             Assert.True(client.IsBusy); Assert.False(client.CanUpdate);
-            _policy = new(); release.SetResult(); Assert.False(await preparing); Assert.False(client.CanInstall);
+            _policy = new(); release.SetResult(); await preparing; Assert.False(client.CanInstall);
         }
         _policy = new() { Update = Offer() }; var calls = 0;
         using var retry = Create((_, _) => ++calls == 1 ? Task.FromException<string>(new IOException()) : Task.FromResult("verified.exe"));
-        await retry.RefreshAsync(); Assert.False(await retry.PrepareAsync());
-        await retry.RefreshAsync(); Assert.Contains("失败", retry.Status); Assert.True(retry.CanUpdate);
+        await retry.RefreshAsync(); Assert.Contains("失败", retry.Status); Assert.Equal(1, calls);
+        await retry.RefreshAsync(); Assert.True(retry.CanUpdate);
         Assert.True(await retry.PrepareAsync()); Assert.True(retry.CanInstall);
+    }
+
+    [Fact]
+    public async Task OtaHasNoSystemNoticeAndCanBeDeferredUntilWindowClose()
+    {
+        _policy = new() { Update = Offer("ota") };
+        using var client = Create(); var notices = 0;
+        client.NotificationRequested += _ => notices++;
+        client.AutomaticInstall = () => { client.DeferUntilClose(); return Task.CompletedTask; };
+        await client.RefreshAsync();
+        Assert.Equal(0, notices); Assert.True(client.CanInstallDeferred);
+        Assert.False(client.ReopenAfterUpdate); Assert.False(client.CanUpdate);
+        _policy = new(); await client.RefreshAsync(); Assert.False(client.CanInstallDeferred);
     }
 }

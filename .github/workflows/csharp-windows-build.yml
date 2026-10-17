@@ -26,9 +26,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: IL2-win-x64
-          path: |
-            artifacts/build/IL2-win-x64.zip
-            artifacts/build/IL2-win-x64.zip.sha256
+          path: artifacts/build/IL2-win-x64/
           if-no-files-found: error
   build:
     needs: portable-build
@@ -44,13 +42,10 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: IL2-win-x64
-          path: artifacts/build
+          path: artifacts/build/runtime
       - name: Verify Windows runtime
         shell: pwsh
         run: |
-          $expected = ((Get-Content artifacts/build/IL2-win-x64.zip.sha256 -Raw).Trim() -split ' ')[0]
-          if ((Get-FileHash artifacts/build/IL2-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Runtime archive checksum mismatch.' }
-          Expand-Archive artifacts/build/IL2-win-x64.zip artifacts/build/runtime
           $runtime = (Resolve-Path artifacts/build/runtime).Path
           ./scripts/validate-csharp-windows.ps1 -RuntimeDirectory $runtime -ReportDirectory artifacts/verification
           $report = (Join-Path (Resolve-Path artifacts/verification).Path 'instance.json')
@@ -58,7 +53,7 @@ jobs:
           if ($process.ExitCode -ne 0) { throw 'Windows single-instance verification failed.' }
           $identity = Get-Content artifacts/verification/runtime.json -Raw | ConvertFrom-Json
           $commit = (git rev-parse --short=7 HEAD).Trim()
-          if ($identity.build -ne $commit -or $identity.version -ne '2.1.0') { throw 'Release build identity mismatch.' }
+          if ($identity.build -ne $commit -or $identity.version -ne '2.1.2.3') { throw 'Release build identity mismatch.' }
       - name: Package installer
         shell: pwsh
         run: |

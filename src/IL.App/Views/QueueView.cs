@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Input.Platform;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -9,7 +10,7 @@ using IL.Core.Transcription;
 
 namespace IL.App.Views;
 
-public sealed class QueueView : UserControl
+public sealed class QueueView : UserControl, IDisposable
 {
     private readonly TranscriptionQueue _queue;
     private readonly Func<TranscriptionJob, Task> _loadSrt;
@@ -18,7 +19,7 @@ public sealed class QueueView : UserControl
     private readonly SpringListCollection<Control> _rows;
     private readonly StackPanel _content = new() { Spacing = 10 };
     private readonly DispatcherTimer _refresh = new() { Interval = TimeSpan.FromMilliseconds(350) };
-    private bool _listening;
+    private bool _listening, _disposed;
     private sealed record JobLayout(TranscriptionJobStatus Status, TranscriptionStage Stage, string Title, bool Consumed, string? Srt, DuplicateMatch? Duplicate, bool Segments);
     private sealed record JobRow(JobLayout Layout, Control Card, TextBlock Message, ProgressBar? Progress, TextBlock? Percentage, TextBlock? Segments);
     private readonly Dictionary<string, JobRow> _jobRows = [];
@@ -39,9 +40,10 @@ public sealed class QueueView : UserControl
         root.Children.Add(new ScrollViewer { Content = _content, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled });
         Content = root;
         _refresh.Tick += (_, _) => { _refresh.Stop(); Render(); };
-        AttachedToVisualTree += (_, _) => { if (!_listening) { _queue.Changed += OnChanged; _listening = true; } Render(); };
+        AttachedToVisualTree += (_, _) => { if (_disposed) return; if (!_listening) { _queue.Changed += OnChanged; _listening = true; } Render(); };
         DetachedFromVisualTree += (_, _) => { _queue.Changed -= OnChanged; _listening = false; _refresh.Stop(); };
     }
+    public void Dispose() { _disposed = true; _queue.Changed -= OnChanged; _listening = false; _refresh.Stop(); }
     private void OnChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(() => { if (_listening && !_refresh.IsEnabled) _refresh.Start(); });
     private void Render()
     {
@@ -91,6 +93,12 @@ public sealed class QueueView : UserControl
             if (job.IsActive) actions.Children.Add(Action("取消", () => { _queue.Cancel(job.Id); return Task.CompletedTask; }));
             if (job.Status is TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted) actions.Children.Add(Action("重试", () => { _queue.Retry(job.Id); return Task.CompletedTask; }));
             if (job.Status == TranscriptionJobStatus.Completed && !string.IsNullOrWhiteSpace(job.Srt)) actions.Children.Add(Action("导出 SRT", async () => { var path = await WorkspaceUi.Save(this, "导出转写字幕", job.Title + ".srt", "srt"); if (path != null) await File.WriteAllTextAsync(path, job.Srt); }));
+            if (!string.IsNullOrWhiteSpace(job.ErrorDetails))
+            {
+                var details = new TextBox { Text = job.ErrorDetails, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 260, FontSize = 12, FontFamily = new FontFamily("Consolas") };
+                body.Children.Add(new Expander { Header = "完整错误详情", Content = details, HorizontalAlignment = HorizontalAlignment.Stretch });
+                actions.Children.Add(Action("复制完整错误", async () => { if (TopLevel.GetTopLevel(this)?.Clipboard is {} clipboard) await clipboard.SetTextAsync(job.ErrorDetails); }));
+            }
             actions.Children.Add(Action("删除", async () => { if (await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "删除转写任务？", job.IsActive ? $"将取消并永久删除「{job.Title}」。" : $"将永久删除「{job.Title}」的任务记录。", "删除")) { _queue.Delete(job.Id); WorkspaceToast.Show(this, "任务已删除", $"「{job.Title}」已从转写队列移除。"); } }));
             body.Children.Add(actions); Grid.SetColumn(body, 2); row.Children.Add(body); var card = WorkspaceUi.Surface(row, new Thickness(14));
             _jobRows[job.Id] = new(layout, card, message, progress, percentageLabel, segments); entries.Add((job.Id, card));

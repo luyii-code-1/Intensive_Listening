@@ -45,6 +45,22 @@ class ManagementTests(unittest.TestCase):
     def save(self, scope, policy, csrf):
         return self.client.post("/admin/policy", data={"scope": scope, "policy_json": json.dumps(policy), "form_token": csrf})
 
+    def test_policy_receipt_is_monotonic_and_dashboard_shows_pending(self):
+        csrf = self.login()
+        revision = self.client.get("/api/policy", headers=self.headers).json()["revision"]
+        response = self.client.post("/api/policy/receipt", headers=self.headers, json={"revision": revision})
+        self.assertEqual(response.status_code, 200)
+        device = self.client.get("/admin/status").json()["devices"][0]
+        self.assertTrue(device["policy_current"])
+        self.assertEqual(device["policy_state"], "策略已接收")
+        self.assertEqual(self.client.post("/api/policy/receipt", headers=self.headers, json={"revision": revision + 1}).status_code, 422)
+        self.save("all", {"settings": {"cloudConcurrency": 2}}, csrf)
+        self.assertFalse(self.client.get("/admin/status").json()["devices"][0]["policy_current"])
+        latest = self.client.get("/api/policy", headers=self.headers).json()["revision"]
+        self.client.post("/api/policy/receipt", headers=self.headers, json={"revision": latest})
+        self.client.post("/api/policy/receipt", headers=self.headers, json={"revision": revision})
+        self.assertTrue(self.client.get("/admin/status").json()["devices"][0]["policy_current"])
+
     def test_credentials_and_device_revocation(self):
         self.assertEqual(self.client.get("/api/policy").status_code, 401)
         payload = {"deviceId": self.identifier, "deviceName": "impersonator", "appVersion": "2.0.1", "enrollmentToken": self.config["enrollment_token"]}
@@ -52,6 +68,152 @@ class ManagementTests(unittest.TestCase):
         csrf = self.login()
         self.client.post("/admin/device", data={"device_id": self.identifier, "action": "disable", "form_token": csrf})
         self.assertEqual(self.client.get("/api/policy", headers=self.headers).status_code, 403)
+
+    def test_full_error_track_roundtrip(self):
+        details = "System.InvalidOperationException: outer\nInnerException: nested\n" + "   at Example.Method() in /_/src/Example.cs:line 10\n" * 450
+        metrics = {"reportId": "complete-report", "exceptionType": "System.InvalidOperationException", "component": "主程序", "fatal": True,
+                   "message": "outer", "details": details, "recentOperations": "open queue\nclose queue\nopen queue", "platform": "Windows", "architecture": "X64", "processId": 123, "exitCode": 1}
+        response = self.client.post("/api/telemetry", headers=self.headers, json={"id": "complete-report", "kind": "error_track", "occurredAt": "2026-10-15T12:09:07+08:00", "appVersion": "2.1.0.1", "metrics": metrics})
+        self.assertEqual(response.status_code, 200)
+        import sqlite3
+        with sqlite3.connect(self.root / "mdn.sqlite3") as connection:
+            stored = json.loads(connection.execute("SELECT metrics FROM events WHERE event_id='complete-report'").fetchone()[0])
+        connection.close()
+        self.assertEqual(stored, metrics)
+        self.login()
+        page = self.client.get("/admin?view=telemetry&kind=error_track").text
+        self.assertIn("完整异常", page)
+        self.assertIn("最近操作", page)
+        self.assertIn("nested", page)
+
+    def test_alias_diagnostic_search_and_connection_display(self):
+        csrf = self.login()
+        self.assertEqual(self.client.post("/admin/device/alias", data={"device_id": self.identifier, "alias": "教室一", "form_token": csrf}).status_code, 200)
+        self.client.post("/api/telemetry", headers=self.headers, json={"id": "searchable", "kind": "asr", "occurredAt": "2026-10-14T00:00:00+08:00", "appVersion": "2.1.0.1", "metrics": {"success": False, "errorType": "InvalidTranscript", "durationMs": 100}})
+        html = self.client.get("/admin?view=telemetry&q=教室一&kind=asr").text
+        self.assertIn("InvalidTranscript", html); self.assertIn("识别成功", html)
+        self.assertNotIn("InvalidTranscript", self.client.get("/admin?view=telemetry&q=unmatched").text)
+        self.client.get("/api/policy", headers=self.headers)
+        self.assertIn("轮询模式", self.client.get("/admin/status").json()["devices"][0]["connection"])
+        with self.client.websocket_connect("/api/connect", headers=self.headers) as socket:
+            socket.receive_json()
+            self.client.post("/api/connection", headers=self.headers, json={"latency": 42})
+            self.assertEqual(self.client.get("/admin/status").json()["devices"][0]["connection"], "实时模式 - 42ms")
+
+    def test_update_receipts_retry_and_history_cleanup(self):
+        csrf = self.login()
+        fields = {"form_token": csrf, "scope": self.identifier, "mode": "ota", "version": "2.1.0.1", "url": "https://mdn.example.edu/setup.exe", "sha256": "a"*64, "size": 1024}
+        self.assertEqual(self.client.post("/admin/update", data=fields).status_code, 200)
+        task = self.client.get("/api/policy", headers=self.headers).json()["update"]
+        receipt = "/api/updates/" + task["id"] + "/receipt"
+        self.assertEqual(self.client.post(receipt, headers=self.headers, json={"status": "downloading", "progress": 35}).status_code, 200)
+        self.assertIn("35%", self.client.get("/admin?view=updates").text)
+        other = self.register(str(uuid.uuid4()))
+        self.assertEqual(self.client.post(receipt, headers={"Authorization":"Bearer "+other}, json={"status":"success"}).status_code, 404)
+        self.client.post(receipt, headers=self.headers, json={"status":"failed", "message":"UAC cancelled"})
+        self.assertEqual(self.client.post("/admin/updates/retry", data={"form_token":csrf,"task_id":task["id"],"device_id":self.identifier}).status_code, 200)
+        retry = self.client.get("/api/policy", headers=self.headers).json()["update"]
+        self.assertNotEqual(task["id"], retry["id"])
+        self.assertEqual(self.client.post("/admin/updates/clear", data={"form_token":csrf}).status_code, 200)
+        self.assertNotIn(task["id"], self.client.get("/admin?view=updates").text)
+        self.assertIn(retry["id"], self.client.get("/admin?view=updates").text)
+
+    def publish_task(self, csrf, scope, version="2.1.2"):
+        fields = {"form_token": csrf, "scope": scope, "mode": "ota", "version": version, "url": "https://mdn.example.edu/setup.exe", "sha256": "a"*64, "size": 1024}
+        self.assertEqual(self.client.post("/admin/update", data=fields).status_code, 200)
+        return self.client.get("/api/policy", headers=self.headers).json()["update"]
+
+    def test_latest_assignment_replaces_single_and_global_without_changing_settings(self):
+        csrf = self.login()
+        second = self.register(str(uuid.uuid4()))
+        other_headers = {"Authorization": "Bearer " + second}
+        self.save(self.identifier, {"settings": {"themeMode": "dark"}}, csrf)
+        first = self.publish_task(csrf, "all", "2.1.2")
+        single = self.publish_task(csrf, self.identifier, "2.1.3")
+        self.assertNotEqual(first["id"], single["id"])
+        latest = self.publish_task(csrf, "all", "2.1.4")
+        policy = self.client.get("/api/policy", headers=self.headers).json()
+        self.assertEqual(policy["update"]["id"], latest["id"])
+        self.assertEqual(policy["settings"]["themeMode"], "dark")
+        self.assertEqual(self.client.get("/api/policy", headers=other_headers).json()["update"]["id"], latest["id"])
+        html = self.client.get("/admin/status?updates=true").json()["updates_html"]
+        self.assertIn('data-replacement-count="2"', html)
+        self.assertIn("已被新任务替换", html)
+        self.client.post("/admin/update/cancel", data={"form_token": csrf, "scope": self.identifier})
+        self.assertIsNone(self.client.get("/api/policy", headers=self.headers).json()["update"])
+        self.assertEqual(self.client.get("/api/policy", headers=other_headers).json()["update"]["id"], latest["id"])
+        newest = self.publish_task(csrf, "all", "2.1.5")
+        self.assertEqual(self.client.get("/api/policy", headers=self.headers).json()["update"]["id"], newest["id"])
+
+    def test_late_receipts_cannot_regress_ready_or_success(self):
+        csrf = self.login(); task = self.publish_task(csrf, "all")
+        receipt = "/api/updates/" + task["id"] + "/receipt"
+        for body in [{"status": "ready", "progress": 100}, {"status": "downloading", "progress": 20}]:
+            self.assertEqual(self.client.post(receipt, headers=self.headers, json=body).status_code, 200)
+        html = self.client.get("/admin/status?updates=true").json()["updates_html"]
+        self.assertIn("等待安装", html); self.assertNotIn('class="download-progress"', html)
+        self.client.post(receipt, headers=self.headers, json={"status": "success", "progress": 100})
+        response = self.client.post(receipt, headers=self.headers, json={"status": "failed", "message": "old failure"})
+        self.assertTrue(response.json()["stale"])
+        html = self.client.get("/admin/status?updates=true").json()["updates_html"]
+        self.assertIn("更新成功", html); self.assertNotIn("old failure", html)
+
+    def test_targets_are_snapshotted_and_cleared_history_stays_cleared_after_restart(self):
+        import sqlite3
+        csrf = self.login(); first = self.publish_task(csrf, "all"); latest = self.publish_task(csrf, "all", "2.1.3")
+        extra_id = str(uuid.uuid4()); self.register(extra_id)
+        connection = sqlite3.connect(self.root / "mdn.sqlite3")
+        try:
+            self.assertEqual(connection.execute("SELECT count(*) FROM update_targets WHERE task_id=?", (first["id"],)).fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT count(*) FROM update_targets WHERE task_id=?", (latest["id"],)).fetchone()[0], 2)
+        finally:
+            connection.close()
+        self.client.post("/admin/updates/clear", data={"form_token": csrf})
+        self.client.close(); self.client = TestClient(create_app(self.root, self.config), base_url="https://mdn.example.edu")
+        self.login()
+        html = self.client.get("/admin?view=updates").text
+        self.assertNotIn(first["id"], html); self.assertIn(latest["id"], html)
+
+    def test_existing_policy_assignments_migrate_and_new_global_supersedes_them(self):
+        import sqlite3
+        csrf = self.login(); self.publish_task(csrf, "all"); single = self.publish_task(csrf, self.identifier, "2.1.3")
+        connection = sqlite3.connect(self.root / "mdn.sqlite3")
+        try:
+            connection.executescript("DROP TABLE update_assignments; DROP TABLE update_targets;")
+        finally:
+            connection.close()
+        self.client.close(); self.client = TestClient(create_app(self.root, self.config), base_url="https://mdn.example.edu")
+        self.assertEqual(self.client.get("/api/policy", headers=self.headers).json()["update"]["id"], single["id"])
+        csrf = self.login(); latest = self.publish_task(csrf, "all", "2.1.4")
+        self.assertEqual(self.client.get("/api/policy", headers=self.headers).json()["update"]["id"], latest["id"])
+
+    def test_heartbeat_advertises_current_revision_for_missed_push_recovery(self):
+        with self.client.websocket_connect("/api/connect", headers=self.headers) as socket:
+            socket.receive_json(); socket.send_json({"type": "heartbeat", "sentAt": 100})
+            response = socket.receive_json()
+            self.assertEqual(response["sentAt"], 100)
+            self.assertEqual(response["revision"], self.client.get("/api/policy", headers=self.headers).json()["revision"])
+
+    def test_live_status_includes_new_devices_and_escaped_feedback(self):
+        csrf = self.login(); task = self.publish_task(csrf, "all")
+        self.client.post("/api/updates/" + task["id"] + "/receipt", headers=self.headers, json={"status": "failed", "message": "<script>failure-marker</script>"})
+        extra_id = str(uuid.uuid4()); self.register(extra_id)
+        status = self.client.get("/admin/status?updates=true").json()
+        self.assertEqual(len(status["devices"]), 2)
+        self.assertIn(extra_id, status["device_rows_html"])
+        self.assertIn("&lt;script&gt;failure-marker", status["updates_html"])
+        self.assertNotIn("<script>failure-marker", status["updates_html"])
+
+    def test_migration_selects_newer_global_instead_of_old_single_task(self):
+        import sqlite3
+        csrf = self.login(); self.publish_task(csrf, self.identifier); latest = self.publish_task(csrf, "all", "2.1.3")
+        connection = sqlite3.connect(self.root / "mdn.sqlite3")
+        try:
+            connection.executescript("DROP TABLE update_assignments; DROP TABLE update_targets;")
+        finally:
+            connection.close()
+        self.client.close(); self.client = TestClient(create_app(self.root, self.config), base_url="https://mdn.example.edu")
+        self.assertEqual(self.client.get("/api/policy", headers=self.headers).json()["update"]["id"], latest["id"])
 
     def test_expired_admin_session_returns_login_and_preserves_api_auth(self):
         response = self.client.get("/admin", follow_redirects=False)

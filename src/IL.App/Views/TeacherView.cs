@@ -227,6 +227,7 @@ public sealed class TeacherView : UserControl
     private void QueueChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(() => { RefreshProjects(); if (_vm.Project is { HasTranscript: false, HasAudio: true }) BuildStage(); });
     private void RefreshProjects()
     {
+        IL.Core.Infrastructure.AppLog.Operation("projects", $"刷新项目列表 count={_vm.Projects.Count} selected={_vm.Project?.Id} ids={string.Join(',', _vm.Projects.Select(p => p.Id))}");
         _loading = true;
         _projectMotion.Update(_vm.Projects.Select(p =>
         {
@@ -281,7 +282,12 @@ public sealed class TeacherView : UserControl
             var actions = WorkspaceUi.Button(job?.Status == TranscriptionJobStatus.Failed ? "重新转写" : "开始转写", () => RunAsync(TranscribeAsync), true); actions.IsEnabled = job?.IsActive != true;
             var replace = WorkspaceUi.Button("更换音频", () => RunAsync(BindAudioAsync)); replace.IsEnabled = job?.Status != TranscriptionJobStatus.Running;
             var body = WorkspaceUi.Stack(); if (job != null) body.Children.Add(WorkspaceUi.Text(job.Message));
-            if (job?.Status == TranscriptionJobStatus.Running) body.Children.Add(WorkspaceUi.Row(new ProgressBar { Value = (job.Fraction ?? 0) * 100, Width = 520, Height = 4 }, WorkspaceUi.Text($"{Math.Round((job.Fraction ?? 0) * 100)}%")));
+            if (job?.Status == TranscriptionJobStatus.Running)
+            {
+                var progress = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,Auto"), ClipToBounds = true };
+                progress.Children.Add(new ProgressBar { Value = (job.Fraction ?? 0) * 100, Height = 4, MinWidth = 0, VerticalAlignment = VerticalAlignment.Center });
+                var percent = WorkspaceUi.Text($"{Math.Round((job.Fraction ?? 0) * 100)}%", 12); Grid.SetColumn(percent, 2); progress.Children.Add(percent); body.Children.Add(progress);
+            }
             body.Children.Add(WorkspaceUi.Row(ManagedUi.Feature(actions,"asr"), WorkspaceUi.Button("导入 SRT", () => RunAsync(ImportSrtAsync)), replace));
             _stage.Content = StepSurface("转写", Path.GetFileName(p.AudioPath!), body); return;
         }
@@ -289,8 +295,8 @@ public sealed class TeacherView : UserControl
     }
     private static Control StepSurface(string title, string description, Control child)
     {
-        child.HorizontalAlignment = HorizontalAlignment.Left;
-        return new StackPanel { MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Left, Spacing = 4, Children = { WorkspaceUi.Text(title, 20), WorkspaceUi.Text(description, 12), new Border { Margin = new Thickness(0, 14, 0, 0), Child = child } } };
+        child.HorizontalAlignment = HorizontalAlignment.Stretch;
+        return new StackPanel { MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Stretch, Spacing = 4, Children = { WorkspaceUi.Text(title, 20), WorkspaceUi.Text(description, 12), new Border { Margin = new Thickness(0, 14, 0, 0), Child = child } } };
     }
     private async Task CloseProjectAsync() { await SaveDraftAsync(); _agentAuthoringHost.IsVisible = false; _agentAuthoringHost.Child = null; await _vm.OpenAsync(""); RenderProject(); }
     private Control BuildReview(CourseProject p)
@@ -736,7 +742,9 @@ public sealed class TeacherView : UserControl
     private async Task RunAsync(Func<Task> action, bool enforce = true)
     {
         await _operations.WaitAsync();
-        try { if(enforce) IL.Core.Management.ManagedRuntime.Require("authoring"); await action(); }
+        var operation = Guid.NewGuid().ToString("N")[..8];
+        IL.Core.Infrastructure.AppLog.Operation("authoring", $"操作开始 id={operation} action={action.Method.Name} project={_vm.Project?.Id}");
+        try { if(enforce) IL.Core.Management.ManagedRuntime.Require("authoring"); await action(); IL.Core.Infrastructure.AppLog.Operation("authoring", $"操作完成 id={operation} projects={_vm.Projects.Count}"); }
         catch (Exception ex) { WorkspaceToast.Show(this, "制作工程操作失败", ex.Message, true); IL.Core.Infrastructure.AppLog.Error("制作工程操作失败", ex); }
         finally { _operations.Release(); }
     }

@@ -22,7 +22,7 @@ public sealed class QueueStore(string? path=null)
                 var status=Enum.TryParse<TranscriptionJobStatus>(Text("status"),true,out var s)?s:TranscriptionJobStatus.Queued;
                 var stage=Enum.TryParse<TranscriptionStage>(Text("stage"),true,out var st)?st:TranscriptionStage.Queued;
                 var duration=e.TryGetProperty("audioDurationMs",out var durationValue)&&durationValue.ValueKind==JsonValueKind.Number?TimeSpan.FromMilliseconds(durationValue.GetDouble()):(TimeSpan?)null;
-                jobs.Add(new(id,Text("title")??"",audio,status,stage,Text("message")??"",Date("enqueuedAt")??DateTimeOffset.Now,Text("projectId"),Sha256:Text("sha256"),AudioMd5:Text("audioMd5"),CacheProfile:Text("cacheProfile"),DuplicateApproved:Flag("duplicateApproved"),AudioDuration:duration,StartedAt:Date("startedAt"),FinishedAt:Date("finishedAt"),Srt:Text("srt"),SrtConsumed:Flag("srtConsumed")));
+                jobs.Add(new(id,Text("title")??"",audio,status,stage,Text("message")??"",Date("enqueuedAt")??DateTimeOffset.Now,Text("projectId"),Sha256:Text("sha256"),AudioMd5:Text("audioMd5"),CacheProfile:Text("cacheProfile"),DuplicateApproved:Flag("duplicateApproved"),AudioDuration:duration,StartedAt:Date("startedAt"),FinishedAt:Date("finishedAt"),Srt:Text("srt"),SrtConsumed:Flag("srtConsumed"),ErrorDetails:Text("errorDetails")));
             }
             return jobs;
         }
@@ -32,7 +32,7 @@ public sealed class QueueStore(string? path=null)
     {
         await gate.WaitAsync(ct);try
         {
-            var objects=jobs.Select(j=>new{id=j.Id,title=j.Title,audioPath=j.AudioPath,status=char.ToLowerInvariant(j.Status.ToString()[0])+j.Status.ToString()[1..],stage=j.Stage.ToString().ToLowerInvariant(),message=j.Message,enqueuedAt=j.EnqueuedAt,projectId=j.ProjectId,startedAt=j.StartedAt,finishedAt=j.FinishedAt,sha256=j.Sha256,audioMd5=j.AudioMd5,cacheProfile=j.CacheProfile,audioDurationMs=j.AudioDuration?.TotalMilliseconds,srt=j.Srt,srtConsumed=j.SrtConsumed,duplicateApproved=j.DuplicateApproved}).ToArray();
+            var objects=jobs.Select(j=>new{id=j.Id,title=j.Title,audioPath=j.AudioPath,status=char.ToLowerInvariant(j.Status.ToString()[0])+j.Status.ToString()[1..],stage=j.Stage.ToString().ToLowerInvariant(),message=j.Message,errorDetails=j.ErrorDetails,enqueuedAt=j.EnqueuedAt,projectId=j.ProjectId,startedAt=j.StartedAt,finishedAt=j.FinishedAt,sha256=j.Sha256,audioMd5=j.AudioMd5,cacheProfile=j.CacheProfile,audioDurationMs=j.AudioDuration?.TotalMilliseconds,srt=j.Srt,srtConsumed=j.SrtConsumed,duplicateApproved=j.DuplicateApproved}).ToArray();
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(FilePath))!);var temp=FilePath+".tmp";
             await File.WriteAllTextAsync(temp,JsonSerializer.Serialize(new{version=1,jobs=objects},new JsonSerializerOptions{WriteIndented=true}),ct);File.Move(temp,FilePath,true);
         }

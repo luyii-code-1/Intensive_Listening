@@ -239,6 +239,7 @@ public sealed class StudentView : UserControl
         Control icon = _openingLessonId == lesson.Id ? new FAProgressRing { IsActive = true, Width = 22, Height = 22 } : WorkspaceUi.Icon("music_note", 22); icon.Margin = new Thickness(0, 0, 18, 0); content.Children.Add(icon);
         Grid.SetColumn(info, 1); content.Children.Add(info);
         var track = new ProgressBar { Minimum = 0, Maximum = 1, Value = fraction, Foreground = Brush.Parse("#E81123"), Width = 148, Height = 6, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(18, 0, 0, 0) };
+        content.SizeChanged += (_, e) => track.Width = Math.Min(148, Math.Max(0, e.NewSize.Width * .2));
         Grid.SetColumn(track, 2); content.Children.Add(track);
         var open = new Button { Content = content, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = Brushes.Transparent };
         open.Classes.Add("student-lesson-open");
@@ -248,7 +249,7 @@ public sealed class StudentView : UserControl
         row.Children.Add(open); row.Children.Add(new Border { Width = 1, Height = 40, Background = Brush.Parse("#22000000"), [Grid.ColumnProperty] = 1 });
         var remove = WorkspaceUi.IconButton("delete", "移除课程", () => RemoveAsync(lesson)); remove.IsEnabled = _openingLessonId is null && _deletingLessonId is null;
         if (_deletingLessonId == lesson.Id) remove.Content = new FAProgressRing { IsActive = true, Width = 14, Height = 14 }; remove.Margin = new Thickness(8, 0); Grid.SetColumn(remove, 2); row.Children.Add(remove);
-        var card = Card(row, new Thickness(0)); card.Height = 60;
+        var card = Card(row, new Thickness(0)); card.Height = 60; card.ClipToBounds = true;
         card.PointerEntered += (_, _) => { card.Background = Brush.Parse("#0BE81123"); card.BoxShadow = new BoxShadows(new BoxShadow { Color = Color.Parse("#14000000"), Blur = 10, OffsetY = 3 }); };
         card.PointerExited += (_, _) => { card.Bind(Border.BackgroundProperty, new DynamicResourceExtension("CardBackgroundFillColorDefaultBrush")); card.BoxShadow = default; };
         return card;
@@ -257,22 +258,23 @@ public sealed class StudentView : UserControl
     {
         _questions.HorizontalAlignment = HorizontalAlignment.Stretch; _questions.VerticalAlignment = VerticalAlignment.Center;
         var questionCard = Card(_questions, new Thickness(16)); questionCard.VerticalAlignment = VerticalAlignment.Center;
-        var questionSpace = new Grid(); questionSpace.Children.Add(questionCard);
-        var controls = BuildControls();
+        var questionSpace = new ScrollViewer { Content = questionCard, ClipToBounds = true,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var controls = new ScrollViewer { Content = BuildControls(), ClipToBounds = true,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var grid = new Grid { RowDefinitions = new RowDefinitions("*,auto"), MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Stretch };
         grid.Children.Add(questionSpace); Grid.SetRow(controls, 1); grid.Children.Add(controls);
         grid.SizeChanged += (_, e) =>
         {
             var controlsHeight = Math.Min(Math.Clamp(e.NewSize.Height / 2.68, 244, 320), e.NewSize.Height);
             controls.Height = controlsHeight;
-            questionCard.MaxHeight = Math.Clamp(e.NewSize.Height - controlsHeight - 20, 0, 520);
         };
-        var player = new Border { Padding = new Thickness(20, 8, 20, 16), Child = grid };
+        var player = new Border { Padding = new Thickness(20, 8, 20, 16), Child = grid, ClipToBounds = true };
         UpdateQuestions(); BuildQuestionIndex(); return player;
     }
     private Control BuildControls()
     {
-        var seek = new Slider { Minimum = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var seek = new Slider { Minimum = 0, MinWidth = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
         seek.Bind(Slider.MaximumProperty, new Binding(nameof(_vm.DurationSeconds))); seek.Bind(Slider.ValueProperty, new Binding(nameof(_vm.SeekPositionSeconds)) { Mode = BindingMode.TwoWay });
         seek.AddHandler(PointerPressedEvent, (_, _) => _vm.IsScrubbing = true, RoutingStrategies.Tunnel);
         seek.AddHandler(PointerReleasedEvent, async (_, _) => { _vm.IsScrubbing = false; await _vm.SeekAsync(seek.Value); }, RoutingStrategies.Bubble, true);
@@ -335,17 +337,30 @@ public sealed class StudentView : UserControl
         var lessonId = _vm.CurrentLesson?.Id;
         var panel = new StackPanel { Spacing = 7 };
         panel.Children.Add(Text($"第 {question.Number} 题  {question.Title}", 20, true));
-        var options = new ListBox { SelectionMode = SelectionMode.Single, Background = Brushes.Transparent, BorderThickness = new Thickness(0), ItemsSource = question.Options.Select((option, index) => $"{(char)('A' + index)}. {option}").ToArray() };
+        var optionRows = question.Options.Select((option, index) => new TextBlock { Text = $"{(char)('A' + index)}. {option}", TextWrapping = TextWrapping.Wrap }).ToArray();
+        var options = new ListBox { SelectionMode = SelectionMode.Single, Background = Brushes.Transparent, BorderThickness = new Thickness(0), ItemsSource = optionRows };
+        void RefreshFeedback()
+        {
+            var revealed = _revealedAnswers.Contains(question.Id);
+            for (var i = 0; i < optionRows.Length; i++)
+            {
+                var correct = revealed && question.AnswerIndex == i;
+                var wrong = revealed && options.SelectedIndex == i && question.AnswerIndex != i;
+                optionRows[i].Text = $"{(char)('A' + i)}. {question.Options[i]}" + (correct ? "  ✓" : wrong ? "  ✗" : "");
+                if (correct || wrong) optionRows[i].Foreground = new SolidColorBrush(Color.Parse(correct ? "#218739" : "#D13438"));
+                else optionRows[i].ClearValue(TextBlock.ForegroundProperty);
+            }
+        }
         if (_selectedAnswers.TryGetValue(question.Id, out var selected) && selected < question.Options.Count) options.SelectedIndex = selected;
-        options.SelectionChanged += async (_, _) => { if (options.SelectedIndex >= 0 && lessonId is not null) { _selectedAnswers[question.Id] = options.SelectedIndex; await _vm.SaveAnswerStateAsync(lessonId, question.Id, selected: options.SelectedIndex); } };
+        options.SelectionChanged += async (_, _) => { RefreshFeedback(); if (options.SelectedIndex >= 0 && lessonId is not null) { _selectedAnswers[question.Id] = options.SelectedIndex; await _vm.SaveAnswerStateAsync(lessonId, question.Id, selected: options.SelectedIndex); } };
         if (question.Options.Count > 0) panel.Children.Add(options);
         if (question.AnswerIndex is { } answer)
         {
-            var answerText = Text($"答案：{(char)('A' + answer)}", 14, true); answerText.IsVisible = _revealedAnswers.Contains(question.Id);
-            var reveal = new Button { Content = answerText.IsVisible ? "隐藏答案" : "显示答案", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 1, 0, 0) };
-            reveal.Click += async (_, _) => { if (!_revealedAnswers.Add(question.Id)) _revealedAnswers.Remove(question.Id); answerText.IsVisible = _revealedAnswers.Contains(question.Id); reveal.Content = answerText.IsVisible ? "隐藏答案" : "显示答案"; if (lessonId is not null) await _vm.SaveAnswerStateAsync(lessonId, question.Id, revealed: answerText.IsVisible); };
-            panel.Children.Add(reveal); panel.Children.Add(answerText);
+            var reveal = new Button { Content = _revealedAnswers.Contains(question.Id) ? "隐藏答案" : "显示答案", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 1, 0, 0) };
+            reveal.Click += async (_, _) => { if (!_revealedAnswers.Add(question.Id)) _revealedAnswers.Remove(question.Id); RefreshFeedback(); var revealed = _revealedAnswers.Contains(question.Id); reveal.Content = revealed ? "隐藏答案" : "显示答案"; if (lessonId is not null) await _vm.SaveAnswerStateAsync(lessonId, question.Id, revealed: revealed); };
+            panel.Children.Add(reveal);
         }
+        RefreshFeedback();
         return panel;
     }
     private void ClearTranscript()
@@ -485,6 +500,7 @@ public sealed class StudentView : UserControl
     private Control CueTemplate(CueRow row)
     {
         var text = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
+        var clozeTargets = new List<(Border Control, int Word)>();
         var words = new List<(Control, LessonTextPart)>();
         foreach (var part in LessonTextTokenizer.Tokenize(row.Text))
         {
@@ -493,17 +509,22 @@ public sealed class StudentView : UserControl
             {
                 var cloze = _vm.CurrentLesson?.Manifest.Exercises.ClozeWordIndexes.GetValueOrDefault(row.Index)?.Contains(part.WordIndex!.Value) == true;
                 var label = new TextBlock { Text = part.Text, FontSize = _vm.TranscriptFontSize, LineHeight = _vm.TranscriptFontSize * 1.4 };
-                var word = new Border { Child = label, CornerRadius = new CornerRadius(4), Margin = new Thickness(cloze ? 2 : 1, cloze ? 1 : 0), Padding = cloze ? new Thickness(4, 1) : new Thickness(0) };
+                var word = new Border { Child = label, CornerRadius = new CornerRadius(4), VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(cloze ? 2 : 1, 0), Padding = new Thickness(cloze ? 4 : 0, 1), BorderThickness = new Thickness(0, 0, 0, 2), BorderBrush = Brushes.Transparent };
                 if (cloze)
                 {
                     word.Cursor = new Cursor(StandardCursorType.Hand); word.Focusable = true;
-                    word.PointerReleased += async (_, e) => { if (e.InitialPressMouseButton != MouseButton.Left) return; e.Handled = true; await _vm.ToggleClozeAsync(row.Index, part.WordIndex!.Value); };
+                    clozeTargets.Add((word, part.WordIndex!.Value));
                     word.KeyDown += async (_, e) => { if (e.Key is Key.Enter or Key.Space) { e.Handled = true; await _vm.ToggleClozeAsync(row.Index, part.WordIndex!.Value); } };
                 }
                 var lookup = new FAMenuFlyoutItem { Text = "查词" }; lookup.Click += (_, _) => LookupWord?.Invoke(new(part.Text, row.Text, row.Index));
                 word.ContextFlyout = new FAMenuFlyout { ItemsSource = new[] { lookup } }; control = word;
             }
-            else control = new TextBlock { Text = part.Text, FontSize = _vm.TranscriptFontSize, LineHeight = _vm.TranscriptFontSize * 1.4, VerticalAlignment = VerticalAlignment.Center };
+            else control = new Border
+            {
+                Child = new TextBlock { Text = part.Text, FontSize = _vm.TranscriptFontSize, LineHeight = _vm.TranscriptFontSize * 1.4 },
+                Padding = new Thickness(0, 1), BorderThickness = new Thickness(0, 0, 0, 2), BorderBrush = Brushes.Transparent, VerticalAlignment = VerticalAlignment.Center
+            };
             words.Add((control, part)); text.Children.Add(control);
         }
         _words[row.Index] = words;
@@ -517,9 +538,31 @@ public sealed class StudentView : UserControl
         var marker = new Border { Width = 3, CornerRadius = new CornerRadius(2), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 12), Background = Brush.Parse("#E81123"), IsVisible = false }; visual.Children.Add(marker);
         var border = new Border { Child = visual, MinHeight = 76, CornerRadius = new CornerRadius(4), Focusable = true, Cursor = new Cursor(StandardCursorType.Hand), Background = Brushes.Transparent };
         _cueRows[row.Index] = border;
+        Point? pressedAt = null; long? pressedPointer = null;
+        border.AddHandler(PointerPressedEvent, (_, e) =>
+        {
+            if (!e.GetCurrentPoint(border).Properties.IsLeftButtonPressed) return;
+            pressedAt = e.GetPosition(border); pressedPointer = e.Pointer.Id;
+        }, RoutingStrategies.Tunnel);
+        border.AddHandler(PointerReleasedEvent, async (_, e) =>
+        {
+            var start = pressedAt; var pointer = pressedPointer; pressedAt = null; pressedPointer = null;
+            if (e.InitialPressMouseButton != MouseButton.Left || start == null || pointer != e.Pointer.Id) return;
+            var displacement = e.GetPosition(border) - start.Value;
+            if (displacement.X * displacement.X + displacement.Y * displacement.Y > 64) return;
+            (Border Control, int Word)? target = null; var distance = double.PositiveInfinity;
+            foreach (var candidate in clozeTargets)
+            {
+                var hit = StudentInteractionGeometry.ClozeHitDistance(candidate.Control.Bounds.Size, e.GetPosition(candidate.Control), _vm.IsClozeHidden(row.Index, candidate.Word));
+                if (hit.HasValue && hit.Value < distance) { target = candidate; distance = hit.Value; }
+            }
+            if (target is not { } selected) return;
+            e.Handled = true; selected.Control.Focus();
+            await _vm.ToggleClozeAsync(row.Index, selected.Word);
+        }, RoutingStrategies.Tunnel);
         var playSelected = WorkspaceUi.Button("播放", () => _vm.PlaySelectedCueAsync(row, false));
         var playPause = WorkspaceUi.Button("播放并暂停", () => _vm.PlaySelectedCueAsync(row, true));
-        var popup = new Flyout { Content = Row(playSelected, playPause), Placement = PlacementMode.Bottom };
+        var popup = new Flyout { Content = Row(playSelected, playPause), Placement = PlacementMode.Bottom, OverlayDismissEventPassThrough = true, ShowMode = FlyoutShowMode.Transient };
         playSelected.Click += (_, _) => popup.Hide(); playPause.Click += (_, _) => popup.Hide();
         FlyoutBase.SetAttachedFlyout(border, popup);
         async Task SelectCue(bool atPointer = false)
@@ -527,7 +570,7 @@ public sealed class StudentView : UserControl
             RegisterInteraction();
             await _vm.JumpCueCommand.ExecuteAsync(row);
             FollowActiveCue(force: true, focus: true);
-            if (!_vm.IsPlaying) popup.ShowAt(border, atPointer);
+            if (!_vm.IsPlaying) { popup.ShowMode = atPointer ? FlyoutShowMode.Transient : FlyoutShowMode.Standard; popup.ShowAt(border, atPointer); }
         }
         border.PointerReleased += async (_, e) => { if (e.Handled || e.InitialPressMouseButton != MouseButton.Left) return; await SelectCue(atPointer: true); };
         border.KeyDown += async (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; await SelectCue(); } };
@@ -556,11 +599,11 @@ public sealed class StudentView : UserControl
                 if (control is Border { Child: TextBlock label } word)
                 {
                     label.FontSize = _vm.TranscriptFontSize; label.LineHeight = _vm.TranscriptFontSize * 1.4;
-                    var hidden = _vm.IsClozeHidden(cue, part.WordIndex!.Value);
+                    var hidden = part.IsWord && _vm.IsClozeHidden(cue, part.WordIndex!.Value);
                     label.Effect = hidden ? _transcriptBlur : null;
-                    var cloze = _vm.CurrentLesson?.Manifest.Exercises.ClozeWordIndexes.GetValueOrDefault(cue)?.Contains(part.WordIndex.Value) == true;
+                    var cloze = part.IsWord && _vm.CurrentLesson?.Manifest.Exercises.ClozeWordIndexes.GetValueOrDefault(cue)?.Contains(part.WordIndex!.Value) == true;
                     word.Background = cloze ? Brush.Parse(hidden ? "#1FE81123" : "#0FE81123") : Brushes.Transparent;
-                    word.BorderThickness = new Thickness(0, 0, 0, hidden ? 2 : 0); word.BorderBrush = Brush.Parse("#B90D1C");
+                    word.BorderBrush = hidden ? Brush.Parse("#B90D1C") : Brushes.Transparent;
                     if (cloze) ToolTip.SetTip(word, hidden ? "显示单词" : "隐藏单词");
                 }
                 else if (control is TextBlock text) { text.FontSize = _vm.TranscriptFontSize; text.LineHeight = _vm.TranscriptFontSize * 1.4; }

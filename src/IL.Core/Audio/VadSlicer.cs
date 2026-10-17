@@ -6,20 +6,22 @@ public sealed record SilenceRange(TimeSpan Start,TimeSpan End) { public TimeSpan
 public sealed record VadSlice(string File,TimeSpan Start,TimeSpan End);
 public sealed record VadSliceResult(IReadOnlyList<VadSlice> Slices,TimeSpan Duration);
 public sealed class NoSilenceCutException() : Exception("120 秒范围内未检测到静音，可选择强制切片继续转写。");
-public sealed class VadSlicer(string? ffmpegPath=null)
+public sealed class VadSlicer(string? ffmpegPath=null,bool localFilesOnly=false)
 {
     public static string LocateFfmpeg()=>Environment.GetEnvironmentVariable("ILP_FFMPEG_PATH")?.Trim() is {Length:>0} path ? path : Path.Combine(AppContext.BaseDirectory,OperatingSystem.IsWindows()?"ffmpeg.exe":"ffmpeg");
-    public async Task<VadSliceResult> SliceAsync(string input,string outputDirectory,TimeSpan? maxSegmentDuration=null,bool forceCutOnNoSilence=false,CancellationToken ct=default)
+    public async Task<VadSliceResult> SliceAsync(string input,string outputDirectory,TimeSpan? maxSegmentDuration=null,bool forceCutOnNoSilence=false,CancellationToken ct=default,TimeSpan? knownDuration=null)
     {
         var executable=ffmpegPath??LocateFfmpeg();if(!File.Exists(executable))throw new FileNotFoundException("缺少 FFmpeg 运行组件",executable);
         Directory.CreateDirectory(outputDirectory);
-        var analysis=await RunFfmpegAsync(executable,["-hide_banner","-nostats","-i",input,"-af","silencedetect=noise=-35dB:d=0.25","-f","null","-"],ct);
-        var duration=ParseDuration(analysis);if(duration==null||duration<=TimeSpan.Zero)throw new FormatException("无法读取音频时长。");
+        string[] restrictedProtocols=localFilesOnly?["-protocol_whitelist","file,pipe","-vn"]:[];
+        var analysis=await RunFfmpegAsync(executable,new[]{"-hide_banner","-nostats"}.Concat(restrictedProtocols).Concat(["-i",input,"-af","silencedetect=noise=-35dB:d=0.25","-f","null","-"]),ct,maxCapturedCharacters:localFilesOnly?2_000_000:null);
+        var duration=knownDuration??ParseDuration(analysis);if(duration==null||duration<=TimeSpan.Zero)throw new FormatException("无法读取音频时长。");
         var cuts=ChooseCutPoints(duration.Value,ParseSilenceRanges(analysis,duration.Value),maxSegmentDuration,forceCutOnNoSilence:forceCutOnNoSilence);
         var arguments=new List<string>{"-hide_banner","-nostats","-loglevel","error","-y","-i",input};
+        arguments.InsertRange(arguments.IndexOf("-i"),restrictedProtocols);
         if(cuts.Count>0)arguments.AddRange(["-f","segment","-segment_times",string.Join(',',cuts.Select(t=>t.TotalSeconds.ToString("F3",CultureInfo.InvariantCulture))),"-reset_timestamps","1"]);
         arguments.AddRange(["-ac","1","-ar","16000","-c:a","pcm_s16le",Path.Combine(outputDirectory,cuts.Count>0?"chunk_%03d.wav":"chunk_000.wav")]);
-        await RunFfmpegAsync(executable,arguments,ct);
+        await RunFfmpegAsync(executable,arguments,ct,maxCapturedCharacters:localFilesOnly?2_000_000:null);
         var files=Directory.GetFiles(outputDirectory,"chunk_*.wav").Order(StringComparer.Ordinal).ToArray();
         var boundaries=new[]{TimeSpan.Zero}.Concat(cuts).Append(duration.Value).ToArray();
         if(files.Length!=boundaries.Length-1)throw new FormatException("音频切片数量与时间边界不一致。");
@@ -60,12 +62,27 @@ public sealed class VadSlicer(string? ffmpegPath=null)
         }
         if(start.HasValue&&start<duration)result.Add(new(start.Value,duration));return result;
     }
-    public static async Task<string> RunFfmpegAsync(string executable,IEnumerable<string> arguments,CancellationToken ct=default)
+    public static async Task<string> RunFfmpegAsync(string executable,IEnumerable<string> arguments,CancellationToken ct=default,int? maxCapturedCharacters=null)
     {
         var info=new ProcessStartInfo(executable){UseShellExecute=false,RedirectStandardError=true,RedirectStandardOutput=true,CreateNoWindow=true};foreach(var a in arguments)info.ArgumentList.Add(a);
         using var process=Process.Start(info)??throw new IOException("FFmpeg 无法启动");
         using var registration=ct.Register(()=>{try{if(!process.HasExited)process.Kill(entireProcessTree:true);}catch(InvalidOperationException){}});
-        var stderr=process.StandardError.ReadToEndAsync();var stdout=process.StandardOutput.ReadToEndAsync();
+        async Task<string> CaptureAsync(StreamReader reader)
+        {
+            if(maxCapturedCharacters==null)return await reader.ReadToEndAsync();
+            var captured=new System.Text.StringBuilder();var buffer=new char[4096];int count;
+            while((count=await reader.ReadAsync(buffer))>0)
+            {
+                if(captured.Length+count>maxCapturedCharacters.Value)
+                {
+                    try{if(!process.HasExited)process.Kill(entireProcessTree:true);}catch(InvalidOperationException){}
+                    throw new FormatException("音频处理诊断输出超过限制。");
+                }
+                captured.Append(buffer,0,count);
+            }
+            return captured.ToString();
+        }
+        var stderr=CaptureAsync(process.StandardError);var stdout=CaptureAsync(process.StandardOutput);
         await process.WaitForExitAsync(CancellationToken.None);var output=await stderr;await stdout;ct.ThrowIfCancellationRequested();
         if(process.ExitCode!=0)throw new FormatException(output.Trim().Split('\n').LastOrDefault()?.Trim() is {Length:>0} last?last:"FFmpeg 执行失败。");
         return output;
@@ -74,6 +91,6 @@ public sealed class VadSlicer(string? ffmpegPath=null)
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(timeout??TimeSpan.FromSeconds(10));
         try{return ParseDuration(await RunFfmpegAsync(LocateFfmpeg(),["-hide_banner","-i",path,"-f","null","-"],deadline.Token));}
-        catch(OperationCanceledException)when(!ct.IsCancellationRequested){return null;}catch(IOException){return null;}catch(FormatException){return null;}
+        catch(OperationCanceledException)when(!ct.IsCancellationRequested){return null;}catch(IOException){return null;}catch(FormatException){return null;}catch(System.ComponentModel.Win32Exception){return null;}
     }
 }

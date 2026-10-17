@@ -19,7 +19,7 @@ internal sealed class AboutSettingsView : StackPanel
         MaxWidth = 1040; Spacing = 12;
         var identity = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 20, Margin = new Thickness(16, 12, 16, 16) };
         identity.Children.Add(new Image { Source = AppBrand.Image, Width = 88, Height = 88, VerticalAlignment = VerticalAlignment.Center });
-        var name = WorkspaceUi.Stack(WorkspaceUi.Text("Intensive Listening", 26, true), WorkspaceUi.Text(AppBuildInfo.ReleaseName, 16), WorkspaceUi.Text($"版本 {AppBuildInfo.Version} · 构建 {AppBuildInfo.Commit}", 12));
+        var name = WorkspaceUi.Stack(WorkspaceUi.Text("Intensive Listening", 26, true), WorkspaceUi.Text(AppBuildInfo.ReleaseName, 16), WorkspaceUi.Text($"版本 {AppBuildInfo.DisplayVersion} · 构建 {AppBuildInfo.Commit}", 12));
         Grid.SetColumn(name, 1); identity.Children.Add(name); Children.Add(identity);
 
         Children.Add(Section("Intensive Listening", "music_note",

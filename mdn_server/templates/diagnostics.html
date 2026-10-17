@@ -1,0 +1,14 @@
+<h2>遥测与诊断</h2>
+<form method="get" action="/admin" class="toolbar">
+  <input type="hidden" name="view" value="telemetry">
+  <input name="q" value="{{ q }}" placeholder="搜索设备、版本或诊断内容" aria-label="搜索诊断">
+  <select name="kind" aria-label="事件类型"><option value="">全部事件</option>{% for value in kinds %}<option value="{{ value }}" {{ 'selected' if kind==value }}>{{ value }}</option>{% endfor %}</select>
+  <select name="event_device" aria-label="设备"><option value="">全部设备</option>{% for device in clients %}<option value="{{ device.id }}" {{ 'selected' if event_device==device.id }}>{{ device.name }}</option>{% endfor %}</select>
+  <button>查询</button><a href="/admin?view=telemetry">重置</a>
+</form>
+<p class="muted">共 {{ event_count }} 条 · 第 {{ page }} 页，每页 100 条</p>
+<div class="table-scroll"><table><thead><tr><th>设备与版本</th><th>事件与时间</th><th>诊断内容</th></tr></thead><tbody>
+{% for event in events %}<tr><td>{{ event.device_name }}<small class="mono">{{ event.device_id }}</small><small>{{ event.version }}</small></td><td><strong>{{ event.label }}</strong><small>{{ event.happened }}</small></td><td>{% for label,value in event.fields %}<strong>{{ label }}</strong><pre>{{ value }}</pre>{% else %}<span class="muted">设备状态事件</span>{% endfor %}</td></tr>
+{% else %}<tr><td colspan="3" class="empty">没有符合条件的诊断。</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="toolbar">{% if page>1 %}<a href="/admin?view=telemetry&amp;q={{ q|urlencode }}&amp;kind={{ kind|urlencode }}&amp;event_device={{ event_device|urlencode }}&amp;page={{ page-1 }}">上一页</a>{% endif %}{% if page*100<event_count %}<a href="/admin?view=telemetry&amp;q={{ q|urlencode }}&amp;kind={{ kind|urlencode }}&amp;event_device={{ event_device|urlencode }}&amp;page={{ page+1 }}">下一页</a>{% endif %}</div>

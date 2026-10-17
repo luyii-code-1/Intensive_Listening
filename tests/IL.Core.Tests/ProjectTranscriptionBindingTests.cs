@@ -66,4 +66,76 @@ public sealed class ProjectTranscriptionBindingTests : IDisposable
         var saved = await Projects.LoadByIdAsync(project.Id);
         Assert.Equal(CourseProjectStep.Transcription, saved!.Step); Assert.False(saved.HasTranscript);
     }
+
+    [Theory]
+    [InlineData("1\n00:00:01,000 --> 00:00:01,000\nInvalid duration.\n")]
+    [InlineData("1\n00:00:00,000 --> 00:00:03,000\nBeyond audio.\n")]
+    public async Task InvalidPendingResultPreservesProjectAndDoesNotBlockOtherRecovery(string invalid)
+    {
+        var store = Projects;
+        var bad = (await ProjectAsync()) with { TranscriptionJobId = "bad", Transcript = Srt, AudioDuration = TimeSpan.FromSeconds(2) };
+        var good = (await ProjectAsync()) with { TranscriptionJobId = "good" };
+        await store.SaveAsync(bad); await store.SaveAsync(good);
+        var metadataPath = Path.Combine(store.RootDirectory, bad.Id, "project.json");
+        var transcriptPath = Path.Combine(store.RootDirectory, bad.Id, "transcript.srt");
+        var metadata = await File.ReadAllTextAsync(metadataPath);
+        await Jobs.SaveAsync([
+            new("bad", bad.Title, bad.AudioPath!, TranscriptionJobStatus.Completed, TranscriptionStage.Formatting, "done", DateTimeOffset.Now, ProjectId: bad.Id, Srt: invalid),
+            new("good", good.Title, good.AudioPath!, TranscriptionJobStatus.Completed, TranscriptionStage.Formatting, "done", DateTimeOffset.Now, ProjectId: good.Id, Srt: Srt)
+        ]);
+        await using (var queue = Queue((_, _, _, _) => throw new InvalidOperationException("Recovery must not submit ASR.")))
+        {
+            await using var binding = new ProjectTranscriptionBinding(store, queue);
+            await queue.RestoreAsync(); await binding.RestorePendingAsync(); await queue.FlushAsync();
+            Assert.Equal(metadata, await File.ReadAllTextAsync(metadataPath));
+            Assert.Equal(Srt, await File.ReadAllTextAsync(transcriptPath));
+            Assert.Equal(2, (await store.LoadAllAsync()).Count);
+            Assert.Equal(Srt, (await store.LoadByIdAsync(good.Id))!.Transcript);
+            Assert.Equal(TranscriptionJobStatus.Failed, queue.JobById("bad")!.Status);
+            Assert.Equal(invalid, queue.JobById("bad")!.Srt);
+            Assert.False(queue.JobById("bad")!.SrtConsumed);
+        }
+        await using var restored = Queue((_, _, _, _) => throw new InvalidOperationException("Recovery must not submit ASR."));
+        await using var recovery = new ProjectTranscriptionBinding(store, restored);
+        await restored.RestoreAsync(); await recovery.RestorePendingAsync();
+        Assert.Equal(metadata, await File.ReadAllTextAsync(metadataPath));
+        Assert.Equal(Srt, await File.ReadAllTextAsync(transcriptPath));
+        Assert.Equal(invalid, restored.JobById("bad")!.Srt);
+    }
+
+    [Fact]
+    public async Task ReTranscriptionAfterInvalidResultRunsAsrInsteadOfReusingInvalidCache()
+    {
+        const string invalid = "1\n00:00:01,000 --> 00:00:01,000\nInvalid duration.\n";
+        var calls = 0;
+        await using var queue = Queue((_, _, _, _) => Task.FromResult(++calls == 1 ? invalid : Srt));
+        var store = Projects;
+        await using var binding = new ProjectTranscriptionBinding(store, queue);
+        var project = await binding.EnqueueAsync(await ProjectAsync());
+        await queue.WaitForIdleAsync(); await binding.FlushAsync();
+        Assert.Equal(TranscriptionJobStatus.Failed, queue.JobById(project.TranscriptionJobId!)!.Status);
+        Assert.False((await store.LoadByIdAsync(project.Id))!.HasTranscript);
+        await binding.EnqueueAsync((await store.LoadByIdAsync(project.Id))!);
+        await queue.WaitForIdleAsync(); await binding.FlushAsync();
+        Assert.Equal(2, calls);
+        Assert.Equal(Srt, (await store.LoadByIdAsync(project.Id))!.Transcript);
+    }
+
+    [Fact]
+    public async Task RecoveryValidatesAgainstActualAudioDurationInsteadOfStaleMetadata()
+    {
+        var store = Projects;
+        var project = (await ProjectAsync()) with { TranscriptionJobId = "stale-duration", AudioDuration = TimeSpan.FromMilliseconds(500) };
+        await store.SaveAsync(project);
+        await Jobs.SaveAsync([new("stale-duration", project.Title, project.AudioPath!, TranscriptionJobStatus.Completed,
+            TranscriptionStage.Formatting, "done", DateTimeOffset.Now, ProjectId: project.Id, Srt: Srt)]);
+        await using var queue = Queue((_, _, _, _) => throw new InvalidOperationException("Recovery must not submit ASR."));
+        await using var binding = new ProjectTranscriptionBinding(store, queue, _ => Task.FromResult<TimeSpan?>(TimeSpan.FromSeconds(2)));
+        await queue.RestoreAsync(); await binding.RestorePendingAsync();
+        var restored = await store.LoadByIdAsync(project.Id);
+        Assert.Equal(TimeSpan.FromSeconds(2), restored!.AudioDuration);
+        Assert.Equal(Srt, restored.Transcript);
+        Assert.Equal(CourseProjectStep.Review, restored.Step);
+        Assert.True(queue.JobById("stale-duration")!.SrtConsumed);
+    }
 }

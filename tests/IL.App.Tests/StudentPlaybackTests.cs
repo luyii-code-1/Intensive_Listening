@@ -43,10 +43,46 @@ public sealed class StudentPlaybackTests
         }
         finally{Directory.Delete(root,true);}
     }
+    [Theory]
+    [InlineData(40)]
+    [InlineData(10)]
+    public async Task IlpDurationRemainsOnPackageTimelineWhenPlaybackStarts(double playerMinutes)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il2-student-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var source = Path.Combine(AppContext.BaseDirectory, "fixtures", "dart-course.ilp");
+            var library = Path.Combine(root, "library");
+            var lesson = await new IlpImporter(library).ImportFileAsync(source);
+            await File.WriteAllBytesAsync(Path.Combine(library, lesson.Id, "manifest.json"),
+                (lesson.Manifest with { Duration = TimeSpan.FromMinutes(22) }).ToBytes());
+            var fake = new FakePlayer { Duration = TimeSpan.FromMinutes(playerMinutes) };
+            await using var vm = new StudentViewModel(() => fake, library,
+                new LessonProgressStore(Path.Combine(root, "progress.json")),
+                new AppSettingsStore(Path.Combine(root, "settings.json")));
+            await vm.RefreshAsync();
+            await vm.OpenLessonAsync(vm.Lessons.Single());
+            Assert.Equal(22 * 60, vm.DurationSeconds);
+            Assert.Equal("22:00", vm.DurationLabel);
+
+            await vm.TogglePlaybackCommand.ExecuteAsync(null);
+            Assert.Equal(22 * 60, vm.DurationSeconds);
+            Assert.Equal("22:00", vm.DurationLabel);
+            await vm.SeekAsync(21 * 60);
+            Assert.Equal(21 * 60, vm.SeekPositionSeconds);
+            Assert.Equal(22 * 60, vm.DurationSeconds);
+
+            await vm.OpenAudioAsync(lesson.AudioPath);
+            Assert.Equal(playerMinutes * 60, vm.DurationSeconds);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private sealed class FakePlayer : IAudioPlayer
     {
         public int OpenCount;public bool FailOpen;public TimeSpan? LoopEnd;
-        public TimeSpan Position{get;private set;}public TimeSpan Duration=>TimeSpan.FromSeconds(5);public bool IsPlaying{get;private set;}public string? ErrorMessage=>null;public double PlaybackRate{get;set;}=1;public double Volume{get;set;}=1;
+        public TimeSpan Position{get;private set;}public TimeSpan Duration{get;set;}=TimeSpan.FromSeconds(5);public bool IsPlaying{get;private set;}public string? ErrorMessage=>null;public double PlaybackRate{get;set;}=1;public double Volume{get;set;}=1;
         public event EventHandler? StateChanged;
         public Task OpenAsync(string path,CancellationToken ct=default){OpenCount++;if(FailOpen)throw new IOException("native failure");Position=TimeSpan.Zero;return Task.CompletedTask;}
         public Task PlayAsync(CancellationToken ct=default){IsPlaying=true;StateChanged?.Invoke(this,EventArgs.Empty);return Task.CompletedTask;}

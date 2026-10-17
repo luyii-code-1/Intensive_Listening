@@ -82,6 +82,7 @@ public sealed class SpringMotion
     }
     public void Stop() { _running = false; ++_generation; _lastFrame = null; _completion?.TrySetResult(); _completion = null; }
     internal double TranslationY => _y.Value;
+    internal bool IsRunning => _running;
     internal Task ShiftLayout(double delta)
     {
         _y.Value += delta; Apply();

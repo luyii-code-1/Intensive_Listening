@@ -387,7 +387,8 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
             if (_player is null) { _player = await Task.Run(_factory); _player.StateChanged += OnPlayerChanged; }
             await _player.OpenAsync(_audioPath);
             _playerSource = _audioPath;
-            if (_player.Duration > TimeSpan.Zero) DurationSeconds = _player.Duration.TotalSeconds;
+            // ILP navigation uses the package timeline, including its declared duration.
+            if (_lesson is null && _player.Duration > TimeSpan.Zero) DurationSeconds = _player.Duration.TotalSeconds;
             await _player.SeekAsync(TimeSpan.FromSeconds(PositionSeconds));
             _player.PlaybackRate = PlaybackRate; _player.Volume = Volume;
             await ConfigureLoopAsync();

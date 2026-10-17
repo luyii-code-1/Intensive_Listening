@@ -8,7 +8,7 @@ public sealed record CrashReport
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public DateTimeOffset OccurredAt { get; init; } = DateTimeOffset.UtcNow;
-    public string AppVersion { get; init; } = "2.1.0";
+    public string AppVersion { get; init; } = "2.1.2.3";
     public string Platform { get; init; } = RuntimeInformation.OSDescription;
     public string Architecture { get; init; } = RuntimeInformation.ProcessArchitecture.ToString();
     public int ProcessId { get; init; } = Environment.ProcessId;
@@ -16,14 +16,15 @@ public sealed record CrashReport
     public string ExceptionType { get; init; } = "UnexpectedProcessExit";
     public string Message { get; init; } = "程序意外退出，未能获得托管异常堆栈。";
     public string Details { get; init; } = "";
+    public string RecentOperations { get; init; } = "";
     public int? ExitCode { get; init; }
     public bool Fatal { get; init; } = true;
     public bool UploadAllowed { get; init; }
     public bool Displayed { get; init; }
     public DateTimeOffset? AcceptedByTelemetryAt { get; init; }
     public static CrashReport FromException(Exception exception, string component, bool fatal, bool uploadAllowed) => new()
-    { ExceptionType = exception.GetType().FullName ?? exception.GetType().Name, Message = CrashReportStore.Redact(exception.Message), Details = CrashReportStore.Redact(exception.ToString()), Component = component, Fatal = fatal, UploadAllowed = uploadAllowed };
-    public string Summary => $"时间：{OccurredAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n版本：{AppVersion}\n平台：{Platform} ({Architecture})\n组件：{Component}\n问题：{ExceptionType}\n{Message}\n\n{Details}\n\n报告 ID：{Id}";
+    { ExceptionType = exception.GetType().FullName ?? exception.GetType().Name, Message = CrashReportStore.Redact(exception.Message), Details = CrashReportStore.Redact(exception.ToString()), RecentOperations = LiveDiagnostics.RecentOperations(), Component = component, Fatal = fatal, UploadAllowed = uploadAllowed };
+    public string Summary => $"时间：{OccurredAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n版本：{AppVersion}\n平台：{Platform} ({Architecture})\n组件：{Component}\n问题：{ExceptionType}\n{Message}\n\n{Details}\n\n最近操作：\n{RecentOperations}\n\n报告 ID：{Id}";
 }
 
 /// <summary>Local, atomic reports remain available even when logging or the UI dispatcher has failed.</summary>

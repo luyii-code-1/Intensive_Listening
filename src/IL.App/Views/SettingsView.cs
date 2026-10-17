@@ -23,6 +23,7 @@ namespace IL.App.Views;
 public sealed class SettingsView : UserControl
 {
     private readonly AppSettingsStore _store;
+    private readonly Control? _cloudPage;
     private GitHubUpdateChecker? _updates;
         private readonly TextBlock _updateStatus = WorkspaceUi.Text("尚未检查更新",12);
     private readonly TextBlock _managedUpdateStatus = WorkspaceUi.Text("",12);
@@ -47,6 +48,10 @@ public sealed class SettingsView : UserControl
     private AppSettings _settings = AppSettings.Defaults();
     private Task _preferenceSaves = Task.CompletedTask;
     private bool _populating;
+    private readonly ToggleSwitch _startup = new();
+    private Button? _liveLogs;
+    private LiveLogWindow? _logWindow;
+    public Task StopDiagnosticsAsync() => _logWindow?.StopCaptureAsync() ?? Task.CompletedTask;
     private readonly TextBox _baseUrl = WorkspaceUi.Input(), _endpoint = WorkspaceUi.Input(), _model = WorkspaceUi.Input(), _key = new() { PasswordChar = '●', PlaceholderText = "输入云端转写密钥" };
     private readonly NumericUpDown _timeout = new() { Minimum = 30, Maximum = 1800, Increment = 30 }, _concurrency = new() { Minimum = 1, Maximum = 10 };
     private readonly Slider _font = new() { Minimum = 14, Maximum = 28, TickFrequency = 1, IsSnapToTickEnabled = true, Width = 200 };
@@ -70,9 +75,9 @@ public sealed class SettingsView : UserControl
     private readonly DispatcherTimer _fontSave = new() { Interval = TimeSpan.FromMilliseconds(250) };
     public Action? BackRequested { get; set; }
     public Func<Task>? WithdrawAgreementRequested { get; set; }
-    public SettingsView(AppSettingsStore store, Func<AppSettings, Task>? apply = null, AppPrivateApiServer? mcpServer = null)
+    public SettingsView(AppSettingsStore store, Func<AppSettings, Task>? apply = null, AppPrivateApiServer? mcpServer = null, Control? cloudPage = null)
     {
-        _store = store; _mcpServer = mcpServer; _apply = apply ?? (_ => Task.CompletedTask);
+        _store = store; _mcpServer = mcpServer; _cloudPage = cloudPage; _apply = apply ?? (_ => Task.CompletedTask);
         _playerShortcuts = new(bindings => ChangePreferenceAsync(s => s with { PlayerKeyBindings = bindings }, "扩展按键"));
         _theme.ItemsSource = new[] { ThemeItem("跟随系统", "system"), ThemeItem("浅色模式", "light"), ThemeItem("深色模式", "dark") };
         _applicationFont.ItemsSource = new[] { new FontChoice("", "HarmonyOS Sans SC（默认）", WorkspaceUi.BodyFont) }
@@ -116,6 +121,8 @@ public sealed class SettingsView : UserControl
             _playerShortcuts.Populate(settings.PlayerKeyBindings);
             _association.IsChecked = settings.FileAssociationEnabled; _mcp.IsChecked = settings.McpEnabled; _skip.IsChecked = settings.SkipOpeningPrompts; _createProject.IsChecked = settings.CreateProjectOnAudioImport;
             _debug.IsChecked = settings.DebugLogging; _telemetry.IsChecked = settings.TelemetryEnabled;
+            _startup.IsChecked = ManagedRuntime.IsManaged || settings.StartAtLogin; _startup.IsEnabled = !ManagedRuntime.IsManaged;
+            if (_liveLogs != null) _liveLogs.IsEnabled = settings.DebugLogging;
             _localDirectory.Text = settings.LocalModelsDirectory; _localModel.ItemsSource = settings.DetectedLocalModels; _localModel.SelectedItem = settings.SelectedLocalModel;
         }
         finally { _populating = false; }
@@ -127,6 +134,7 @@ public sealed class SettingsView : UserControl
     };
     private void WirePreferences()
     {
+        _startup.IsCheckedChanged += async (_, _) => { if (!_populating && !ManagedRuntime.IsManaged) await ChangePreferenceAsync(s => s with { StartAtLogin = _startup.IsChecked == true }, "开机自启"); };
         _theme.SelectionChanged += async (_, _) => { if (!_populating && _theme.SelectedItem is ComboBoxItem { Tag: string mode }) await ChangePreferenceAsync(s => s with { ThemeMode = mode }, "外观主题"); };
         _applicationFont.SelectionChanged += async (_, _) =>
         {
@@ -142,7 +150,7 @@ public sealed class SettingsView : UserControl
         _mcp.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { McpEnabled = _mcp.IsChecked == true }, "MCP"); };
         _createProject.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { CreateProjectOnAudioImport = _createProject.IsChecked == true }, "导入音频时同时建立项目"); };
         _skip.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { SkipOpeningPrompts = _skip.IsChecked == true }, "跳过题前提示"); };
-        _debug.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { DebugLogging = _debug.IsChecked == true }, "调试模式"); };
+        _debug.IsCheckedChanged += async (_, _) => { if (!_populating) { await ChangePreferenceAsync(s => s with { DebugLogging = _debug.IsChecked == true }, "调试模式"); if (_liveLogs != null) _liveLogs.IsEnabled = AppLog.DebugEnabled; } };
         _telemetry.IsCheckedChanged += async (_, _) =>
         {
             if (_populating) return;
@@ -257,17 +265,26 @@ public sealed class SettingsView : UserControl
             Content = apiBody, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch
         };
         var authoring = CategoryPage("制作与智能体", "配置音频转写服务和智能体制作连接", ManagedUi.Wrap(apiSettings,()=>!ManagedRuntime.Allows("apiConfiguration")||ManagedRuntime.Policy.HideAsrConfiguration), ManagedUi.Wrap(mcpSettings,()=>!ManagedRuntime.Allows("mcp")));
+        _liveLogs = ActionButton("实时日志分析", () =>
+        {
+            if (!AppLog.DebugEnabled) return Task.CompletedTask;
+            if (_logWindow != null) { if (_logWindow.WindowState == WindowState.Minimized) _logWindow.WindowState = WindowState.Normal; _logWindow.Activate(); return Task.CompletedTask; }
+            _logWindow = new LiveLogWindow(); _logWindow.Closed += (_, _) => _logWindow = null;
+            _logWindow.Show(); return Task.CompletedTask;
+        });
+        _liveLogs.IsEnabled = AppLog.DebugEnabled;
         var maintenance = CategoryPage("数据与维护", "管理本机数据、缓存与诊断日志",
             Card("folder_open", "数据目录", "打开保存课程、制作工程和个人设置的文件夹", ActionButton("打开", () => LaunchAsync(AppDirectories.DataDirectory()))),
             Card("delete", "缓存", "释放可重新生成的临时文件，课程和制作数据保留", ActionButton("清理", ClearCacheAsync)),
             Card("folder_open", "日志", "警告和错误保存在数据目录的 logs 文件夹中", Actions(ActionButton("打开目录", () => LaunchAsync(AppLog.DirectoryPath)), ActionButton("清理", ClearLogsAsync))),
-            Card("info", "调试模式", "开启后记录详细诊断信息", _debug));
+            Card("info", "调试模式", "记录详细诊断信息，查看实时日志并按需采样调用栈", Actions(ManagedUi.Setting(_debug, "debugLogging"), _liveLogs)),
+            Card("info", "开机自启", "加入组织后自动开启并由组织管理，退出组织后恢复个人设置", _startup));
         var privacy = CategoryPage("隐私", "查看数据使用选项与协议",
             Card("chart", "匿名使用情况分析", "向阿里云发送匿名设备 ID、ASR 指标与 API 主机名、系统与硬件信息、红色错误提示原文及运行元数据，可随时关闭", _telemetry),
             Card("document", "用户协议与隐私", "查看协议或撤回此前的同意", Actions(ActionButton("查看隐私说明", () => ShowLegalAsync("privacy_zh_cn.txt", "隐私说明")), ActionButton("撤回同意", WithdrawAsync))));
         var updatesPage = CategoryPage("更新", "检查应用版本，查看组织更新状态",
             Card("download","检查更新","启动时异步读取 GitHub Latest，10 秒超时",Actions(_updateStatus,ActionButton("检查更新",()=>_updates?.CheckAsync(AppBuildInfo.Version)??Task.CompletedTask),ActionButton("查看发布",()=>LaunchAsync(_updates?.Result.ReleaseUrl??"https://github.com/luyii-code-1/Intensive_Listening/releases/latest")))),
-            ManagedUi.Feature(Card("download","组织更新","冷更新需点击更新开始下载；OTA 自动执行。安装时可能显示 UAC",Actions(_managedUpdateStatus,_installButton)),"updates"));
+            ManagedUi.Feature(Card("download","组织更新","冷更新下载完成后点击安装；OTA 自动执行。安装时由用户确认 UAC",Actions(_managedUpdateStatus,_installButton)),"updates"));
         if(ManagedRuntime.Client is {} organization && organization.Status!="未加入管理")
         {
             var status=WorkspaceUi.Text(organization.Status,12);
@@ -282,7 +299,7 @@ public sealed class SettingsView : UserControl
             privacy.Children.Add(WorkspaceUi.SettingsRow("info", "组织管理", name, status, compact: true));
         }
 
-        var categories = new[]
+        var categories = new List<SettingsCategory>
         {
             new SettingsCategory("外观与字体", "color", appearance), new SettingsCategory("播放", "play", playback),
             new SettingsCategory("制作与智能体", "robot", authoring), new SettingsCategory("数据与维护", "folder_open", maintenance),
@@ -290,6 +307,7 @@ public sealed class SettingsView : UserControl
             new SettingsCategory("组织管理", "info", ManagedRuntime.Client is {} mdn ? new MdnSettingsView(mdn) : WorkspaceUi.Text("独立播放器不提供组织注册。")),
             new SettingsCategory("关于", "info", new AboutSettingsView(ShowUpdates))
         };
+        if (_cloudPage is not null) categories.Insert(0, new SettingsCategory("IL Cloud", "cloud", _cloudPage));
         var navigation = _categoryNavigation = new ListBox { ItemsSource = categories, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
         navigation.ItemTemplate = new FuncDataTemplate<SettingsCategory>((category, _) => category is null ? null : new StackPanel
         {

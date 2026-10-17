@@ -36,7 +36,8 @@ public sealed class GitHubUpdateChecker(HttpMessageHandler? handler = null) : ID
     }
     public static bool TryVersion(string value, out Version version)
     {
-        var match = Regex.Match(value, @"^v?(\d+\.\d+\.\d+)(?:[-+].*)?$", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"\((\d+)\)", ".$1");
+        var match = Regex.Match(value, @"^v?(\d+\.\d+\.\d+(?:\.\d+)?)(?:[-+].*)?$", RegexOptions.IgnoreCase);
         version = new Version(0, 0, 0); if (!match.Success || !Version.TryParse(match.Groups[1].Value, out var parsed)) return false;
         version = parsed; return true;
     }

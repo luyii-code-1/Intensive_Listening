@@ -10,6 +10,7 @@ using IL.Core.Settings;
 using IL.Core.Student;
 using IL.Core.Telemetry;
 using IL.Core.Transcription;
+using IL.Core.Cloud;
 
 namespace IL.App.Services;
 
@@ -30,16 +31,20 @@ public sealed class AppServices : IAsyncDisposable
     public GitHubUpdateChecker Updates { get; } = new();
     public ManagedUpdater ManagedUpdates { get; }
     public ManagedLessonReceiver ManagedLessons { get; }
+    public CloudAccountService CloudAccount { get; } = new();
+    public CloudResources CloudFiles { get; }
     public Func<Task<bool>>? ConfirmForcedCuts {get;set;}
     public bool Standalone {get;}
     public string? PreconfigurationError { get; private set; }
     public AppServices(Action<Action> dispatch,bool standalone)
     {
         Standalone=standalone; Mdn=new(DataDirectory,AppBuildInfo.Version); if(!standalone)ManagedRuntime.Client=Mdn; ManagedUpdates=new(Mdn,DataDirectory); Projects=new(Path.Combine(DataDirectory,"projects"));
+        CloudFiles = new(CloudAccount.Authentication, DataDirectory);
         Student=new(()=>new LibVlcAudioPlayer(),LibraryDirectory,new LessonProgressStore(Path.Combine(DataDirectory,"lesson_progress.json")),SettingsStore,dispatch);
         ManagedLessons = new(Mdn, LibraryDirectory, DataDirectory);
         Queue=new(RunAsrAsync,FindDuplicateAsync,new QueueStore(Path.Combine(DataDirectory,"transcription_queue.json")),new SrtRecognitionCache(Path.Combine(DataDirectory,"cache","asr-srt")),()=>Settings.AsrCacheProfile);
         Transcriptions=new(Projects,Queue);
+        Mdn.Changed += ApplyStartup;
         Api=new(Projects,LibraryDirectory);Server=new(Api.DispatchAsync,Path.Combine(DataDirectory,"mcp","server.json"));
         Api.AgentName = () => Server.ActiveAgentName;
         Api.ExportStandalone=ExportStandaloneAsync;
@@ -63,11 +68,12 @@ public sealed class AppServices : IAsyncDisposable
             catch (Exception e) when (e is IOException or FormatException or UnauthorizedAccessException or YamlDotNet.Core.YamlException)
             { PreconfigurationError = "预设配置未应用，请检查 il_precfg.yaml 的格式和字段。"; AppLog.Warning(PreconfigurationError); }
         }
-        Settings=await SettingsStore.LoadAsync();AppLog.DebugEnabled=Settings.DebugLogging;await Queue.RestoreAsync();await Transcriptions.RestorePendingAsync();await Student.RefreshAsync();
+        Settings=await SettingsStore.LoadAsync();AppLog.DebugEnabled=Settings.DebugLogging;ApplyStartup();await Queue.RestoreAsync();await Transcriptions.RestorePendingAsync();await Student.RefreshAsync();
     }
     public async Task ApplySettingsAsync(AppSettings settings)
     {
         settings=await SettingsStore.NormalizeAsync(settings); Settings=settings;AppLog.DebugEnabled=settings.DebugLogging;
+        ApplyStartup();
         CrashMonitor.SetConsent(settings.TelemetryEnabled && !Standalone);
         Student.TranscriptFontSize=settings.TranscriptFontSize;
         Student.TranscriptBlurIntensity=settings.TranscriptBlurIntensity;
@@ -75,6 +81,12 @@ public sealed class AppServices : IAsyncDisposable
         if(!Standalone){if(settings.FileAssociationPrompted || ManagedRuntime.Policy.Settings.ContainsKey("fileAssociationEnabled"))await new IlpFileAssociation().ApplyAsync(settings.FileAssociationEnabled);if(settings.McpEnabled)await Server.StartAsync();else await Server.StopAsync();}
         await Telemetry.ApplyConsentAsync(settings.TelemetryEnabled,!Standalone);
         if (!Standalone) await new CrashReportStore(DataDirectory).FlushAsync(settings.TelemetryEnabled, Telemetry.ReportCrashAsync);
+    }
+    private void ApplyStartup()
+    {
+        if (Standalone) return;
+        try { WindowsStartup.Apply(Mdn.Configuration != null || Settings.StartAtLogin); }
+        catch (Exception error) { AppLog.Error("设置开机自启失败", error); }
     }
     private async Task<string> RunAsrAsync(string audio,IProgress<AsrProgress>? progress,CancellationToken ct,TimeSpan? estimated)
     {
@@ -99,5 +111,9 @@ public sealed class AppServices : IAsyncDisposable
         try{await new ProjectDelivery().CreateIlpAsync(project,temp);return await new StandaloneLessonExporter(AppContext.BaseDirectory,Path.Combine(AppContext.BaseDirectory,"tools","lesson_player_launcher.exe")).ExportAsync(temp,output);}
         finally{if(File.Exists(temp))File.Delete(temp);}
     }
-    public async ValueTask DisposeAsync(){ManagedLessons.Dispose();ManagedUpdates.Dispose();Updates.Dispose();await Mdn.DisposeAsync();await Server.DisposeAsync();await Queue.DisposeAsync();await Transcriptions.DisposeAsync();await Student.DisposeAsync();await Telemetry.ShutdownAsync();}
+    public async ValueTask DisposeAsync()
+    {
+        try { CloudFiles.Dispose();CloudAccount.Dispose();ManagedLessons.Dispose();ManagedUpdates.Dispose();Updates.Dispose();await Mdn.DisposeAsync();await Server.DisposeAsync();await Queue.DisposeAsync();await Transcriptions.DisposeAsync();await Student.DisposeAsync();await Telemetry.ShutdownAsync(); }
+        finally { Mdn.Changed -= ApplyStartup; AppLog.DebugEnabled = false; await RuntimeDiagnostics.Completion; }
+    }
 }

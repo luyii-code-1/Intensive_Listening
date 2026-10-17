@@ -32,4 +32,10 @@ public sealed class SrtRecognitionCache(string? root=null)
         }
         catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or FormatException){}
     }
+    public void Invalidate(string audioMd5, string profile)
+    {
+        // Keep the original SRT for diagnosis; removing metadata prevents cache reuse.
+        var files = Files(audioMd5, profile);
+        File.Delete(files.Metadata);
+    }
 }

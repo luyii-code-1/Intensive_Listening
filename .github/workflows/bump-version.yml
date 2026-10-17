@@ -10,13 +10,13 @@ name: Bump player version and sync the site
 # 为什么不会自我循环：GitHub 不会为「用仓库自带 GITHUB_TOKEN 推送」产生的
 # push 事件启动工作流，所以本工作流的 bump 提交不会再次触发自己。
 # 下面的 `if` 是第二道保险，防止手工用别的凭据推了 bump 提交时重复 bump。
+#
 # paths 的对齐准则：**跟着 sw.js 的 PRECACHE_RESOURCES 走，不是跟着「感觉像
 # 代码的文件」走**。凡在预缓存清单里的产物，改了而不 bump 都会让用户卡在旧副本。
 # 当前的预缓存产物为：
 #   /、index.html、manifest.json、favicon.ico、css/fluent.css、fonts/*.woff2、
 #   js/*.js、lib/jszip.min.js、sample.ilp、icons/*
 # 下面逐条覆盖（根路径与 index.html 同项）。新增预缓存资源时，这里要同步加。
-#
 # 不放进 paths 的同类项：只有 README/文档，改了不影响产物。
 on:
   push:
@@ -68,28 +68,6 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
-      - name: Bump the build number
-        id: bump
-        run: |
-          set -euo pipefail
-          # 先同步再 bump：这样下面取的 HEAD 必然就是 bump 提交的父提交，
-          # commit-text 的语义不会因并发插入而漂移（若放到推送前 rebase，父提交可能变）。
-          git -C player config user.name 'github-actions[bot]'
-          git -C player config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git -C player pull --rebase origin web-edition
-          base="$(git -C player rev-parse HEAD)"
-          before="$(node site-tools/scripts/bump-web-version.mjs --print-version player)"
-          node site-tools/scripts/bump-web-version.mjs player "$base"
-          after="$(node site-tools/scripts/bump-web-version.mjs --print-version player)"
-          if [[ "$before" == "$after" ]]; then
-            echo '::error::版本号没有变化，检查 bump-web-version.mjs 的改写规则。'
-            exit 1
-          fi
-          {
-            echo "version=$after"
-            echo "base=$base"
-          } >> "$GITHUB_OUTPUT"
-
       # commit-text 的语义（已逐一核对历史）：
       #
       #   它写的是「产出该版本的构建所**基于**的提交」——即被 bump 掉的那次产物改动，
@@ -103,26 +81,50 @@ jobs:
       # 反例（不是准则，勿照抄）：1.2.1+12 起 commit-text 退化为手写占位 winui3，
       # 一直继承到 1.5.0+16；1.5.0+16 本身也不是 bump 提交，而是功能提交自写版本号。
       #
-      # 这里用的 base 是「同步之后、bump 之前」的 HEAD，因此恒等于 bump 提交的父提交。
-      - name: Commit and push the bump
-        env:
-          VERSION: ${{ steps.bump.outputs.version }}
-          BASE: ${{ steps.bump.outputs.base }}
-        working-directory: player
+      # 循环保证 base 恒等于 bump 提交的父提交：每轮都重新 fetch+rebase、重取 base、
+      # 按新 base 重写 commit-text 后再推。「推送瞬间远端又前进」因此在本轮内收敛，
+      # 而不是失败后等下一次触发（那样会多消耗一次构建）。
+      - name: Bump and push the version
+        id: push
         run: |
           set -euo pipefail
-          git add -A
-          if git diff --cached --quiet; then
-            echo "::notice::版本号已是 $VERSION，无需提交。"
-            exit 0
-          fi
-          git commit -m "chore(release): Bump version to $VERSION ($BASE)"
-          git push origin HEAD:web-edition
+          cd player
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for attempt in 1 2 3; do
+            git fetch --quiet origin web-edition
+            git rebase origin/web-edition
+            base="$(git rev-parse HEAD)"
+            before="$(node ../site-tools/scripts/bump-web-version.mjs --print-version .)"
+            # 按当前 base 重写五处版本串（含 commit-text）；--print-version 只读。
+            node ../site-tools/scripts/bump-web-version.mjs . "$base"
+            version="$(node ../site-tools/scripts/bump-web-version.mjs --print-version .)"
+            if [[ "$before" == "$version" ]]; then
+              echo '::error::版本号没有变化，检查 bump-web-version.mjs 的改写规则。'
+              exit 1
+            fi
+            git add -A
+            if git diff --cached --quiet; then
+              echo "::notice::版本号已是 $version，无需提交。"
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git commit -m "chore(release): Bump version to $version ($base)"
+            if git push origin HEAD:web-edition; then
+              echo "已推送 $before -> $version @ $base"
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::第 $attempt 次推送被拒（远端已前进），重新同步后重试。"
+            git reset --hard "$base"
+          done
+          echo '::error::连续三次推送被拒，web-edition 可能正被高频推送。'
+          exit 1
 
       # 官网构建时读 web.json 显示 PWA 版本，因此这里同步它，顺带触发官网重建。
       - name: Sync the version onto the website
         env:
-          VERSION: ${{ steps.bump.outputs.version }}
+          VERSION: ${{ steps.push.outputs.version }}
         run: |
           set -euo pipefail
           cd site-tools

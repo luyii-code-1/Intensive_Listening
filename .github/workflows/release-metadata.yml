@@ -1,12 +1,14 @@
 name: Publish website release metadata
 
-# 发版后做两件事：
-#   1. bump web-edition（Web 播放器）的构建号并推送
-#   2. 把 Release 元数据与 Web 版本写进 website 分支，EdgeOne 随即重建
+# 发版后把桌面版 Release 元数据写进 website 分支的 downloads/latest.json，并同步
+# release.js 的兜底版本号。website 分支的 EdgeOne 自动构建随即重新部署。
+#
+# 只管桌面版版本。Web 播放器（web-edition）是独立版本线，由该分支上的
+# bump-version.yml 负责——它的改动未必伴随桌面版发版，挂在 Release 上会漏 bump。
 #
 # 必须位于本仓库（student_app）的默认分支 main：release 事件只运行默认分支上的
-# 工作流，放在 website / web-edition 分支上永远不会触发。步骤里检出的是那两个
-# 分支——它们与本分支历史互不相干，但同仓库内可以互相检出与推送。
+# 工作流，放在 website 分支上永远不会触发。步骤里检出的是 website 分支——两个
+# 分支历史互不相干，但同一仓库内可以互相检出与推送。
 on:
   release:
     types: [published]
@@ -16,63 +18,19 @@ on:
         description: 要发布的 Release tag（如 v2.2.0）；留空则取最新稳定版
         required: false
         type: string
-      bump_web:
-        description: 手工触发时是否同时递增 Web 播放器构建号
-        required: false
-        type: boolean
-        default: true
 
 permissions:
   contents: write
 
+# 与 web-edition 的 bump-version.yml 共用同一组：两者都会推 website 分支。
 concurrency:
   group: website-release-metadata
   cancel-in-progress: false
 
 jobs:
-  # Web 播放器（web-edition 分支）的构建号是独立于桌面版的 1.x+N 系列。
-  # 单独一个 job：失败不应挡住官网元数据（它用 always() 判断结果）。
-  bump-web-player:
-    # release 事件与手工触发都递增；手工触发时可用 bump_web=false 只更新官网元数据。
-    if: github.event_name == 'release' || inputs.bump_web
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out the web-edition branch
-        uses: actions/checkout@v7
-        with:
-          ref: web-edition
-          token: ${{ github.token }}
-
-      - name: Bump the Web player build number
-        id: bump
-        run: |
-          set -euo pipefail
-          before="$(grep -oE "il-pwa-[0-9.]+(\+[0-9]+)?" sw.js | head -1 | sed 's/il-pwa-//')"
-          node scripts/bump-web-version.mjs .
-          after="$(grep -oE "il-pwa-[0-9.]+(\+[0-9]+)?" sw.js | head -1 | sed 's/il-pwa-//')"
-          if [[ "$before" == "$after" ]]; then
-            echo '::error::Web 播放器版本没有变化，检查 bump-web-version.mjs 的改写规则。'
-            exit 1
-          fi
-          echo "version=$after" >> "$GITHUB_OUTPUT"
-
-      - name: Commit and push
-        env:
-          VERSION: ${{ steps.bump.outputs.version }}
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m "chore(release): Bump version to $VERSION"
-          git push origin HEAD:web-edition
-
-  # 官网元数据：桌面版下载按钮的版本 + 页面上显示的 Web 播放器版本。
-  publish-site-metadata:
-    needs: [bump-web-player]
-    # bump-web-player 只在手工触发且勾选时才运行，因此这里允许它被跳过，
-    # 而不是让整个工作流失败。
-    if: always() && (needs.bump-web-player.result == 'success' || needs.bump-web-player.result == 'skipped')
+  publish:
+    # 与 csharp-windows-build.yml 的 deploy job 一致：只处理正式版 2.x 发布。
+    if: github.event_name == 'workflow_dispatch' || (!github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v2.'))
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -110,20 +68,6 @@ jobs:
         if: steps.resolve.outputs.changed == 'true'
         run: node scripts/publish-release.mjs release.json .
 
-      # 官网显示的 Web 版本取自 web-edition 的 sw.js，避免像 1.1.0 那样长期陈旧。
-      # 用 checkout 而非 git clone：同一份 token，且走 Actions 的网络路径。
-      - name: Check out the web-edition branch
-        if: steps.resolve.outputs.changed == 'true'
-        uses: actions/checkout@v7
-        with:
-          ref: web-edition
-          path: webedition
-          token: ${{ github.token }}
-
-      - name: Sync the Web player version onto the site
-        if: steps.resolve.outputs.changed == 'true'
-        run: node scripts/sync-web-version.mjs webedition .
-
       - name: Test and build
         if: steps.resolve.outputs.changed == 'true'
         env:
@@ -133,6 +77,7 @@ jobs:
           npm test
           npm run build
           grep -q "$TAG" dist/downloads/latest.json
+          # __WEB_VERSION__ 由已提交的 web.json 提供，不属于本工作流，但残留即构建出错。
           for placeholder in __VERSION__ __WEB_VERSION__; do
             if grep -q "$placeholder" dist/index.html; then
               echo "::error::index.html 里仍有未替换的 $placeholder 占位符。"
@@ -149,7 +94,7 @@ jobs:
           rm -rf dist release.json
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add downloads/latest.json release.js web.json
+          git add downloads/latest.json release.js
           if git diff --cached --quiet; then
             echo "::notice::网站元数据已是 $TAG，无需提交。"
             exit 0

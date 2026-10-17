@@ -1,17 +1,17 @@
 name: Publish website release metadata
 
-# 发版后把桌面版 Release 元数据写进 website 分支的 downloads/latest.json，并同步
+# 发布构建与附件上传完成后，把 Release 元数据写进 website 分支的 downloads/latest.json，并同步
 # release.js 的兜底版本号。website 分支的 EdgeOne 自动构建随即重新部署。
 #
 # 只管桌面版版本。Web 播放器（web-edition）是独立版本线，由该分支上的
 # bump-version.yml 负责——它的改动未必伴随桌面版发版，挂在 Release 上会漏 bump。
 #
-# 必须位于本仓库（student_app）的默认分支 main：release 事件只运行默认分支上的
-# 工作流，放在 website 分支上永远不会触发。步骤里检出的是 website 分支——两个
-# 分支历史互不相干，但同一仓库内可以互相检出与推送。
+# workflow_run 入口位于默认分支 main，步骤检出 website 分支以更新官网元数据。
+# 官网由 EdgeOne 托管，安装包保存在 GitHub Release。
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["C# Windows build"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -29,8 +29,13 @@ concurrency:
 
 jobs:
   publish:
-    # 与 csharp-windows-build.yml 的 deploy job 一致：只处理正式版 2.x 发布。
-    if: github.event_name == 'workflow_dispatch' || (!github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v2.'))
+    # 只接续本仓库成功的 Release 构建；标签还须通过最新正式版检查。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'release' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       startsWith(github.event.workflow_run.head_branch, 'v2.'))
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -46,7 +51,7 @@ jobs:
         id: resolve
         env:
           REQUESTED_TAG: ${{ inputs.tag }}
-          EVENT_TAG: ${{ github.event.release.tag_name }}
+          EVENT_TAG: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
           requested="${REQUESTED_TAG:-$EVENT_TAG}"

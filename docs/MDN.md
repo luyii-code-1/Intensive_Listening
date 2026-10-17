@@ -1,6 +1,6 @@
 # MDN 集控与更新
 
-本文对应 Intensive Listening **2.1.0(1) 预发布**及配套 MDN 服务端。发布标签为 `v2.1.0(1)-Pre`，更新任务填写数值版本 `2.1.0.1`。功能概览见 [本版发布说明](RELEASE_2.1.0_1_PRE.md)。
+本文介绍 Intensive Listening MDN 集控服务端。更新任务填写目标安装包的完整数值版本，例如本次正式版 `2.1.2.3`；安装器和 `MDN.Server.exe` 从[对应 Release](https://github.com/luyii-code-1/Intensive_Listening/releases/tag/v2.1.2.3)下载。
 
 客户端目前支持 Windows。MDN 服务端使用 FastAPI、SQLite 和内置管理页面，Windows 部署文件为 `MDN.Server.exe`。开发源文件位于 `mdn_server`。
 

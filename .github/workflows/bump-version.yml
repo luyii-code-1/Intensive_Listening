@@ -72,43 +72,51 @@ jobs:
         id: bump
         run: |
           set -euo pipefail
+          # 先同步再 bump：这样下面取的 HEAD 必然就是 bump 提交的父提交，
+          # commit-text 的语义不会因并发插入而漂移（若放到推送前 rebase，父提交可能变）。
+          git -C player config user.name 'github-actions[bot]'
+          git -C player config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C player pull --rebase origin web-edition
+          base="$(git -C player rev-parse HEAD)"
           before="$(node site-tools/scripts/bump-web-version.mjs --print-version player)"
-          node site-tools/scripts/bump-web-version.mjs player "$GITHUB_SHA"
+          node site-tools/scripts/bump-web-version.mjs player "$base"
           after="$(node site-tools/scripts/bump-web-version.mjs --print-version player)"
           if [[ "$before" == "$after" ]]; then
             echo '::error::版本号没有变化，检查 bump-web-version.mjs 的改写规则。'
             exit 1
           fi
-          echo "version=$after" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$after"
+            echo "base=$base"
+          } >> "$GITHUB_OUTPUT"
 
-      # commit-text 的语义（已核对历史约定）：
+      # commit-text 的语义（已逐一核对历史）：
       #
       #   它写的是「产出该版本的构建所**基于**的提交」——即被 bump 掉的那次产物改动，
-      #   而不是 bump 提交自身（它只改版本串，不引入任何产物变化）。
+      #   而不是 bump 提交自身（那只是 chore(release) 空转，不引入任何产物变化）。
+      #   等价判据：commit-text == bump 提交的父提交。
       #
-      # 历史配对（commit-text 恒等于 bump 提交的父提交）：
-      #   1.0.1+9  -> 25f9062  (bump 提交 64b1338 的父)
-      #   1.2.1+12 -> 9236223  (bump 提交 4167c8b 的父)
-      # 历史上的 bump 提交信息也写成「Bump version to <版本> (<父提交>)」，与本处一致。
+      # 历次 Bump version 提交全部符合：1.0.1+8/274b776→6d0f5ac、
+      # 1.0.1+9/25f9062→274b776、64b1338→25f9062、1.1.0+10/9049c8a→64b1338。
+      # 历史上的 bump 提交信息也把父提交写在括号里，与本处格式一致。
       #
-      # 本轮以 $GITHUB_SHA 实现是正确的：触发本工作流的 push 提交就是那次产物改动，
-      # 也就是即将产生的 bump 提交的父提交。若日后改为在别的事件下 bump，需相应调整。
+      # 反例（不是准则，勿照抄）：1.2.1+12 起 commit-text 退化为手写占位 winui3，
+      # 一直继承到 1.5.0+16；1.5.0+16 本身也不是 bump 提交，而是功能提交自写版本号。
+      #
+      # 这里用的 base 是「同步之后、bump 之前」的 HEAD，因此恒等于 bump 提交的父提交。
       - name: Commit and push the bump
         env:
           VERSION: ${{ steps.bump.outputs.version }}
+          BASE: ${{ steps.bump.outputs.base }}
         working-directory: player
         run: |
           set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           if git diff --cached --quiet; then
             echo "::notice::版本号已是 $VERSION，无需提交。"
             exit 0
           fi
-          git commit -m "chore(release): Bump version to $VERSION ($GITHUB_SHA)"
-          # 工作流运行期间该分支可能又有新提交，先 rebase 再推，避免非快进被拒。
-          git pull --rebase origin web-edition
+          git commit -m "chore(release): Bump version to $VERSION ($BASE)"
           git push origin HEAD:web-edition
 
       # 官网构建时读 web.json 显示 PWA 版本，因此这里同步它，顺带触发官网重建。

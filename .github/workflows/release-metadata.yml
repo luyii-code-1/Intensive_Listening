@@ -1,0 +1,96 @@
+name: Publish website release metadata
+
+# 发版后把 Release 元数据写进 website 分支的 downloads/latest.json，并同步
+# release.js 的兜底版本号。website 分支的 EdgeOne 自动构建随即重新部署。
+#
+# 必须位于本仓库（student_app）的默认分支 main：release 事件只运行默认分支上的
+# 工作流，放在 website 分支上永远不会触发。步骤里检出的是 website 分支——两个
+# 分支历史互不相干，但同一仓库内可以互相检出与推送。
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要发布的 Release tag（如 v2.2.0）；留空则取最新稳定版
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: website-release-metadata
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # 与 csharp-windows-build.yml 的 deploy job 一致：只处理正式版 2.x 发布。
+    if: github.event_name == 'workflow_dispatch' || (!github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v2.'))
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out the website branch
+        uses: actions/checkout@v7
+        with:
+          ref: website
+          token: ${{ github.token }}
+
+      - name: Resolve the Release tag
+        id: resolve
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          requested="${REQUESTED_TAG:-$EVENT_TAG}"
+          latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
+          if [[ -z "$requested" ]]; then
+            requested="$latest"
+          fi
+          if [[ "$latest" != "$requested" ]]; then
+            # release.js 只在「最新稳定版」的语义下成立，回填旧版会误导用户。
+            echo "::notice::$requested 不是当前最新稳定版（$latest），跳过网站元数据更新。"
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$requested" >> "$GITHUB_OUTPUT"
+          gh api "repos/$GH_REPO/releases/tags/$requested" > release.json
+
+      - name: Write latest.json and sync the fallback tag
+        if: steps.resolve.outputs.changed == 'true'
+        run: node scripts/publish-release.mjs release.json .
+
+      - name: Test and build
+        if: steps.resolve.outputs.changed == 'true'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          npm test
+          npm run build
+          grep -q "$TAG" dist/downloads/latest.json
+          if grep -q '__VERSION__' dist/index.html; then
+            echo '::error::index.html 里仍有未替换的 __VERSION__ 占位符。'
+            exit 1
+          fi
+
+      - name: Commit and push
+        if: steps.resolve.outputs.changed == 'true'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          rm -rf dist release.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add downloads/latest.json release.js
+          if git diff --cached --quiet; then
+            echo "::notice::网站元数据已是 $TAG，无需提交。"
+            exit 0
+          fi
+          git commit -m "site: publish release metadata for $TAG"
+          git push origin HEAD:website

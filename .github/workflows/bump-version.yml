@@ -81,6 +81,18 @@ jobs:
           fi
           echo "version=$after" >> "$GITHUB_OUTPUT"
 
+      # commit-text 的语义（已核对历史约定）：
+      #
+      #   它写的是「产出该版本的构建所**基于**的提交」——即被 bump 掉的那次产物改动，
+      #   而不是 bump 提交自身（它只改版本串，不引入任何产物变化）。
+      #
+      # 历史配对（commit-text 恒等于 bump 提交的父提交）：
+      #   1.0.1+9  -> 25f9062  (bump 提交 64b1338 的父)
+      #   1.2.1+12 -> 9236223  (bump 提交 4167c8b 的父)
+      # 历史上的 bump 提交信息也写成「Bump version to <版本> (<父提交>)」，与本处一致。
+      #
+      # 本轮以 $GITHUB_SHA 实现是正确的：触发本工作流的 push 提交就是那次产物改动，
+      # 也就是即将产生的 bump 提交的父提交。若日后改为在别的事件下 bump，需相应调整。
       - name: Commit and push the bump
         env:
           VERSION: ${{ steps.bump.outputs.version }}

@@ -82,8 +82,8 @@ test('derives both platform links from DEFAULT_TAG when metadata is absent', asy
 
 test('derives both platform links from DEFAULT_TAG when metadata is malformed', async () => {
   const { links } = await run({ metadata: 'malformed' });
-  assert.match(links.windows.href, /Intensive-Listening-\d+\.\d+\.\d+-win-x64-Setup\.exe$/);
-  assert.match(links.macos.href, /Intensive-Listening-\d+\.\d+\.\d+-osx-arm64\.dmg$/);
+  assert.match(links.windows.href, /Intensive-Listening-\d+\.\d+\.\d+(?:\.\d+)?-win-x64-Setup\.exe$/);
+  assert.match(links.macos.href, /Intensive-Listening-\d+\.\d+\.\d+(?:\.\d+)?-osx-arm64\.dmg$/);
 });
 
 test('rejects metadata whose asset source is not a known Release URL', async () => {
@@ -104,4 +104,11 @@ test('keeps the version in build output in step with DEFAULT_TAG', async () => {
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   assert.ok(html.includes('__VERSION__'), 'index.html 里保留 __VERSION__ 占位符，由构建脚本替换');
   assert.ok(!/download\/v2\.\d+\.\d+\//.test(html), 'index.html 不应再写死版本号');
+});
+
+test('uses four-component release download metadata', async () => {
+  const metadata = JSON.parse(JSON.stringify(release()).replaceAll('2.1.0', '2.1.2.3'));
+  const { links, meta } = await run({ metadata });
+  assert.match(links.windows.href, /v2\.1\.2\.3\/Intensive-Listening-2\.1\.2\.3-win-x64-Setup\.exe$/);
+  assert.match(meta.textContent, /v2\.1\.2\.3/);
 });

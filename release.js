@@ -21,7 +21,7 @@ function releaseFor(tag) {
 
 function isReleaseAsset(source) {
   return typeof source === 'string' &&
-    /^https:\/\/github\.com\/luyii-code-1\/Intensive_Listening\/releases\/download\/v2\.\d+\.\d+\/Intensive-Listening-\d+\.\d+\.\d+-(?:win-x64-Setup\.exe|osx-arm64\.dmg)$/.test(source);
+    /^https:\/\/github\.com\/luyii-code-1\/Intensive_Listening\/releases\/download\/v2\.\d+\.\d+(?:\.\d+)?\/Intensive-Listening-\d+\.\d+\.\d+(?:\.\d+)?-(?:win-x64-Setup\.exe|osx-arm64\.dmg)$/.test(source);
 }
 
 // 只接受合法元数据：v2.x 稳定版，每项都带附件名与指向本仓库 Release 的来源。

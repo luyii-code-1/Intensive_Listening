@@ -53,3 +53,15 @@ test('HEAD preserves file size and has no body; upstream errors are not cached',
   assert.equal(missing.status, 404);
   assert.equal(missing.headers.get('Cache-Control'), 'no-store');
 });
+
+
+test('serves matching four-component builds and rejects mismatched filenames', async (t) => {
+  const target = url.replaceAll('2.1.0', '2.1.2.3');
+  t.mock.method(globalThis, 'fetch', async upstream => {
+    assert.equal(String(upstream), 'https://github.com/luyii-code-1/Intensive_Listening/releases/download/v2.1.2.3/Intensive-Listening-2.1.2.3-win-x64-Setup.exe');
+    return new Response(null, { headers: { 'Content-Length': '123' } });
+  });
+  assert.equal((await onRequest({ request: new Request(target, { method: 'HEAD' }) })).status, 200);
+  const mismatch = target.replace('Intensive-Listening-2.1.2.3-', 'Intensive-Listening-2.1.2.4-');
+  assert.equal((await onRequest({ request: new Request(mismatch) })).status, 404);
+});

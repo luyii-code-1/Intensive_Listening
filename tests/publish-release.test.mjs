@@ -73,3 +73,13 @@ test('syncFallbackTag rewrites only the fallback version constant', () => {
 test('syncFallbackTag fails loudly when release.js has no DEFAULT_TAG', () => {
   assert.throws(() => syncFallbackTag('const OTHER = 1;', 'v2.2.0'), /DEFAULT_TAG not found/);
 });
+
+test('publishes a four-component stable build version', () => {
+  const input = JSON.parse(JSON.stringify(release()).replaceAll('2.2.0', '2.1.2.3'));
+  const result = buildMetadata(input);
+  assert.equal(result.tag, 'v2.1.2.3');
+  assert.equal(result.assets.windows.filename, 'Intensive-Listening-2.1.2.3-win-x64-Setup.exe');
+  assert.equal(result.assets.macos.filename, 'Intensive-Listening-2.1.2.3-osx-arm64.dmg');
+  input.tag_name = 'v2.1.2.3.4';
+  assert.throws(() => buildMetadata(input), /stable 2\.x tag/);
+});

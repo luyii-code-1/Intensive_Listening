@@ -14,10 +14,10 @@ test('build.mjs stamps the version and ships downloads/latest.json', async () =>
 
   const html = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
   assert.ok(!html.includes('__VERSION__'), 'dist/index.html 不应残留 __VERSION__');
-  assert.match(html, /download\/v\d+\.\d+\.\d+\/Intensive-Listening-\d+\.\d+\.\d+-win-x64-Setup\.exe/);
+  assert.match(html, /download\/v\d+\.\d+\.\d+(?:\.\d+)?\/Intensive-Listening-\d+\.\d+\.\d+(?:\.\d+)?-win-x64-Setup\.exe/);
 
   const metadata = JSON.parse(await readFile(new URL('../dist/downloads/latest.json', import.meta.url), 'utf8'));
-  assert.match(metadata.tag, /^v2\.\d+\.\d+$/);
+  assert.match(metadata.tag, /^v2\.\d+\.\d+(?:\.\d+)?$/);
   assert.ok(metadata.assets.windows.source.endsWith(metadata.assets.windows.filename));
   assert.ok(metadata.assets.macos.source.endsWith(metadata.assets.macos.filename));
 

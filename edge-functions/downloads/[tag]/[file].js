@@ -12,7 +12,7 @@ export async function onRequest({ request }) {
     });
   }
   const path = new URL(request.url).pathname;
-  const match = /^\/downloads\/(v2\.\d+\.\d+)\/(Intensive-Listening-(\d+\.\d+\.\d+)-(?:win-x64-Setup\.exe|osx-arm64\.dmg))$/.exec(path);
+  const match = /^\/downloads\/(v2\.\d+\.\d+(?:\.\d+)?)\/(Intensive-Listening-(\d+\.\d+\.\d+(?:\.\d+)?)-(?:win-x64-Setup\.exe|osx-arm64\.dmg))$/.exec(path);
   if (!match || match[1] !== `v${match[3]}`) return failure(404, 'Unknown download');
 
   const headers = new Headers({ 'Accept-Encoding': 'identity' });

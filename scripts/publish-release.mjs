@@ -10,7 +10,7 @@ const PLATFORMS = { windows: 'win-x64-Setup.exe', macos: 'osx-arm64.dmg' };
 export function buildMetadata(release) {
   const tag = release?.tag_name;
   if (release?.draft || release?.prerelease) throw new Error('Release is a draft or prerelease');
-  const match = /^v(2\.\d+\.\d+)$/.exec(tag ?? '');
+  const match = /^v(2\.\d+\.\d+(?:\.\d+)?)$/.exec(tag ?? '');
   if (!match) throw new Error(`Expected a stable 2.x tag, got ${JSON.stringify(tag)}`);
   const version = match[1];
 

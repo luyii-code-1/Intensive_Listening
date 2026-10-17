@@ -24,9 +24,9 @@ const readVersion = async (path, pattern) => {
     return null;
   }
 };
-const tag = await readVersion(join(root, 'downloads', 'latest.json'), /"tag"\s*:\s*"(v\d+\.\d+\.\d+)"/)
+const tag = await readVersion(join(root, 'downloads', 'latest.json'), /"tag"\s*:\s*"(v\d+\.\d+\.\d+(?:\.\d+)?)"/)
   ?? await readVersion(join(root, 'release.js'), /DEFAULT_TAG\s*=\s*'([^']+)'/);
-if (!/^v2\.\d+\.\d+$/.test(tag ?? '')) throw new Error('Unable to resolve the site version');
+if (!/^v2\.\d+\.\d+(?:\.\d+)?$/.test(tag ?? '')) throw new Error('Unable to resolve the site version');
 
 // Web 播放器（web-edition 分支）版本，与桌面版是两条独立系列。
 // 唯一来源是 web-edition 的 sw.js 缓存名，由 scripts/sync-web-version.mjs 写入 web.json。

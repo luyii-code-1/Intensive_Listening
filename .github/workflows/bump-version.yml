@@ -10,12 +10,25 @@ name: Bump player version and sync the site
 # 为什么不会自我循环：GitHub 不会为「用仓库自带 GITHUB_TOKEN 推送」产生的
 # push 事件启动工作流，所以本工作流的 bump 提交不会再次触发自己。
 # 下面的 `if` 是第二道保险，防止手工用别的凭据推了 bump 提交时重复 bump。
+# paths 的对齐准则：**跟着 sw.js 的 PRECACHE_RESOURCES 走，不是跟着「感觉像
+# 代码的文件」走**。凡在预缓存清单里的产物，改了而不 bump 都会让用户卡在旧副本。
+# 当前的预缓存产物为：
+#   /、index.html、manifest.json、favicon.ico、css/fluent.css、fonts/*.woff2、
+#   js/*.js、lib/jszip.min.js、sample.ilp、icons/*
+# 下面逐条覆盖（根路径与 index.html 同项）。新增预缓存资源时，这里要同步加。
+#
+# 不放进 paths 的同类项：只有 README/文档，改了不影响产物。
 on:
   push:
     branches: [web-edition]
     paths:
       - 'js/**'
       - 'css/**'
+      - 'fonts/**'
+      - 'icons/**'
+      - 'lib/**'
+      - 'sample.ilp'
+      - 'favicon.ico'
       - 'index.html'
       - 'sw.js'
       - 'manifest.json'

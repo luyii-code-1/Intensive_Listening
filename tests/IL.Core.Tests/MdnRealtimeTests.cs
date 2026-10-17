@@ -29,7 +29,9 @@ public sealed class MdnRealtimeTests
             await using var client = new MdnClient(root, "2.1.0.1");
             client.Start();
             await Until(() => client.Status.Contains("实时") && server.PolicyRequests >= 2, deadline.Token);
-            await Task.Delay(100, deadline.Token);
+            // The heartbeat is processed after the ready message and its initial policy sync.
+            await server.HeartbeatAsync(deadline.Token);
+            await Until(() => client.LatencyMs.HasValue, deadline.Token);
             var requests = server.PolicyRequests;
             await client.SynchronizeAsync(deadline.Token, polling: true);
             Assert.Equal(requests, server.PolicyRequests);

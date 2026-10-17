@@ -1,6 +1,26 @@
-<h2>更新反馈与历史</h2>
-<div class="toolbar"><a href="/admin?scope={{ scope }}&amp;view=updates">查询最新状态</a><form method="post" action="/admin/updates/clear" data-confirm="清理已结束任务的历史反馈？当前下发任务会保留。"><input type="hidden" name="form_token" value="{{ csrf }}"><button class="secondary">清理历史</button></form></div>
-{% set status_names={'waiting':'等待接收','received':'已接收','downloading':'下载中','ready':'等待安装','deferred':'关闭窗口后安装','installing':'安装中','success':'更新成功','failed':'更新失败'} %}
-<div class="table-scroll"><table><thead><tr><th>版本与任务</th><th>设备</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>
-{% for item in update_feedback %}<tr><td>{{ item.version }} · {{ 'OTA' if item.mode=='ota' else '冷更新' }}<small class="mono">{{ item.id }}</small></td><td>{{ item.device_name }}<small class="mono">{{ item.device_id }}</small></td><td>{{ status_names[item.status] }}{% if item.status=='downloading' %} · {{ item.progress }}%{% endif %}<small>{{ item.message or '' }}</small></td><td>{{ item.at_text }}</td><td>{% if item.status=='failed' %}<form method="post" action="/admin/updates/retry" data-confirm="向此设备重新下发更新？"><input type="hidden" name="form_token" value="{{ csrf }}"><input type="hidden" name="task_id" value="{{ item.id }}"><input type="hidden" name="device_id" value="{{ item.device_id }}"><button>重试此设备</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="5" class="empty">尚无更新任务。</td></tr>{% endfor %}
-</tbody></table></div>
+<div id="update-feedback" data-replacement-count="{{ update_replacements }}">
+  <div class="update-summary">
+    {% for key,label in [('assigned','当前任务设备'),('waiting','等待接收'),('installing','下载或安装中'),('success','更新成功'),('failed','失败或未执行')] %}
+    <div><strong>{{ update_summary[key] }}</strong><span>{{ label }}</span></div>
+    {% endfor %}
+  </div>
+  <div class="section-heading"><h2>设备执行状态</h2><span class="muted">每台设备仅保留一个有效任务</span></div>
+  <div class="table-scroll"><table class="update-device-table">
+    <thead><tr><th>设备 / 当前版本</th><th>目标更新</th><th>执行状态</th><th>最近反馈</th><th>操作</th></tr></thead><tbody>
+    {% for item in update_devices %}<tr data-update-device="{{ item.device_id }}">
+      <td><strong>{{ item.device_name }}</strong><small>{{ item.installed_version or '版本未知' }}</small><small class="mono">{{ item.device_id }}</small></td>
+      <td>{% if item.id %}<strong>{{ item.version }}</strong><small>{{ 'OTA · 自动安装' if item.mode=='ota' else '冷更新 · 手动安装' }}</small><small class="mono" title="{{ item.id }}">{{ item.id[:8] }}</small>{% else %}<span class="muted">暂无任务</span>{% endif %}</td>
+      <td><span class="badge update-status {{ item.status }}">{{ item.status_name }}</span>{% if item.id and item.status=='downloading' %}<div class="download-progress"><progress max="100" value="{{ item.progress }}"></progress><span>{{ item.progress }}%</span></div>{% endif %}
+        {% if item.message %}<small class="update-message">{{ item.message }}</small>{% elif item.id and item.status=='waiting' %}<small>等待客户端确认接收；离线设备会在重连后接收。</small>{% endif %}</td>
+      <td>{{ item.at_text }}</td>
+      <td>{% if item.id and item.status in ['waiting','failed','skipped'] and item.enabled %}<form method="post" action="/admin/updates/retry" data-confirm="重新向 {{ item.device_name }} 下发此版本？此设备的旧任务将被替换。"><input type="hidden" name="form_token" value="{{ csrf }}"><input type="hidden" name="task_id" value="{{ item.id }}"><input type="hidden" name="device_id" value="{{ item.device_id }}"><button class="secondary">重新下发</button></form>{% endif %}</td>
+    </tr>{% else %}<tr><td colspan="5" class="empty">当前范围没有设备。</td></tr>{% endfor %}
+    </tbody></table></div>
+  <details class="update-history" data-update-details="history"><summary>更新历史 · 最近 50 项</summary>
+    <div class="toolbar"><span class="muted">新任务替换旧任务后，旧反馈会保留在这里。</span><form method="post" action="/admin/updates/clear" data-confirm="清理已结束下发的任务历史？有效任务及其反馈会保留。"><input type="hidden" name="form_token" value="{{ csrf }}"><button class="secondary">清理已结束历史</button></form></div>
+    {% for task in update_tasks %}<details class="update-history-task" data-update-details="{{ task.id }}"><summary><strong>{{ task.version }}</strong> · {{ 'OTA' if task.mode=='ota' else '冷更新' }} <span class="badge">{{ '仍在下发' if task.active else '已结束下发' }}</span> <span class="muted">{{ task.created_text }} · {{ task.targets|length }} 台设备</span></summary>
+      <p class="mono muted">{{ task.id }}</p>
+      <div class="table-scroll"><table><thead><tr><th>设备</th><th>下发状态</th><th>最后反馈</th></tr></thead><tbody>{% for target in task.targets %}<tr><td>{{ target.device_name }}</td><td>{{ target.state_name }}</td><td>{{ target.status_name }}{% if target.status=='downloading' %} · {{ target.progress }}%{% endif %}<small>{{ target.message or '' }}</small></td></tr>{% else %}<tr><td colspan="3" class="empty">等待设备加入当前发布范围。</td></tr>{% endfor %}</tbody></table></div>
+    </details>{% else %}<p class="muted">尚无更新记录。</p>{% endfor %}
+  </details>
+</div>

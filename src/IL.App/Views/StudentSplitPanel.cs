@@ -8,6 +8,7 @@ internal sealed class StudentSplitPanel : Panel
 {
     public StudentSplitPanel(Control player, Control transcript)
     {
+        ClipToBounds = true;
         Children.Add(player);
         Children.Add(new Border { Background = Brush.Parse("#16000000") });
         Children.Add(transcript);
@@ -16,7 +17,7 @@ internal sealed class StudentSplitPanel : Panel
     {
         if (availableSize.Width < 900)
         {
-            var playerHeight = Math.Min(420, availableSize.Height);
+            var playerHeight = Math.Min(420, Math.Max(0, availableSize.Height - 1));
             Children[0].Measure(new Size(availableSize.Width, playerHeight));
             Children[1].Measure(new Size(availableSize.Width, 1));
             Children[2].Measure(new Size(availableSize.Width, Math.Max(0, availableSize.Height - playerHeight - 1)));
@@ -34,7 +35,7 @@ internal sealed class StudentSplitPanel : Panel
     {
         if (finalSize.Width < 900)
         {
-            var playerHeight = Math.Min(420, finalSize.Height);
+            var playerHeight = Math.Min(420, Math.Max(0, finalSize.Height - 1));
             Children[0].Arrange(new Rect(0, 0, finalSize.Width, playerHeight));
             Children[1].Arrange(new Rect(0, playerHeight, finalSize.Width, 1));
             Children[2].Arrange(new Rect(0, playerHeight + 1, finalSize.Width, Math.Max(0, finalSize.Height - playerHeight - 1)));

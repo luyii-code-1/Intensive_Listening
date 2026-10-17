@@ -13,6 +13,15 @@ public sealed class TranscriptionWorkflowTests : IDisposable
     private TranscriptionQueue Queue(AsrRunner runner,Func<string,Task<DuplicateMatch?>>? duplicates=null,int retained=50)=>new(runner,duplicates??(_=>Task.FromResult<DuplicateMatch?>(null)),Store,Cache,()=>"model/en",maxRetained:retained);
     private static async Task Until(Func<bool> condition)
     {using var ct=new CancellationTokenSource(TimeSpan.FromSeconds(5));while(!condition())await Task.Delay(10,ct.Token);}
+    [Fact] public async Task FailedJobPersistsCompleteException()
+    {
+        await using var queue=Queue((_,_,_,_)=>throw new AsrException("outer failure",new IOException("inner marker")));
+        var audio=Path.Combine(root,"error.wav");await File.WriteAllTextAsync(audio,"error audio");
+        queue.Enqueue("error fixture",audio);await queue.WaitForIdleAsync();
+        var failed=Assert.Single(queue.Jobs);Assert.Equal(TranscriptionJobStatus.Failed,failed.Status);
+        Assert.Contains("inner marker",failed.ErrorDetails);Assert.Contains("AsrException",failed.ErrorDetails);
+        await queue.FlushAsync();var restored=Assert.Single(await Store.LoadAsync());Assert.Equal(failed.ErrorDetails,restored.ErrorDetails);
+    }
     [Fact] public async Task RunsFifoCachesAndConsumesCompletedTranscript()
     {
         var calls=new List<string>();var releases=new Queue<TaskCompletionSource<string>>();

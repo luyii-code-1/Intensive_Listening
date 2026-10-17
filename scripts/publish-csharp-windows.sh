@@ -52,12 +52,4 @@ manifest={str(p.relative_to(root)).replace('\\','/'):hashlib.sha256(p.read_bytes
 import json
 (root/'manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
 PY
-"$python_runtime" - "$output" <<'PY'
-import pathlib,sys,zipfile,hashlib
-root=pathlib.Path(sys.argv[1]);target=root.parent/(root.name+'.zip')
-with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=5) as z:
-    for p in sorted(root.rglob('*')):
-        if p.is_file():z.write(p,p.relative_to(root))
-target.with_suffix('.zip.sha256').write_text(hashlib.sha256(target.read_bytes()).hexdigest()+'  '+target.name+'\n')
-print(target)
-PY
+printf '%s\n' "$output"

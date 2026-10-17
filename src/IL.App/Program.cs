@@ -11,6 +11,13 @@ internal static class Program
     public static int Main(string[] args)
     {
         Arguments=args;
+        if (args.Length >= 2 && args[0] == "--restart-after-exit")
+        {
+            if (!int.TryParse(args[1], out var previous)) return 1;
+            try { using var process = System.Diagnostics.Process.GetProcessById(previous); if (!process.WaitForExit(60000)) return 1; }
+            catch (ArgumentException) { }
+            return CrashMonitor.Launch(args.Skip(2).ToArray()) ? 0 : 1;
+        }
         if (args.Length == 2 && args[0] == "--update-feedback-only")
             return ManagedUpdater.ReportInstallerResultAsync(args[1]).GetAwaiter().GetResult();
         var managedImport = Array.IndexOf(args, "--import-mdn-config");

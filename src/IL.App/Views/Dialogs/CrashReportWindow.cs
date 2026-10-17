@@ -25,7 +25,19 @@ public sealed class CrashReportWindow : Window
         var buttons = WorkspaceUi.Row(
             WorkspaceUi.Button("复制报告", async () => { if (Clipboard != null) await Clipboard.SetTextAsync(report.Summary); }),
             WorkspaceUi.Button("打开报告目录", () => { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(store.DirectoryPath) { UseShellExecute = true }); return Task.CompletedTask; }),
-            WorkspaceUi.Button("关闭", () => { Close(); return Task.CompletedTask; }, true));
+            WorkspaceUi.Button("重启应用", async () =>
+            {
+                try
+                {
+                    var running = Application.Current?.ApplicationLifetime as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
+                    if (running?.MainWindow is MainWindow main)
+                    { await main.RestartAsync(); Close(); return; }
+                    if (Services.CrashMonitor.Launch()) Close();
+                    else status.Text = "启动失败，请从安装目录重新打开应用。";
+                }
+                catch (Exception error) { AppLog.Error("重启应用失败", error); status.Text = error.Message; }
+            }, true),
+            WorkspaceUi.Button("关闭", () => { Close(); return Task.CompletedTask; }));
         buttons.HorizontalAlignment = HorizontalAlignment.Right;
         var body = new Grid { Margin = new Thickness(24), RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*,Auto") };
         body.Children.Add(WorkspaceUi.Text(report.Fatal ? "程序意外退出" : "后台任务意外退出", 23, true));

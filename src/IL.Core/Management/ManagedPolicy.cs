@@ -22,7 +22,7 @@ public sealed record ManagedPolicy
     public static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     public static readonly string[] Features = ["playback", "importAudio", "importIlp", "authoring", "asr", "mcp", "export", "importProject", "dataMaintenance", "apiConfiguration", "updates"];
     // Legal consent and optional Aliyun consent remain personal; MDN telemetry has a separate transport.
-    private static readonly string[] LocalOnly = ["eulaAcceptedVersion", "completedInstallationId", "telemetryEnabled", "telemetryPrompted", "fileAssociationPrompted"];
+    private static readonly string[] LocalOnly = ["eulaAcceptedVersion", "completedInstallationId", "telemetryEnabled", "telemetryPrompted", "fileAssociationPrompted", "startAtLogin"];
     public static string[] SettingNames => AppSettings.Defaults().ToJson().Select(p => p.Key).Except(LocalOnly).ToArray();
     public bool IsLocked(string name) => !LocalOnly.Contains(name) && (LockAllSettings || LockedSettings.Contains(name) || Settings.ContainsKey(name) || HideAsrConfiguration && IsAsr(name));
     public string[] AllowedImportExtensions() =>

@@ -45,7 +45,7 @@ public sealed class TranscriptionQueue : IAsyncDisposable
         var job=JobById(id);if(job==null||job.Status is not (TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted))return;
         if (job.Status == TranscriptionJobStatus.Failed && job.Srt is not null && job.AudioMd5 is not null && job.CacheProfile is not null)
             cache.Invalidate(job.AudioMd5, job.CacheProfile);
-        Update(id,j=>j with{Status=TranscriptionJobStatus.Queued,Stage=TranscriptionStage.Queued,Message="等待前面的任务完成。",Fraction=null,StartedAt=null,FinishedAt=null,Duplicate=null,Srt=null,SrtConsumed=false},true);Pump();
+        Update(id,j=>j with{Status=TranscriptionJobStatus.Queued,Stage=TranscriptionStage.Queued,Message="等待前面的任务完成。",Fraction=null,StartedAt=null,FinishedAt=null,Duplicate=null,Srt=null,SrtConsumed=false,ErrorDetails=null},true);Pump();
     }
     public void MarkSrtConsumed(string id)=>Update(id,j=>j with{SrtConsumed=true,Srt=null},true);
     public void FailSrtBinding(string id, string reason)
@@ -135,7 +135,12 @@ public sealed class TranscriptionQueue : IAsyncDisposable
             await cache.WriteAsync(job.AudioMd5!,profile,srt,ct);ct.ThrowIfCancellationRequested();Complete(id,srt,false);
         }
         catch(OperationCanceledException){if(!disposed)Update(id,j=>j with{Status=TranscriptionJobStatus.Canceled,Fraction=null,FinishedAt=DateTimeOffset.Now,Message="任务已取消。"},true);}
-        catch(Exception ex){if(!disposed)Update(id,j=>j with{Status=TranscriptionJobStatus.Failed,Fraction=null,FinishedAt=DateTimeOffset.Now,Message=ex is AsrException?ex.Message:"转写失败："+ex.Message},true);}
+        catch(Exception ex)
+        {
+            var details = CrashReportStore.Redact($"转写任务 {id}\n阶段：{JobById(id)?.Stage}\n时间：{DateTimeOffset.Now:O}\n{ex}");
+            AppLog.Error($"转写任务失败 id={id}", ex);
+            if(!disposed)Update(id,j=>j with{Status=TranscriptionJobStatus.Failed,Fraction=null,FinishedAt=DateTimeOffset.Now,Message=CrashReportStore.Redact(ex is AsrException?ex.Message:"转写失败："+ex.GetBaseException().Message),ErrorDetails=details},true);
+        }
         finally{lock(sync)running.Remove(id);cancellation.Dispose();Trim();Pump();}
     }
     private sealed class InlineProgress(Action<AsrProgress> callback):IProgress<AsrProgress>{public void Report(AsrProgress value)=>callback(value);}

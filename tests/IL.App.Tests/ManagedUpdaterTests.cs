@@ -30,6 +30,61 @@ public sealed class ManagedUpdaterTests : IDisposable
     public void Dispose() { _key.Dispose(); if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 
     [Fact]
+    public async Task ReplacementDuringDownloadCancelsOldWorkAndProcessesLatestPush()
+    {
+        var old = Offer(); var latest = Offer("cold", "2.1.2"); _policy = new() { Update = old };
+        var entered = new TaskCompletionSource(); var cancelled = false; var downloads = new List<string>();
+        using var client = Create(async (update, ct) =>
+        {
+            downloads.Add(update.Id);
+            if (update.Id == old.Id)
+            {
+                entered.TrySetResult();
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+                catch (OperationCanceledException) { cancelled = true; throw; }
+            }
+            return "verified.exe";
+        });
+        var refreshing = client.RefreshAsync(); await entered.Task;
+        _policy = new() { Update = latest };
+        var pushed = client.RefreshAsync();
+        await Task.WhenAll(refreshing, pushed).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(cancelled); Assert.Equal(new[] { old.Id, latest.Id }, downloads);
+        Assert.Equal(latest.Id, client.UpdateId); Assert.True(client.CanInstall);
+    }
+    [Fact]
+    public async Task AutomaticFailureDoesNotLoseAReplacementWaitingInTheQueue()
+    {
+        _policy = new() { Update = Offer("ota") };
+        var entered = new TaskCompletionSource(); var release = new TaskCompletionSource();
+        using var client = Create();
+        client.AutomaticInstall = async () => { entered.TrySetResult(); await release.Task; throw new InvalidOperationException("dialog failed"); };
+        var refreshing = client.RefreshAsync(); await entered.Task;
+        var latest = Offer("cold", "2.1.2"); _policy = new() { Update = latest };
+        var replacement = client.RefreshAsync(); release.TrySetResult();
+        await Task.WhenAll(refreshing, replacement).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(latest.Id, client.UpdateId); Assert.True(client.CanInstall);
+    }
+    [Fact]
+    public async Task SignatureFailureIsReportedToTheTaskInsteadOfStayingUnreceived()
+    {
+        var task = Offer() with { Signature = Convert.ToBase64String(new byte[256]) };
+        _policy = new() { Update = task };
+        var feedback = new List<(string Id, string Status, string Message)>();
+        var config = new MdnConfiguration { ServerUrl = "http://127.0.0.1:9/", DisableSsl = true, UpdatePublicKey = Convert.ToBase64String(_key.ExportSubjectPublicKeyInfo()) };
+        using var client = new ManagedUpdater(() => _policy, () => config, _ => null, _root, "2.0.1", feedback: (update, status, message, _) =>
+        { feedback.Add((update.Id, status, message)); return Task.CompletedTask; });
+        await client.RefreshAsync();
+        Assert.Contains(feedback, item => item.Id == task.Id && item.Status == "failed" && item.Message.Contains("签名"));
+        Assert.False(client.HasUpdate);
+    }
+    [Theory]
+    [InlineData("2.1.2.0", "2.1.2", true)]
+    [InlineData("2.1.2", "2.1.2.0", true)]
+    [InlineData("2.1.2", "2.1.1.9", false)]
+    public void VersionComparisonTreatsMissingRevisionAsZero(string installed, string offered, bool allowed)
+        => Assert.Equal(allowed, ManagedUpdateJournal.AllowsVersion(installed, offered));
+    [Fact]
     public async Task ColdSameVersionDownloadsBeforeNoticeAndWaitsForClickToInstall()
     {
         _policy = new() { Update = Offer() };

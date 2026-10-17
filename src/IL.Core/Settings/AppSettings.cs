@@ -32,6 +32,7 @@ public sealed record AppSettings
     public int TranscriptBlurIntensity { get; init; } = MaxTranscriptBlurIntensity;
     public IReadOnlyDictionary<PlayerShortcutAction, string> PlayerKeyBindings { get; init; } = DefaultPlayerBindings(new Dictionary<PlayerShortcutAction, string>());
     public bool DebugLogging { get; init; }
+    public bool StartAtLogin { get; init; }
     public bool TelemetryEnabled { get; init; }
     public bool TelemetryPrompted { get; init; }
     public string EulaAcceptedVersion { get; init; } = "";
@@ -49,6 +50,7 @@ public sealed record AppSettings
     public static AppSettings FromJson(JsonObject j) => new()
     {
         CompletedInstallationId = String(j, "completedInstallationId", ""),
+        StartAtLogin = Bool(j, "startAtLogin"),
         CreateProjectOnAudioImport = Bool(j, "createProjectOnAudioImport", true),
         TranscriptBlurIntensity = Math.Clamp(Integer(j, "transcriptBlurIntensity", MaxTranscriptBlurIntensity), MinTranscriptBlurIntensity, MaxTranscriptBlurIntensity),
         ApplicationFontFamily = String(j, "applicationFontFamily", ""),

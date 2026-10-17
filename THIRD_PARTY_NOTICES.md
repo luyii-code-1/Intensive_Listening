@@ -4,7 +4,7 @@ Intensive Listening 以 GNU General Public License v3.0 发布，同时包含或
 
 ## ClassIsland 2（Ci2）
 
-部分设计和代码借鉴了 ClassIsland 2，包括欢迎引导、应用内通知及设置页面的组织方式。
+部分设计和代码借鉴了 ClassIsland 2，包括欢迎引导、应用内通知、设置页面组织、窗口框架及日志查看交互。
 感谢 HelloWRC 及 ClassIsland 贡献者。ClassIsland 使用 GNU GPL v3.0；本项目按自身工作流改写和适配。
 来源：https://github.com/ClassIsland/ClassIsland
 借鉴声明见 `assets/legal/ClassIsland-NOTICE.txt`；开源许可证可在应用“关于”页查看。
@@ -37,6 +37,9 @@ Windows 版内置官方 RUM PC SDK 0.4.4 的 x64 DLL，macOS 构建准备了同�
 用户关闭匿名数据分析后，应用关闭 SDK 并清理待发送缓存。
 
 ## C# 2.0 桌面组件
+
+Microsoft.Diagnostics.NETCore.Client 0.2.750501 及其 Microsoft.Extensions 依赖使用 MIT 许可证。
+Copyright © Microsoft Corporation。用于本机 EventPipe 性能采样，来源：https://github.com/dotnet/diagnostics 。
 
 Avalonia 12.1.3、FluentAvalonia 3.0.1、CommunityToolkit.Mvvm 8.4.0 与 SharpZipLib
 1.4.2、YamlDotNet 16.3.0 使用 MIT 许可证；LibVLCSharp 3.10.1 与 LibVLC Windows 3.0.24 使用

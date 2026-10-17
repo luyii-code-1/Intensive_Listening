@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using IL.Core.Infrastructure;
 namespace IL.Core.Telemetry;
-public sealed class AppTelemetry(string version="2.1.0.1",ITelemetryTransport? transport=null,string? dataDirectory=null,bool? supportedPlatform=null)
+public sealed class AppTelemetry(string version="2.1.2.3",ITelemetryTransport? transport=null,string? dataDirectory=null,bool? supportedPlatform=null)
 {
     private readonly ITelemetryTransport _transport=transport??new NativeTelemetryTransport(); private readonly SemaphoreSlim _gate=new(1,1); private readonly bool _supported=supportedPlatform??(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS());
     private volatile bool _consent,_enabled; private bool _launchReported,_activeReported; public bool Enabled=>_enabled;
@@ -38,6 +38,7 @@ public sealed class AppTelemetry(string version="2.1.0.1",ITelemetryTransport? t
                 ["process_id"] = report.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["component"] = report.Component, ["exception_type"] = report.ExceptionType,
                 ["message"] = CrashReportStore.Redact(report.Message), ["details"] = CrashReportStore.Redact(report.Details),
+                ["recent_operations"] = CrashReportStore.Redact(report.RecentOperations),
                 ["fatal"] = report.Fatal ? "true" : "false"
             };
             if (report.ExitCode is int exitCode) fields["exit_code"] = exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture);

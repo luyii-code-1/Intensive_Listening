@@ -13,8 +13,15 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = Services.CrashMonitor.ReportPath is { } path ? new Views.Dialogs.CrashReportWindow(path) : new MainWindow();
-            if (OperatingSystem.IsWindows() && desktop.MainWindow is MainWindow main && !Program.Arguments.Contains("--standalone"))
+            var window = Services.CrashMonitor.ReportPath is { } path ? (Window)new Views.Dialogs.CrashReportWindow(path) : new MainWindow();
+            var background = window is MainWindow && OperatingSystem.IsWindows() && Program.Arguments.Contains("--background-after-update");
+            desktop.MainWindow = background ? null : window;
+            if (background) Dispatcher.UIThread.Post(async () =>
+            {
+                desktop.MainWindow = window;
+                await ((MainWindow)window).InitializeBackgroundAsync();
+            });
+            if (OperatingSystem.IsWindows() && window is MainWindow main && !Program.Arguments.Contains("--standalone"))
             {
                 desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 Program.Instance?.SetActivationHandler(args => Dispatcher.UIThread.Post(async () => await main.ActivateFromLaunchAsync(args)));

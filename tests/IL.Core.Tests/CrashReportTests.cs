@@ -9,6 +9,24 @@ public sealed class CrashReportTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "il-crash-tests-" + Guid.NewGuid().ToString("N"));
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
     [Fact]
+    public async Task FullErrorTrackPreservesNestedExceptionAndLongStackWithOperationContext()
+    {
+        AppLog.Operation("transcription", "enqueue project=example Authorization: Bearer operation-secret");
+        var inner = new IOException("nested failure");
+        var report = CrashReport.FromException(new InvalidOperationException(new string('x', 24000), inner), "转写", false, true);
+        Assert.Contains("nested failure", report.Details);
+        Assert.Contains("enqueue project=example", report.RecentOperations);
+        Assert.DoesNotContain("operation-secret", report.RecentOperations);
+        var transport = new Transport { Online = true };
+        var telemetry = new AppTelemetry(transport: transport, dataDirectory: _root, supportedPlatform: true);
+        await telemetry.ApplyConsentAsync(true, true);
+        Assert.True(await telemetry.ReportCrashAsync(report));
+        var sent = Assert.Single(transport.Events, e => e.Name == "error_track");
+        Assert.Equal(report.Details, sent.Fields["details"]);
+        Assert.Equal(report.RecentOperations, sent.Fields["recent_operations"]);
+        await telemetry.ShutdownAsync();
+    }
+    [Fact]
     public async Task OfflineReportRetriesOnceAndKeepsLocalReport()
     {
         var store = new CrashReportStore(_root); var report = CrashReport.FromException(new InvalidOperationException("scroll failure"), "审阅", true, true); store.Save(report);

@@ -14,6 +14,7 @@ public sealed class MdnClient : IAsyncDisposable
     private HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
     private CancellationTokenSource _stop = new();
     private readonly SemaphoreSlim _request = new(1, 1);
+    private readonly SemaphoreSlim _wake = new(0, 1);
     private readonly Channel<object> _events = Channel.CreateBounded<object>(new BoundedChannelOptions(128) { FullMode = BoundedChannelFullMode.DropOldest });
     private Task? _loop;
     private Task? _realtime;
@@ -23,6 +24,11 @@ public sealed class MdnClient : IAsyncDisposable
     public string DeviceId { get; }
     public ManagedPolicy Policy { get; private set; } = new();
     public string Status { get; private set; } = "未加入管理";
+    public bool IsRealtime => _socket?.State == WebSocketState.Open;
+    public int? LatencyMs { get; private set; }
+    public DateTimeOffset? LastSynchronizedAt { get; private set; }
+    public string? LastConnectionError { get; private set; }
+    public bool PolicyReceiptConfirmed { get; private set; }
     public event Action? Changed;
     public string Banner => Configuration is null ? "" : $"当前由{Configuration.OrganizationName}管理 · {DeviceId.Split('-')[^1]}";
     public MdnClient(string root, string version)
@@ -110,7 +116,7 @@ public sealed class MdnClient : IAsyncDisposable
         foreach (var file in new[] { "state.bin", "events.bin" }) File.Delete(Path.Combine(_root, file));
         while (_events.Reader.TryRead(out _)) { }
         _stop.Dispose(); _stop = new(); _loop = null; _realtime = null; _token = null; Configuration = null;
-        Policy = new(); Status = "未加入管理"; Changed?.Invoke();
+        Policy = new(); LastSynchronizedAt = null; LastConnectionError = null; PolicyReceiptConfirmed = false; LatencyMs = null; Status = "未加入管理"; Changed?.Invoke();
     }
     public void Report(string kind, object metrics)
     {
@@ -121,10 +127,23 @@ public sealed class MdnClient : IAsyncDisposable
         Report("startup", new { platform = "Windows", architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString() });
         while (!_stop.IsCancellationRequested)
         {
-            try { await SynchronizeAsync(_stop.Token); }
+            try
+            {
+                if (_socket?.State != WebSocketState.Open) await SynchronizeAsync(_stop.Token, polling: true);
+                else
+                {
+                    await _request.WaitAsync(_stop.Token);
+                    try { await FlushEventsAsync(_stop.Token); await FlushCrashesAsync(_stop.Token); await FlushUpdateReceiptsAsync(_stop.Token); }
+                    finally { _request.Release(); }
+                }
+            }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { break; }
-            catch (Exception e) when (e is not OutOfMemoryException) { Status = "集控连接失败，将自动重试"; Changed?.Invoke(); }
-            try { await Task.Delay(TimeSpan.FromSeconds(Configuration!.PollSeconds), _stop.Token); }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                AppLog.Warning("集控同步或反馈提交失败，将自动重试", e);
+                if (_socket?.State != WebSocketState.Open) { Status = "集控连接失败，将自动重试"; Changed?.Invoke(); }
+            }
+            try { await _wake.WaitAsync(TimeSpan.FromSeconds(Configuration!.PollSeconds), _stop.Token); }
             catch (OperationCanceledException) { break; }
         }
     }
@@ -145,6 +164,7 @@ public sealed class MdnClient : IAsyncDisposable
                 using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token))
                 { deadline.CancelAfter(TimeSpan.FromSeconds(10)); await socket.ConnectAsync(endpoint, transport, deadline.Token); }
                 delay = 1; Status = "已实时连接集控服务器"; Changed?.Invoke();
+                AppLog.Operation("mdn", "实时连接已建立，停止定时拉取策略");
                 using var session = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
                 var heartbeat = HeartbeatAsync(socket, session.Token);
                 try
@@ -170,9 +190,13 @@ public sealed class MdnClient : IAsyncDisposable
                         if (kind is "ready" or "policy") await SynchronizeAsync(session.Token);
                         else if (kind == "heartbeat" && json.RootElement.TryGetProperty("sentAt", out var sent) && sent.TryGetInt64(out var stamp))
                         {
+                            var latency = (int)Math.Clamp(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - stamp, 0, 60000);
+                            if (json.RootElement.TryGetProperty("revision", out var revision) && revision.TryGetInt64(out var latest) && latest > Policy.Revision)
+                            { AppLog.Operation("mdn", $"心跳发现待同步策略 revision={latest}"); await SynchronizeAsync(session.Token); }
+                            LatencyMs = latency; Changed?.Invoke();
                             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(config.Server, "api/connection"));
                             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-                            request.Content = JsonContent.Create(new { latency = (int)Math.Clamp(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - stamp, 0, 60000) });
+                            request.Content = JsonContent.Create(new { latency });
                             using var response = await _http.SendAsync(request, session.Token);
                         }
                     }
@@ -182,7 +206,7 @@ public sealed class MdnClient : IAsyncDisposable
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { break; }
             catch (Exception e) when (e is not OutOfMemoryException) { Status = "实时连接断开，将自动重连并轮询配置"; Changed?.Invoke(); }
-            finally { _socket = null; }
+            finally { _socket = null; if (!_stop.IsCancellationRequested) { AppLog.Operation("mdn", "实时连接断开，恢复策略轮询"); if (_wake.CurrentCount == 0) _wake.Release(); } }
             try { await Task.Delay(TimeSpan.FromSeconds(delay), _stop.Token); } catch (OperationCanceledException) { break; }
             delay = Math.Min(30, delay * 2);
         }
@@ -196,12 +220,13 @@ public sealed class MdnClient : IAsyncDisposable
         }
     }
     public string? DownloadCredential(Uri target) => Configuration is {} config && target.Scheme == config.Server.Scheme && target.Authority == config.Server.Authority ? _token : null;
-    public async Task SynchronizeAsync(CancellationToken ct = default)
+    public async Task SynchronizeAsync(CancellationToken ct = default, bool polling = false)
     {
         if (Configuration is null) return;
         await _request.WaitAsync(ct);
         try
         {
+            if (polling && _socket?.State == WebSocketState.Open) return;
             if (_token is null)
             {
                 using var registration = await _http.PostAsJsonAsync(new Uri(Configuration.Server, "api/register"), new { deviceId = DeviceId, deviceName = Environment.MachineName, appVersion = _version, enrollmentToken = Configuration.EnrollmentToken }, ManagedPolicy.Json, ct);
@@ -215,11 +240,28 @@ public sealed class MdnClient : IAsyncDisposable
             using var response = await _http.SendAsync(request, ct); response.EnsureSuccessStatusCode();
             var policy = await response.Content.ReadFromJsonAsync<ManagedPolicy>(ManagedPolicy.Json, ct) ?? throw new FormatException(); policy.Validate();
             var different = JsonSerializer.Serialize(Policy, ManagedPolicy.Json) != JsonSerializer.Serialize(policy, ManagedPolicy.Json);
-            Policy = policy; Save(); Status = _socket?.State == WebSocketState.Open ? "已实时连接集控服务器" : "已连接集控服务器（轮询）"; if (different) Changed?.Invoke();
+            Policy = policy; Save(); LastSynchronizedAt = DateTimeOffset.Now; LastConnectionError = null; PolicyReceiptConfirmed = false; Status = _socket?.State == WebSocketState.Open ? "已实时连接集控服务器" : "已连接集控服务器（轮询）"; if (different) Changed?.Invoke();
+            AppLog.Operation("mdn", $"策略同步完成 revision={policy.Revision} trigger={(polling ? "poll" : "push/manual")}");
+            // Acknowledge only validated, persisted policy, independently from update execution.
+            try
+            {
+                using var receipt = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/policy/receipt"));
+                receipt.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+                receipt.Content = JsonContent.Create(new { revision = policy.Revision });
+                using var accepted = await _http.SendAsync(receipt, ct);
+                PolicyReceiptConfirmed = accepted.IsSuccessStatusCode;
+            }
+            catch (Exception error) when (error is HttpRequestException or TaskCanceledException)
+            { AppLog.Debug("策略回执稍后重试：" + error.GetBaseException().Message); }
             Report("online", new { });
             await FlushEventsAsync(ct);
             await FlushCrashesAsync(ct); Changed?.Invoke();
             await FlushUpdateReceiptsAsync(ct);
+        }
+        catch (Exception error)
+        {
+            LastConnectionError = CrashReportStore.Redact(error.ToString()); Changed?.Invoke();
+            AppLog.Warning("集控策略同步失败", error); throw;
         }
         finally { _request.Release(); }
     }
@@ -300,10 +342,10 @@ public sealed class MdnClient : IAsyncDisposable
         var markers = Path.Combine(_root, "crashes"); Directory.CreateDirectory(markers);
         foreach (var report in store.Reports().TakeLast(100))
         {
-            var marker = Path.Combine(markers, report.Id + ".sent"); if (File.Exists(marker)) continue;
-            // Only structural diagnostics: exception messages can contain lesson text and secrets.
-            var frames = report.Details.Split('\n').Where(x => x.TrimStart().StartsWith("at ", StringComparison.Ordinal)).Select(x => x.Split(" in ")[0].Trim()).Take(40).ToArray();
-            if (!await SendEventAsync(new { id = "crash-" + report.Id, kind = "crash", occurredAt = report.OccurredAt, appVersion = report.AppVersion, metrics = new { report.ExceptionType, report.Component, report.Fatal, report.ExitCode, stack = frames } }, ct)) break;
+            var marker = Path.Combine(markers, report.Id + ".full.sent"); if (File.Exists(marker)) continue;
+            if (!await SendEventAsync(new { id = "error-" + report.Id, kind = "error_track", occurredAt = report.OccurredAt, appVersion = report.AppVersion,
+                metrics = new { reportId = report.Id, report.ExceptionType, report.Component, report.Fatal, report.ExitCode, report.Platform, report.Architecture, report.ProcessId,
+                    message = CrashReportStore.Redact(report.Message), details = CrashReportStore.Redact(report.Details), recentOperations = CrashReportStore.Redact(report.RecentOperations) } }, ct)) break;
             File.WriteAllText(marker, "sent");
         }
     }

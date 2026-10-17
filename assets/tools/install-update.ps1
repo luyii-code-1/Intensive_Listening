@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $updatePlan = $null
 $packageLock = $null
 $copiedLock = $null
+$installed = $false
 $root = Split-Path -Parent $Plan
 $resultPath = Join-Path $root 'result.json'
 $logPath = Join-Path $root 'install-update.log'
@@ -38,6 +39,7 @@ try {
     $installerProcess = Start-Process -FilePath $updateExecutable -ArgumentList $installerArgs -Verb RunAs -WindowStyle Hidden -PassThru -Wait
     Write-UpdateLog ('Installer exit code: ' + $installerProcess.ExitCode)
     if ($installerProcess.ExitCode -notin @(0, 3010)) { throw ('安装失败，退出码 ' + $installerProcess.ExitCode) }
+    $installed = $true
     @{ id=$updatePlan.id; version=$updatePlan.version; success=$true; automaticOobe=$updatePlan.automaticOobe } | ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding utf8
 } catch {
     Write-UpdateLog ('Update failed: ' + $_.Exception.ToString())
@@ -51,9 +53,14 @@ if ($updatePlan -and (Test-Path -LiteralPath $updatePlan.executable)) {
         try { Start-Process -FilePath $updatePlan.executable -ArgumentList @('--update-feedback-only', ('"' + $updatePlan.dataDirectory + '"')) -WorkingDirectory $updatePlan.appDirectory -WindowStyle Hidden -Wait }
         catch { Write-UpdateLog ('Feedback process failed: ' + $_.Exception.ToString()) }
     }
-    if ($updatePlan.PSObject.Properties['reopen'] -and -not $updatePlan.reopen) { exit }
+    $background = $installed -and $updatePlan.PSObject.Properties['background'] -and $updatePlan.background
+    if (-not $background -and $updatePlan.PSObject.Properties['reopen'] -and -not $updatePlan.reopen) { exit }
     try {
         Write-UpdateLog 'Restarting the application.'
-        Start-Process -FilePath $updatePlan.executable -WorkingDirectory $updatePlan.appDirectory -WindowStyle Normal
+        if ($background) {
+            Start-Process -FilePath $updatePlan.executable -ArgumentList '--background-after-update' -WorkingDirectory $updatePlan.appDirectory -WindowStyle Hidden
+        } else {
+            Start-Process -FilePath $updatePlan.executable -WorkingDirectory $updatePlan.appDirectory -WindowStyle Hidden
+        }
     } catch { Write-UpdateLog ('Restart failed: ' + $_.Exception.ToString()) }
 }

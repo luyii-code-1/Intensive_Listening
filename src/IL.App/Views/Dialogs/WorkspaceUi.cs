@@ -65,15 +65,19 @@ internal static class WorkspaceUi
         button.Click += async (_, _) =>
         {
             Control origin = TopLevel.GetTopLevel(button) ?? (Control)button;
+            var label = string.IsNullOrEmpty(title) ? ToolTip.GetTip(button)?.ToString() ?? action.Method.Name : title;
+            var operation = Guid.NewGuid().ToString("N")[..8];
+            IL.Core.Infrastructure.AppLog.Operation("ui", $"操作开始 id={operation} button={label}");
             button.IsEnabled = false;
             try
             {
                 if (await IL.App.Services.UiActionRunner.RunAsync(action) is { } error)
                 {
                     var managed = error is IL.Core.Management.ManagedFeatureDeniedException;
-                    if (!managed) IL.Core.Infrastructure.AppLog.Warning("界面操作未完成", error);
+                    if (!managed) IL.Core.Infrastructure.AppLog.Warning($"界面操作未完成 id={operation} button={label}", error);
                     IL.App.Views.WorkspaceToast.Show(origin, managed ? "组织管理限制" : "操作未完成", error.Message, true);
                 }
+                else IL.Core.Infrastructure.AppLog.Operation("ui", $"操作完成 id={operation} button={label}");
             }
             finally { button.IsEnabled = true; }
         };

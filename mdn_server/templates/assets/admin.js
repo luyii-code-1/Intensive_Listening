@@ -1,32 +1,69 @@
 "use strict";
-async function refreshOnline(){
+let statusBusy=false;
+async function refreshOnline(force=false){
+ if(statusBusy||(!force&&document.hidden))return;
+ statusBusy=true;const deadline=new AbortController(),timer=setTimeout(()=>deadline.abort(),8000);
  try{
-  const response=await fetch("/admin/status");
+  const updates=document.querySelector('[data-panel="updates"]');
+  const includeUpdates=updates&&!updates.hidden&&(force||document.getElementById("update-auto-refresh")?.checked);
+  const params=new URLSearchParams({scope:new URLSearchParams(location.search).get("scope")||"all"});
+  if(includeUpdates)params.set("updates","true");
+  const response=await fetch("/admin/status?"+params,{cache:"no-store",signal:deadline.signal});
   if(response.redirected){location.assign(response.url);return;}
-  if(!response.ok)return;
-  const {devices}=await response.json();let count=0;
+  if(!response.ok)throw Error("状态同步失败（HTTP "+response.status+"）");
+  const {devices,updates_html,device_rows_html}=await response.json();
+  const deviceBody=document.getElementById("device-rows");
+  const known=Array.from(deviceBody.querySelectorAll("[data-id]")).map(row=>row.dataset.id).sort().join(",");
+  const incoming=devices.map(device=>device.id).sort().join(",");
+  if(known!==incoming&&!deviceBody.contains(document.activeElement)&&typeof device_rows_html==="string"){
+   deviceBody.innerHTML=device_rows_html;
+   document.querySelectorAll(".scope-picker").forEach(picker=>{const selected=picker.value;while(picker.options.length>1)picker.remove(1);for(const device of devices){const option=document.createElement("option");option.value=device.id;option.textContent=device.name+" · "+device.id.slice(-12);picker.append(option);}picker.value=Array.from(picker.options).some(option=>option.value===selected)?selected:"all";});
+  }
+  const count=devices.filter(device=>device.online).length;
   for(const device of devices){
    const row=document.querySelector(`[data-id="${device.id}"]`);if(!row)continue;
    const state=!device.enabled?"disabled":device.online?"online":"offline";
    row.dataset.status=state;const badge=row.querySelector(".badge");badge.classList.toggle("online",state==="online");badge.textContent=state==="disabled"?"已禁用":state==="online"?"在线":"离线";
+   const policy=row.querySelector(".policy-state");if(policy){policy.textContent=device.policy_state;policy.title=device.policy_detail;policy.className="policy-state "+(device.policy_current?"confirmed":"pending");}
    const connection=row.querySelector(".connection-state");if(connection)connection.textContent=device.connection;
-   if(device.online)count++;
+   const version=row.querySelector("td:nth-child(2)");if(version)version.textContent=device.version||"版本未知";
+   const seen=row.querySelector("td:nth-child(3)>small");if(seen)seen.textContent=device.seen_text;
+   const name=row.querySelector("td:first-child>a"),original=row.querySelector("td:first-child>small");if(name)name.textContent=device.name;if(original)original.textContent=device.original_name;
+   row.dataset.device=device.name+" "+device.original_name+" "+device.id;
   }
   document.getElementById("online-count").textContent=count;
   document.getElementById("offline-count").textContent=devices.length-count;
+  document.getElementById("registered-count").textContent=devices.length;
   filterDevices();
- }catch{ /* Retry on the next status refresh. */ }
+  if(includeUpdates&&typeof updates_html==="string"){
+   const host=document.getElementById("update-live"),selection=getSelection();
+   const selecting=selection?.toString()&&host.contains(selection.anchorNode);
+   const editing=host.contains(document.activeElement)&&document.activeElement.matches("input,textarea,select");
+   if(!selecting&&!editing&&host.dataset.lastHtml!==updates_html){
+    const open=new Set(Array.from(host.querySelectorAll("details[open][data-update-details]")).map(item=>item.dataset.updateDetails));
+    host.innerHTML=updates_html;host.dataset.lastHtml=updates_html;
+    host.querySelectorAll("details[data-update-details]").forEach(item=>item.open=open.has(item.dataset.updateDetails));
+   }
+   document.getElementById("update-sync-status").textContent="已同步 "+new Date().toLocaleTimeString();
+  }
+ }catch{const status=document.getElementById("update-sync-status");if(status)status.textContent="状态同步失败，将自动重试";}
+ finally{clearTimeout(timer);statusBusy=false;}
 }
-setInterval(refreshOnline,5000);
+setInterval(()=>refreshOnline(),3000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)refreshOnline();});
+document.getElementById("update-refresh")?.addEventListener("click",()=>refreshOnline(true));
+document.getElementById("update-auto-refresh")?.addEventListener("change",event=>{if(event.target.checked)refreshOnline(true);else document.getElementById("update-sync-status").textContent="自动刷新已暂停";});
+function deploymentPrompt(form){const count=Number(document.getElementById("update-feedback")?.dataset.replacementCount||0);return `向当前范围下发版本 ${form.elements.version.value}？`+(count?`\n${count} 台设备的旧任务将被新任务替换，历史反馈会保留。`:"\n每台设备同时只执行一个更新任务。")+"\n已启动的安装会继续完成。";}
 document.getElementById("upload-form").addEventListener("submit",event=>{
  event.preventDefault();const form=event.currentTarget,file=form.elements.package.files[0],status=document.getElementById("upload-status"),button=form.querySelector("button"),progress=document.getElementById("upload-progress");
  if(!file||file.size>2147483648){status.textContent="请选择不超过 2 GiB 的 EXE 安装包。";return;}
- if(!confirm("向当前范围上传并发布此安装包？"))return;
+ if(!confirm(deploymentPrompt(form)))return;
  const params=new URLSearchParams({scope:form.elements.scope.value,mode:form.elements.mode.value,version:form.elements.version.value,filename:file.name});
  const request=new XMLHttpRequest();request.open("POST","/admin/update/upload?"+params);
  request.setRequestHeader("X-CSRF-Token",form.elements.form_token.value);request.setRequestHeader("Content-Type","application/octet-stream");
  button.disabled=true;progress.hidden=false;progress.value=0;status.textContent="正在上传安装包…";
  request.upload.onprogress=event=>{if(event.lengthComputable){progress.value=event.loaded/event.total;status.textContent=`正在上传：${Math.round(progress.value*100)}%`;}};
+ request.upload.onload=()=>{status.textContent="安装包已上传，正在校验、签名并下发…";};
  request.onload=()=>{
   if(new URL(request.responseURL).pathname==="/"){location.assign(request.responseURL);return;}
   try{const result=JSON.parse(request.responseText);if(request.status>=200&&request.status<300){location.assign(result.redirect);return;}status.textContent=result.detail||"上传失败，请重试。";}catch{status.textContent="上传失败，请检查服务器连接。";}
@@ -39,11 +76,32 @@ const labels={asrProvider:"识别引擎",cloudBaseUrl:"ASR 服务地址",cloudEn
 const featureLabels={playback:"播放与跳转",importAudio:"导入音频",importIlp:"导入精听包",authoring:"课程制作",asr:"音频转写",mcp:"智能体接管",export:"课程导出",importProject:"导入工程",dataMaintenance:"数据维护",apiConfiguration:"API 配置操作",updates:"组织更新"};
 const payload=JSON.parse(document.getElementById("initial-policy").textContent),schema=JSON.parse(document.getElementById("settings-schema").textContent),features=JSON.parse(document.getElementById("features-schema").textContent),query=new URLSearchParams(location.search);
 labels.transcriptBlurIntensity="高速模糊强度";
-function tab(name){if(!["devices","policy","lessons","updates","telemetry","connection"].includes(name))name="devices";document.querySelectorAll("[data-panel]").forEach(p=>p.hidden=p.dataset.panel!==name);document.querySelectorAll("[data-tab]").forEach(b=>{b.classList.toggle("active",b.dataset.tab===name);b.setAttribute("aria-current",b.dataset.tab===name?"page":"false");});document.getElementById("page-title").textContent=document.querySelector(`[data-tab="${name}"]`).textContent.trim();query.set("view",name);history.replaceState(null,"","?"+query);}
+function tab(name){if(!["devices","policy","lessons","updates","telemetry","connection"].includes(name))name="devices";document.querySelectorAll("[data-panel]").forEach(p=>p.hidden=p.dataset.panel!==name);document.querySelectorAll("[data-tab]").forEach(b=>{b.classList.toggle("active",b.dataset.tab===name);b.setAttribute("aria-current",b.dataset.tab===name?"page":"false");});document.getElementById("page-title").textContent=document.querySelector(`[data-tab="${name}"]`).textContent.trim();query.set("view",name);history.replaceState(null,"","?"+query);if(name==="updates")refreshOnline();}
 document.querySelectorAll("[data-tab]").forEach(b=>b.addEventListener("click",()=>tab(b.dataset.tab)));tab(query.get("view")||(query.get("scope")&&query.get("scope")!=="all"?"policy":"devices"));
 document.querySelectorAll(".scope-picker").forEach(s=>s.addEventListener("change",()=>{query.set("scope",s.value);location.search=query.toString();}));
 function filterDevices(){const search=document.getElementById("device-search").value.toLowerCase(),status=document.getElementById("device-status").value;document.querySelectorAll("[data-device]").forEach(r=>r.hidden=!r.dataset.device.toLowerCase().includes(search)||(status!=="all"&&r.dataset.status!==status));}
-document.getElementById("device-search").addEventListener("input",filterDevices);document.getElementById("device-status").addEventListener("change",filterDevices);document.querySelectorAll("form[data-confirm]").forEach(f=>f.addEventListener("submit",e=>{if(!confirm(f.dataset.confirm))e.preventDefault();}));
+document.getElementById("device-search").addEventListener("input",filterDevices);document.getElementById("device-status").addEventListener("change",filterDevices);
+document.addEventListener("submit", async event=>{
+ const form=event.target;if(event.defaultPrevented)return;
+ if(form.matches("form[data-update-publish]")){if(!confirm(deploymentPrompt(form))){event.preventDefault();return;}}
+ else if(form.matches("form[data-confirm]")&&!confirm(form.dataset.confirm)){event.preventDefault();return;}
+ const action=new URL(form.action).pathname;
+ if(!["/admin/policy","/admin/device/alias","/admin/updates/retry","/admin/update/cancel","/admin/updates/clear"].includes(action))return;
+ event.preventDefault();if(form.dataset.busy)return;form.dataset.busy="true";
+ const feedback=document.getElementById("action-feedback"),buttons=Array.from(form.querySelectorAll("button"));
+ const body=new FormData(form);buttons.forEach(button=>button.disabled=true);
+ feedback.hidden=false;feedback.className="action-feedback";feedback.textContent="正在提交…";
+ const deadline=new AbortController(),timer=setTimeout(()=>deadline.abort(),20000);
+ try{
+  const response=await fetch(form.action,{method:"POST",body,signal:deadline.signal});
+  if(response.redirected&&new URL(response.url).pathname!=="/admin"){location.assign(response.url);return;}
+  if(!response.ok){let message="操作失败（HTTP "+response.status+"）";try{const data=await response.json();if(typeof data.detail==="string")message=data.detail;else if(data.detail)message=JSON.stringify(data.detail);}catch{}throw Error(message);}
+  feedback.className="action-feedback confirmed";
+  feedback.textContent=action==="/admin/policy"?"策略已保存并通知客户端。设备列表可查看策略接收回执。":action==="/admin/updates/retry"?"新任务已下发，等待客户端接收。":"操作已完成。";
+  await refreshOnline(true);
+ }catch(error){feedback.className="action-feedback failed";feedback.textContent=error.name==="AbortError"?"等待响应超时，操作可能已保存；请先刷新状态再决定是否重试。":error.message;}
+ finally{clearTimeout(timer);delete form.dataset.busy;buttons.forEach(button=>button.disabled=false);}
+});
 function select(options){const s=document.createElement("select");for(const[value,label]of options){const o=document.createElement("option");o.value=value;o.textContent=label;s.append(o);}return s;}
 document.querySelectorAll("[data-option]").forEach(s=>s.value=Object.hasOwn(payload,s.dataset.option)?String(payload[s.dataset.option]):"inherit");
 const featureMode=document.getElementById("features-mode");featureMode.value=Object.hasOwn(payload,"disabledFeatures")?"override":"inherit";

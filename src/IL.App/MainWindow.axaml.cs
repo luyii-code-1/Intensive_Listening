@@ -19,12 +19,11 @@ using System.Text.Json.Nodes;
 
 namespace IL.App;
 
-public partial class MainWindow : Window
+public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
 {
     private readonly AppServices _services;
     private readonly StudentView _student;
     private readonly TeacherView _teacher;
-    private readonly QueueView _queue;
     private readonly SettingsView _settings;
     private bool _closing, _paneExpanded = true, _teacherLoaded;
     private bool _openingTeacher;
@@ -36,26 +35,27 @@ public partial class MainWindow : Window
     private WindowsApprovalNotification? _approvalNotification;
     private WindowsSystemNotification? _updateNotification;
     private bool _initializationStarted;
+    private readonly TaskCompletionSource<bool> _presentation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly bool _backgroundLaunch = Program.Arguments.Contains("--background-after-update");
+    internal Task InitializeBackgroundAsync() => StartInitializationAsync();
+    private Task StartInitializationAsync()
+    {
+        if (_initializationStarted) return Task.CompletedTask;
+        _initializationStarted = true;
+        return InitializeAsync();
+    }
     private long _managedRevision=-1;
     private readonly HashSet<Key> _heldPlayerKeys = new();
     private bool _playerShortcutBusy;
     private bool _installingUpdate;
     private readonly SemaphoreSlim _launchGate = new(1, 1);
+    private readonly TaskCompletionSource<bool> _servicesReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<bool> _initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public MainWindow()
     {
         InitializeComponent();
-        WindowDecorations = WindowDecorations.BorderOnly;
-        TitleDragArea.PointerPressed += (_, e) =>
-        {
-            if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
-            if (e.ClickCount == 2) ToggleMaximize(); else BeginMoveDrag(e);
-        };
-        MinimizeWindow.Click += (_, _) => WindowState = WindowState.Minimized;
-        MaximizeWindow.Click += (_, _) => ToggleMaximize();
-        CloseWindow.Click += (_, _) => Close();
-        PropertyChanged += (_, e) => { if (e.Property == WindowStateProperty) MaximizeWindow.Content = WindowState == WindowState.Maximized ? "\uE923" : "\uE922"; };
-        Icon = AppBrand.WindowIcon();
+        Icon = AppBrand.Image;
+        TitleBar.ExtendsContentIntoTitleBar = false;
         if (OperatingSystem.IsWindows()) WindowState = WindowState.Maximized;
         _paneMotion = new(this, 320, width => ShellGrid.ColumnDefinitions[0].Width = new GridLength(width));
         Closed += (_, _) => _paneMotion.Stop();
@@ -82,7 +82,8 @@ public partial class MainWindow : Window
             if (_services.Student.AudioPath != playbackFile || !_services.Student.HasMedia || _services.Student.DurationSeconds <= 0)
                 throw new IOException(_services.Student.Status);
         };
-        _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(_services.Server.IsRunning);},_services.Server);
+        _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(_services.Server.IsRunning);},_services.Server,
+            standalone ? null : new CloudSettingsView(_services, _teacher.FlushDraftAsync, async () => { await _services.Student.RefreshAsync(preservePlayback: true); await _teacher.RefreshAsync(); }));
         _settings.ConfigureUpdates(_services.Updates, _services.ManagedUpdates, InstallManagedUpdateAsync);
         _settings.ConfigureManagedLessons(_services.ManagedLessons);
         _services.ManagedLessons.IsInUse = uuid => OnUiAsync(() => Task.FromResult(_services.Student.CurrentLesson?.Id.Equals(uuid, StringComparison.OrdinalIgnoreCase) == true || _teacher.HasOpenProject));
@@ -101,7 +102,7 @@ public partial class MainWindow : Window
             if (OperatingSystem.IsWindows())
             {
                 _updateNotification ??= new WindowsSystemNotification(this, 0x494D, 0x8422);
-                _updateNotification.Show(title, message, () => Dispatcher.UIThread.Post(async () => { _pendingColdUpdate = null; RestoreWorkspace(); ShowSettings(); _settings.ShowUpdates(); WorkspaceToast.Show(this, "开始安装更新", "正在保存工程并准备安装。"); await InstallManagedUpdateAsync(); }));
+                _updateNotification.Show(title, message, () => Dispatcher.UIThread.Post(async () => { if (update.Id != _services.ManagedUpdates.UpdateId) return; _pendingColdUpdate = null; RestoreWorkspace(); ShowSettings(); _settings.ShowUpdates(); WorkspaceToast.Show(this, "开始安装更新", "正在保存工程并准备安装。"); await InstallManagedUpdateAsync(); }));
             }
             _pendingColdUpdate = update;
             await ShowPendingColdUpdateAsync();
@@ -109,7 +110,7 @@ public partial class MainWindow : Window
         _services.Mdn.Changed+=()=>Dispatcher.UIThread.Post(async()=>
         {
             RefreshManagedBanner();
-            if(!await _initialized.Task)return;
+            if(!await _servicesReady.Task)return;
             _ = _services.ManagedLessons.RefreshAsync();
             if(_managedRevision==_services.Mdn.Policy.Revision){_ = _services.ManagedUpdates.RefreshAsync();return;}
             _managedRevision=_services.Mdn.Policy.Revision;
@@ -119,7 +120,6 @@ public partial class MainWindow : Window
             _teacher.ApplyManagement();_student.ApplyManagement();
             _ = _services.ManagedUpdates.RefreshAsync();
         });
-        _queue=new(_services.Queue,async job=>{_taskDialog?.Hide();await _teacher.LoadJobTranscriptAsync(job);Navigate(1);},async match=>{if(match.LessonId is {} id){_taskDialog?.Hide();Navigate(0);_services.Student.SelectedLesson=_services.Student.Lessons.FirstOrDefault(l=>l.Id==id);await _services.Student.CurrentLoad;}},()=>PickAudioForQueueAsync());
         _services.ConfirmForcedCuts=()=>OnUiAsync(()=>{RestoreWorkspace();return AppDialogs.ConfirmForcedCutsAsync(this);});
         _services.Server.ApprovalRequested=name=>OnUiAsync(()=>RequestAgentApprovalAsync(name));
         Closed += (_, _) => _approvalNotification?.Dispose();
@@ -160,10 +160,11 @@ public partial class MainWindow : Window
         CrashMonitor.BackgroundFault += BackgroundFault;
         Closed += (_, _) => CrashMonitor.BackgroundFault -= BackgroundFault;
         Activated += async (_, _) => await ShowPendingColdUpdateAsync();
-        Opened+=async(_,_)=>{if(_initializationStarted)return;_initializationStarted=true;if(!standalone)_ = _services.Updates.CheckAsync(AppBuildInfo.Version);await InitializeAsync();};
+        Opened += async (_, _) => { _presentation.TrySetResult(true); await StartInitializationAsync(); };
+        Closed += (_, _) => _presentation.TrySetResult(false);
         if (OperatingSystem.IsWindows() && !standalone)
         {
-            _residence = new(this, _teacher.FlushDraftAsync, async () => await _services.DisposeAsync(), () => (Application.Current!.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.Shutdown());
+            _residence = new(this, _teacher.FlushDraftAsync, async () => { await _settings.StopDiagnosticsAsync(); await _services.DisposeAsync(); }, () => (Application.Current!.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.Shutdown());
             _residence.UpdateOnClosePending = () => _otaPrompt is not null || _services.ManagedUpdates.CanInstallDeferred;
             _residence.UpdateOnClose = UpdateAfterCloseAsync;
         }
@@ -225,6 +226,7 @@ public partial class MainWindow : Window
     }
     internal async Task ActivateFromLaunchAsync(string[] args)
     {
+        if (args.Contains("--background-after-update")) return;
         RestoreWorkspace();
         if (!await _initialized.Task) return;
         await _launchGate.WaitAsync();
@@ -246,9 +248,16 @@ public partial class MainWindow : Window
     {
         if (_residence != null) { await _residence.ExitAsync(); return; }
         if (_closing) return; _closing=true;
-        try { await _teacher.FlushDraftAsync();await _services.DisposeAsync(); }
+        try { await _teacher.FlushDraftAsync();await _settings.StopDiagnosticsAsync();await _services.DisposeAsync(); }
         catch(Exception ex){AppLog.Warning("关闭时保存失败",ex);}
         Close();
+    }
+    internal async Task RestartAsync()
+    {
+        await _teacher.FlushDraftAsync();
+        if (!CrashMonitor.Launch(["--restart-after-exit", Environment.ProcessId.ToString(), .. Program.Arguments.Where(arg => arg != "--background-after-update")]))
+            throw new IOException("无法启动重启进程。");
+        await ExitAsync();
     }
     private async Task InstallManagedUpdateAsync()
     {
@@ -268,12 +277,12 @@ public partial class MainWindow : Window
         if (update.Id != _services.ManagedUpdates.UpdateId) return;
         var choice = await AppDialogs.ChooseAsync(this, "组织更新已下载", $"版本 {update.Version} 已下载并校验，点击更新开始安装。", "稍后", "更新");
         ShowSettings(); _settings.ShowUpdates();
-        if (choice == 1) await InstallManagedUpdateAsync();
+        if (choice == 1 && update.Id == _services.ManagedUpdates.UpdateId) await InstallManagedUpdateAsync();
     }
     private bool _updateOnClose;
     private async Task AutomaticManagedUpdateAsync()
     {
-        var visible = IsVisible;
+        var visible = IsVisible && WindowState != WindowState.Minimized;
         _services.ManagedUpdates.ReopenAfterUpdate = visible;
         _services.ManagedUpdates.SkipUpdateOobe = visible;
         if (visible)
@@ -304,6 +313,7 @@ public partial class MainWindow : Window
     private void ShowSettings(){if(_destination==2)return;if(_destination!=2)_settingsBack=_destination;_settings.Populate(_services.Settings);Navigate(2);}
     private void Navigate(int destination)
     {
+        AppLog.Operation("navigation", $"切换页面 from={_destination} to={destination}");
         _heldPlayerKeys.Clear();
         _destination=destination;PageHost.Content=destination switch{1=>_teacher,2=>_settings,_=>_student};
         UpdatePane();
@@ -375,7 +385,7 @@ public partial class MainWindow : Window
     private static void NavigationContent(Button button,string icon,string label,bool expanded,bool selected,int count=0)
     {
         button.Classes.Set("selected",selected); ToolTip.SetTip(button,label);
-        var content=new Grid{ColumnDefinitions=new ColumnDefinitions("4,36,*,Auto")};
+        var content=new Grid{ColumnDefinitions=new ColumnDefinitions(expanded ? "4,36,*,Auto" : "4,*,4")};
         if(selected)
         {
             var indicator = new Border { Width = 3, Height = 20, Background = WorkspaceUi.Accent, CornerRadius = new CornerRadius(2), VerticalAlignment = VerticalAlignment.Center };
@@ -389,17 +399,19 @@ public partial class MainWindow : Window
     private async Task ShowTasksAsync()
     {
         if(_taskDialog is not null)return;
+        AppLog.Operation("queue", "打开转写队列");
+        var queue=new QueueView(_services.Queue,async job=>{_taskDialog?.Hide();await _teacher.LoadJobTranscriptAsync(job);Navigate(1);},async match=>{if(match.LessonId is {} id){_taskDialog?.Hide();Navigate(0);_services.Student.SelectedLesson=_services.Student.Lessons.FirstOrDefault(l=>l.Id==id);await _services.Student.CurrentLoad;}},()=>PickAudioForQueueAsync());
         var width=Math.Min(ClientSize.Width-32,Math.Clamp(ClientSize.Width*.618,640,980));
-        _taskDialog=AppDialogs.Create(this,"转写任务",_queue,width);
+        _taskDialog=AppDialogs.Create(this,"转写任务",queue,width);
         _taskDialog.CloseButtonText="关闭";
         void ResizeQueue()
         {
-            _queue.Width=Math.Min(width,ClientSize.Width-32)-50;
-            _queue.Height=Math.Min(ClientSize.Height-32,Math.Clamp(ClientSize.Height*.72,480,720))-112;
+            queue.Width=Math.Min(width,ClientSize.Width-32)-50;
+            queue.Height=Math.Min(ClientSize.Height-32,Math.Clamp(ClientSize.Height*.72,480,720))-112;
         }
         void OnResize(object? sender,SizeChangedEventArgs args)=>ResizeQueue();
         ResizeQueue();SizeChanged+=OnResize;
-        try{await _taskDialog.ShowAsync(this);}finally{SizeChanged-=OnResize;_taskDialog=null;}
+        try{await _taskDialog.ShowAsync(this);}finally{SizeChanged-=OnResize;queue.Dispose();_taskDialog=null;AppLog.Operation("queue", "关闭转写队列");}
     }
     private static void ApplyTheme(AppSettings settings)
     {
@@ -418,12 +430,23 @@ public partial class MainWindow : Window
             {
                 var result=JsonNode.Parse(await File.ReadAllTextAsync(updateResult));
                 _services.ManagedUpdates.RecordResult(result?["id"]?.ToString() ?? "", result?["version"]?.ToString(), result?["success"]?.GetValue<bool>() == true);
-                if (result?["success"]?.GetValue<bool>() == true && result?["version"]?.ToString() == AppBuildInfo.Version) AppBuildInfo.SuccessfulUpdateVersion = AppBuildInfo.DisplayVersion;
+                if (result?["success"]?.GetValue<bool>() == true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.Version, result?["version"]?.ToString())) AppBuildInfo.SuccessfulUpdateVersion = AppBuildInfo.DisplayVersion;
                 if (Guid.TryParse(result?["id"]?.ToString(), out var resultId))
-                    await _services.Mdn.ReportUpdateAsync(resultId.ToString(), result?["success"]?.GetValue<bool>() == true && result?["version"]?.ToString() == AppBuildInfo.Version ? "success" : "failed", result?["success"]?.GetValue<bool>() == true ? "更新安装完成" : "安装未完成或用户取消 UAC");
-                if(result?["success"]?.GetValue<bool>()==true && result?["version"]?.ToString()==AppBuildInfo.Version && result?["automaticOobe"]?.GetValue<bool>()==true && _services.Settings.EulaAcceptedVersion.Length>0 && ManagedRuntime.IsManaged)
+                    await _services.Mdn.ReportUpdateAsync(resultId.ToString(), result?["success"]?.GetValue<bool>() == true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.Version, result?["version"]?.ToString()) ? "success" : "failed", result?["success"]?.GetValue<bool>() == true ? "更新安装完成" : "安装未完成或用户取消 UAC");
+                if(result?["success"]?.GetValue<bool>()==true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.Version, result?["version"]?.ToString()) && result?["automaticOobe"]?.GetValue<bool>()==true && _services.Settings.EulaAcceptedVersion.Length>0 && ManagedRuntime.IsManaged)
                 { var completed=_services.Settings with{CompletedInstallationId=installationId};await _services.SettingsStore.SaveAsync(completed);await _services.ApplySettingsAsync(completed); }
-                File.Delete(updateResult);
+                if (result?["success"]?.GetValue<bool>() != true) File.Delete(updateResult);
+            }
+            if (_backgroundLaunch)
+            {
+                // Receive policy and report update completion while onboarding waits for a user.
+                await _services.ApplySettingsAsync(_services.Settings);
+                _servicesReady.TrySetResult(true);
+                _residence?.UpdateMcpState(_services.Server.IsRunning);
+                _services.Mdn.Start();
+                _ = _services.ManagedUpdates.RefreshAsync();
+                _ = _services.ManagedLessons.RefreshAsync();
+                if (!await _presentation.Task) return;
             }
             if(!_services.Standalone&&_services.Settings.NeedsOnboarding(installationId))
             {
@@ -432,6 +455,8 @@ public partial class MainWindow : Window
                 if(settings is null){await ExitAsync();return;}settings=settings with { CompletedInstallationId=installationId };await _services.SettingsStore.SaveAsync(settings);_settings.Populate(settings);ApplyTheme(settings);await _services.ApplySettingsAsync(settings);
             }
             else await _services.ApplySettingsAsync(_services.Settings);
+            if (File.Exists(updateResult)) File.Delete(updateResult);
+            if (!_services.Standalone) _ = _services.Updates.CheckAsync(AppBuildInfo.Version);
             if (_services.PreconfigurationError is {} presetError) WorkspaceToast.Show(this, "预设配置", presetError, true);
             _residence?.UpdateMcpState(_services.Server.IsRunning);
             for(var i=0;i<Program.Arguments.Length;i++)
@@ -442,12 +467,13 @@ public partial class MainWindow : Window
             foreach (var report in new CrashReportStore(_services.DataDirectory).Reports().Where(r => !r.Displayed))
                 new CrashReportWindow(new CrashReportStore(_services.DataDirectory).PathFor(report.Id), submit: false).Show(this);
             if(_services.Queue.InterruptedCount>0&&await AppDialogs.ConfirmAsync(this,"恢复转写任务",$"发现 {_services.Queue.InterruptedCount} 个未完成的任务，继续处理？","恢复"))_services.Queue.ResumeInterrupted();
+            _servicesReady.TrySetResult(true);
             _initialized.TrySetResult(true);
             _teacher.ApplyManagement();_student.ApplyManagement();
             if(!_services.Standalone){_services.Mdn.Start();_ = _services.ManagedUpdates.RefreshAsync();_ = _services.ManagedLessons.RefreshAsync();}
         }
         catch(Exception ex){AppLog.Warning("初始化失败",ex);_services.Student.Status=$"初始化失败：{ex.Message}";}
-        finally { _initialized.TrySetResult(false); }
+        finally { _servicesReady.TrySetResult(false); _initialized.TrySetResult(false); }
     }
     private async Task PickAudioForQueueAsync()
     {

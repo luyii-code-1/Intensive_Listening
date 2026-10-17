@@ -26,6 +26,7 @@ public sealed class ProjectTranscriptionBinding : IAsyncDisposable
         var updated = project with { TranscriptionJobId = id, Step = CourseProjectStep.Transcription, AutoQuestionPlanDeferred = false,
             AudioDuration = duration > TimeSpan.Zero ? duration : project.AudioDuration };
         await _store.SaveAsync(updated);
+        AppLog.Operation("transcription", $"提交转写 project={project.Id} job={id} duration={updated.AudioDuration}");
         _queue.Enqueue(updated.Title, updated.AudioPath!, updated.AudioDuration, updated.Id, id);
         return updated;
     }
@@ -66,6 +67,7 @@ public sealed class ProjectTranscriptionBinding : IAsyncDisposable
             });
             if (updated == null) return null;
             _queue.MarkSrtConsumed(job.Id);
+            AppLog.Operation("transcription", $"字幕绑定完成 project={updated.Id} job={job.Id} characters={job.Srt.Length}");
             TranscriptBound?.Invoke(updated);
             return updated;
         }

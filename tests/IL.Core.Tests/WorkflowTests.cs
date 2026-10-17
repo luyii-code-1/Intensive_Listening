@@ -98,6 +98,14 @@ public sealed class WorkflowTests : IDisposable
         var error=await Assert.ThrowsAsync<AsrException>(()=>new AsrClient(http,TimeSpan.FromMilliseconds(30)).TranscribeToSrtAsync(config,audio));Assert.Contains("超时",error.Message);
         using var cancellation=new CancellationTokenSource(30);await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>new AsrClient(http).TranscribeToSrtAsync(config,audio,ct:cancellation.Token));
     }
+    [Fact] public async Task AsrTransportErrorExposesInnerCauseAndKeepsFullException()
+    {
+        var audio=Path.Combine(root,"failed.wav");await File.WriteAllTextAsync(audio,"audio");
+        using var http=new HttpClient(new Handler((_,_)=>throw new HttpRequestException("Error while copying content to a stream.",new IOException("connection-reset-marker"))));
+        var error=await Assert.ThrowsAsync<AsrException>(()=>new AsrClient(http).TranscribeToSrtAsync(new("https://example.test","/asr","model","key"),audio));
+        Assert.Contains("connection-reset-marker",error.Message); Assert.Contains("发送音频",error.Message);
+        Assert.Contains("诊断 ID",error.Message);Assert.IsType<HttpRequestException>(error.InnerException);
+    }
     private static byte[] Docx()
     {
         using var bytes=new MemoryStream();using(var zip=new ZipArchive(bytes,ZipArchiveMode.Create,true))

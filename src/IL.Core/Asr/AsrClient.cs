@@ -1,5 +1,8 @@
 using System.Globalization;
 using System.Net.Http.Headers;
+using System.Diagnostics;
+using System.Net;
+using IL.Core.Infrastructure;
 using System.Text;
 using System.Text.Json;
 using IL.Core.Ilp;
@@ -17,6 +20,10 @@ public sealed record AsrProgress(AsrStage Stage,double? StageFraction=null,long 
 public sealed class AsrException(string message,Exception? inner=null):Exception(message,inner);
 public sealed class AsrClient(HttpClient? httpClient=null,TimeSpan? timeout=null)
 {
+    private static readonly HttpClient SharedHttp = new(new SocketsHttpHandler
+    {
+        ConnectTimeout = TimeSpan.FromSeconds(30), PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+    }) { Timeout = Timeout.InfiniteTimeSpan };
     public static Uri TranscriptionEndpoint(string baseUrl,string? endpoint=null)
     {
         var baseUri=new Uri(baseUrl.Trim());if(string.IsNullOrWhiteSpace(endpoint))return baseUri;
@@ -26,29 +33,62 @@ public sealed class AsrClient(HttpClient? httpClient=null,TimeSpan? timeout=null
     public async Task<string> TranscribeToSrtAsync(AsrConfig config,string audioFile,IProgress<AsrProgress>? progress=null,CancellationToken ct=default)
     {
         if(!config.IsComplete)throw new AsrException("请填写 ASR 配置。");if(!File.Exists(audioFile))throw new AsrException("请选择音频文件。");
-        using var owned=httpClient==null?new HttpClient{Timeout=Timeout.InfiniteTimeSpan}:null;var client=httpClient??owned!;
+        var client = httpClient ?? SharedHttp;
+        var operation = Guid.NewGuid().ToString("N")[..8]; var stage = "读取音频";
+        var elapsed = Stopwatch.StartNew();
+        var endpoint = TranscriptionEndpoint(config.BaseUrl, config.Endpoint);
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(timeout??TimeSpan.FromMinutes(20));
         try
         {
             var audio=await File.ReadAllBytesAsync(audioFile,deadline.Token);progress?.Report(new(AsrStage.Uploading,0,BytesTotal:audio.Length));
-            using var request=new HttpRequestMessage(HttpMethod.Post,TranscriptionEndpoint(config.BaseUrl,config.Endpoint));
+            using var request=new HttpRequestMessage(HttpMethod.Post,endpoint);
             request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",config.ApiKey.Trim());
             var payload=new{model=config.Model.Trim(),input=new{messages=new[]{new{role="user",content=new[]{new{audio="data:audio/wav;base64,"+Convert.ToBase64String(audio)}}}}},parameters=new{format="wav",language=config.Language}};
-            request.Content=new StringContent(JsonSerializer.Serialize(payload),Encoding.UTF8,"application/json");
+            request.Content = new UploadContent(JsonSerializer.SerializeToUtf8Bytes(payload), audio.Length, progress);
+            request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+            stage = "发送音频";
+            AppLog.Operation("asr", $"请求开始 id={operation} endpoint={endpoint.GetLeftPart(UriPartial.Path)} model={config.Model.Trim()} audioBytes={audio.Length}");
             using var response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token);
             progress?.Report(new(AsrStage.Uploading,1,audio.Length,audio.Length));progress?.Report(new(AsrStage.Recognizing));
+            stage = "读取识别响应";
+            AppLog.Operation("asr", $"收到响应头 id={operation} status={(int)response.StatusCode} elapsedMs={elapsed.ElapsedMilliseconds} requestId={(response.Headers.TryGetValues("x-request-id", out var ids) ? string.Join(",", ids) : "--")}");
             var body=await response.Content.ReadAsStringAsync(deadline.Token);
             if(!response.IsSuccessStatusCode)
             {
                 if((int)response.StatusCode==400&&IsNoWords(body)){progress?.Report(new(AsrStage.Formatting));return "";}
                 throw new AsrException(ServerError((int)response.StatusCode,body));
             }
+            AppLog.Operation("asr", $"请求完成 id={operation} elapsedMs={elapsed.ElapsedMilliseconds}");
             progress?.Report(new(AsrStage.Formatting));return SrtParser.Serialize(AsrTranscription.FromDashScopeResponseBody(body).Cues).TrimEnd();
         }
-        catch(OperationCanceledException ex)when(!ct.IsCancellationRequested){throw new AsrException("ASR 请求超时。",ex);}
-        catch(HttpRequestException ex){throw new AsrException("网络连接失败："+ex.Message,ex);}
-        catch(JsonException ex){throw new AsrException("ASR 返回结果无法解析。",ex);}
-        catch(FormatException ex){throw new AsrException(ex.Message,ex);}
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        { throw Failure($"ASR {stage}超时（{elapsed.Elapsed.TotalSeconds:F1} 秒）", ex); }
+        catch (HttpRequestException ex)
+        { throw Failure($"ASR {stage}失败（{ex.HttpRequestError}）：{ex.GetBaseException().Message}", ex); }
+        catch (IOException ex) { throw Failure($"ASR {stage}失败：{ex.GetBaseException().Message}", ex); }
+        catch (JsonException ex) { throw Failure("ASR 返回结果无法解析", ex); }
+        catch (FormatException ex) { throw Failure(ex.Message, ex); }
+        catch (AsrException ex) { AppLog.Error($"ASR 服务失败 id={operation} stage={stage}", ex); throw; }
+        AsrException Failure(string message, Exception error)
+        {
+            AppLog.Error($"ASR 请求失败 id={operation} stage={stage} endpoint={endpoint.GetLeftPart(UriPartial.Path)} elapsedMs={elapsed.ElapsedMilliseconds}", error);
+            return new AsrException(CrashReportStore.Redact(message) + $"。诊断 ID：{operation}；转写队列可复制完整错误。", error);
+        }
+    }
+    private sealed class UploadContent(byte[] payload, long audioBytes, IProgress<AsrProgress>? progress) : HttpContent
+    {
+        protected override bool TryComputeLength(out long length) { length = payload.Length; return true; }
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => WriteAsync(stream, CancellationToken.None);
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken ct) => WriteAsync(stream, ct);
+        private async Task WriteAsync(Stream stream, CancellationToken ct)
+        {
+            for (var offset = 0; offset < payload.Length;)
+            {
+                var length = Math.Min(65536, payload.Length - offset);
+                await stream.WriteAsync(payload.AsMemory(offset, length), ct); offset += length;
+                progress?.Report(new(AsrStage.Uploading, offset / (double)payload.Length, audioBytes * offset / payload.Length, audioBytes));
+            }
+        }
     }
     private static bool IsNoWords(string body){try{using var d=JsonDocument.Parse(body);return Text(d.RootElement,"code")=="ASR_RESPONSE_HAVE_NO_WORDS"||Text(d.RootElement,"message")=="ASR_RESPONSE_HAVE_NO_WORDS";}catch(JsonException){return false;}}
     private static string ServerError(int status,string body){try{using var d=JsonDocument.Parse(body);var message=Text(d.RootElement,"message")??Text(d.RootElement,"code");if(!string.IsNullOrWhiteSpace(message))return $"ASR 请求失败（{status}）：{message.Trim()}";}catch(JsonException){}return $"ASR 请求失败，状态码 {status}。";}

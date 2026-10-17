@@ -28,9 +28,19 @@ const tag = await readVersion(join(root, 'downloads', 'latest.json'), /"tag"\s*:
   ?? await readVersion(join(root, 'release.js'), /DEFAULT_TAG\s*=\s*'([^']+)'/);
 if (!/^v2\.\d+\.\d+$/.test(tag ?? '')) throw new Error('Unable to resolve the site version');
 
+// Web 播放器（web-edition 分支）版本，与桌面版是两条独立系列。
+// 唯一来源是 web-edition 的 sw.js 缓存名，由 scripts/sync-web-version.mjs 写入 web.json。
+// 取不到时退回占位符，让页面显示成「见线上」而不是一个可能错误的旧版本号。
+const webVersion = await readVersion(join(root, 'web.json'), /"webPlayer"\s*:\s*"([^"]+)"/
+  );
+if (!webVersion) console.warn('web.json 缺失或不可用，Web 播放器版本显示为未知。');
+
 for (const file of ['index.html', 'guide.html']) {
   const path = join(output, file);
   const page = await readFile(path, 'utf8');
-  await writeFile(path, page.replaceAll('__VERSION__', tag.replace(/^v/, '')));
+  await writeFile(path, page
+    .replaceAll('__VERSION__', tag.replace(/^v/, ''))
+    .replaceAll('__WEB_VERSION__', webVersion ?? '未知'));
 }
-console.log(`Static site built in dist/ for ${tag}; EdgeOne routes are in root edge-functions/.`);
+console.log(`Static site built in dist/ for ${tag}` +
+  `${webVersion ? ` (Web 播放器 ${webVersion})` : ''}; EdgeOne routes are in root edge-functions/.`);

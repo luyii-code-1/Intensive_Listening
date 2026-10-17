@@ -29,9 +29,25 @@ GitHub Release published
 
 因此改版本号只需一处：发一次 Release，其余自动跟随。
 
-- **`__VERSION__` 占位符**：写在 `index.html` / `guide.html` 的源码里的版本位置，构建时替换为不带 `v` 的版本号。`tests/publish-release.test.mjs` 与 CI 都会检查产物里没有残留占位符。
+- **`__VERSION__` 占位符**：写在 `index.html` / `guide.html` 源码里的版本位置，构建时替换为不带 `v` 的版本号。`tests/publish-release.test.mjs` 与 CI 都会检查产物里没有残留占位符。
 - **`DEFAULT_TAG`**：`release.js` 里的兜底版本号，仅当 `latest.json` 缺失或不可用时使用。由 CI 同步重写，正常情况无需手工维护。
 - 若 Release 不是当前最新稳定版（回填旧版），工作流会跳过，避免 `release.js` 的「最新版」语义被破坏。
+
+## Web 播放器（web-edition）版本
+
+Web 播放器是**独立于桌面版的版本系列**（桌面版 `2.x.y`，播放器 `1.x.y+N`），页面上的「当前版本」也由 CI 同步，不再写死——此前它长期停在 `1.1.0`，而线上实际已是 `1.5.0+16`。
+
+- **唯一来源**：`web-edition` 分支 `sw.js` 的 `CACHE_NAME = 'il-pwa-<版本>'`。改它才会让浏览器丢掉旧资源，所以它必须与显示值同批改动。
+- **`web.json`**：官网侧的中间文件，记录 `{"webPlayer": "1.5.0+16"}`，由 `scripts/sync-web-version.mjs` 从 `sw.js` 生成，`build.mjs` 读它替换 `__WEB_VERSION__`。取不到时页面显示「未知」，而不是一个可能错误的旧版本号。
+- **构建号递增**：`scripts/bump-web-version.mjs` 只递增 `+N`，不动 `1.x.y` 主版本——主版本由人决定。发版 CI 会调用它并推送 `web-edition`，触发该站自动重建。
+
+版本号一共出现在四处，bump 脚本会一次改全（漏改任一都会错配）：
+
+| 位置 | 内容 |
+| --- | --- |
+| `sw.js` | `CACHE_NAME = 'il-pwa-1.5.0+17'` |
+| `index.html` | `<span class="version-text">` 与 `title="版本: …"` |
+| `js/app.js` | `app_version: '1.5.0+17'` |
 
 ## 下载按钮的境内加速
 

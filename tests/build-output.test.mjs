@@ -29,3 +29,15 @@ test('build.mjs stamps the version and ships downloads/latest.json', async () =>
   const version = metadata.tag.replace(/^v/, '');
   assert.ok(html.includes(`${version} 正式版`), `dist/index.html 应显示 ${version}`);
 });
+
+test('build.mjs stamps the Web player version from web.json', async () => {
+  await run(process.execPath, ['scripts/build.mjs'], { cwd: root });
+
+  const html = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
+  assert.ok(!html.includes('__WEB_VERSION__'), 'dist/index.html 不应残留 __WEB_VERSION__');
+
+  const { webPlayer } = JSON.parse(await readFile(new URL('../web.json', import.meta.url), 'utf8'));
+  assert.match(webPlayer, /^\d+\.\d+\.\d+(\+\d+)?$/, 'web.json 里的版本格式');
+  assert.ok(html.includes(`当前版本 ${webPlayer}`), `dist/index.html 应显示 Web 播放器 ${webPlayer}`);
+  assert.ok(!html.includes('当前版本 1.1.0'), '不应再出现写死的旧版本号');
+});

@@ -33,7 +33,7 @@ if [[ "$package_format" == dmg ]]; then
   stage="$(mktemp -d "$PWD/artifacts/installer/macos-stage.XXXXXX")"
   ditto "$output" "$stage/$(basename "$output")"
   ln -s /Applications "$stage/Applications"
-  package=artifacts/installer/Intensive-Listening-2.1.2.3-osx-arm64.dmg
+  package=artifacts/installer/Intensive-Listening-2.1.2.4-osx-arm64.dmg
   hdiutil create -volname 'Intensive Listening 2 Resonance' -srcfolder "$stage" -format UDZO -fs HFS+ -ov "$package"
 else
   package=artifacts/build/IL2-osx-arm64.zip

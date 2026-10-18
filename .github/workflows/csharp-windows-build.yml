@@ -53,7 +53,7 @@ jobs:
           if ($process.ExitCode -ne 0) { throw 'Windows single-instance verification failed.' }
           $identity = Get-Content artifacts/verification/runtime.json -Raw | ConvertFrom-Json
           $commit = (git rev-parse --short=7 HEAD).Trim()
-          if ($identity.build -ne $commit -or $identity.version -ne '2.1.2.3') { throw 'Release build identity mismatch.' }
+          if ($identity.build -ne $commit -or $identity.version -ne '2.1.2.4') { throw 'Release build identity mismatch.' }
       - name: Package installer
         shell: pwsh
         run: |

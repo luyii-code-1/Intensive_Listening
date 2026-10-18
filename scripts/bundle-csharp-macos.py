@@ -116,7 +116,7 @@ plist = {
     'CFBundleName': 'Intensive Listening', 'CFBundleDisplayName': 'Intensive Listening 2 Resonance',
     'CFBundleExecutable': 'IL.App', 'CFBundleIdentifier': 'com.luyii.intensivelistening.preview',
     'CFBundlePackageType': 'APPL', 'CFBundleInfoDictionaryVersion': '6.0',
-    'CFBundleShortVersionString': '2.1.2', 'CFBundleVersion': '2.1.2.3',
+    'CFBundleShortVersionString': '2.1.2', 'CFBundleVersion': '2.1.2.4',
     'CFBundleIconFile': 'AppIcon.icns', 'NSHighResolutionCapable': True,
     'NSPrincipalClass': 'NSApplication', 'LSApplicationCategoryType': 'public.app-category.education',
     'LSMinimumSystemVersion': '.'.join(map(str, minimum)),

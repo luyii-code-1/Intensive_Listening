@@ -103,8 +103,7 @@ public sealed class CloudAuthoringView : UserControl
         if (!_account.IsSignedIn)
         {
             _poll.Stop(); _identity.Text = _quota.Text = "";
-            _downloadCredits = snapshot.Wallet.Prices?.Delivery;
-            _price.Text = _downloadCredits is { } credits ? $"上传免费 · 下载每次 {credits:0.##} 积分" : "暂时无法读取下载价格，请刷新。";
+            _downloadCredits = null; _price.Text = "";
             _files.ItemsSource = null; _courses.ItemsSource = null; _jobs.ItemsSource = null;
         }
         var newlySignedIn = _account.IsSignedIn && !_hadCredentials && !_account.IsBusy;
@@ -122,6 +121,8 @@ public sealed class CloudAuthoringView : UserControl
             if (!_account.IsSignedIn) return;
             _identity.Text = string.IsNullOrWhiteSpace(snapshot.User.Name) ? snapshot.User.Email : $"{snapshot.User.Name} · {snapshot.User.Email}";
             _quota.Text = $"空间 {Size(snapshot.Storage.UsedBytes)} / {Size(snapshot.Storage.LimitBytes)} · 制作席位 {snapshot.Storage.UsedSlots} / {snapshot.Storage.Slots}\n可用积分 {snapshot.Wallet.Available:0.##} · 冻结 {snapshot.Wallet.Held:0.##}";
+            _downloadCredits = snapshot.Wallet.Prices?.Delivery;
+            _price.Text = _downloadCredits is { } credits ? $"上传免费 · 下载每次 {credits:0.##} 积分" : "暂时无法读取下载价格，请刷新。";
             _files.ItemsSource = snapshot.Files.Where(file => file.Kind == "project").ToArray();
             _courses.ItemsSource = snapshot.Courses;
             _jobs.ItemsSource = snapshot.Jobs;

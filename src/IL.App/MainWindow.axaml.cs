@@ -83,7 +83,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
                 throw new IOException(_services.Student.Status);
         };
         _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(_services.Server.IsRunning);},_services.Server,
-            standalone ? null : new CloudSettingsView(_services, () => _settings.Populate(_services.Settings)));
+            standalone ? null : new CloudSettingsView(_services, () => _settings?.Populate(_services.Settings)));
         _teacher.CloudTransfers = async () =>
         {
             ManagedRuntime.Require("authoring");

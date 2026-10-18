@@ -270,10 +270,17 @@ public sealed class SettingsView : UserControl
         var local = WorkspaceUi.Stack(ManagedUi.Setting(WorkspaceUi.Field("本地模型目录", _localDirectory),"localModelsDirectory"), ManagedUi.Setting(_localModel,"selectedLocalModel","detectedLocalModels"), ActionButton("扫描模型", () => { var models = AppSettings.ScanLocalModels(_localDirectory.Text ?? ""); _localModel.ItemsSource = models; _localModel.SelectedIndex = models.Count > 0 ? 0 : -1; WorkspaceToast.Show(this, $"已发现 {models.Count} 个模型。"); return Task.CompletedTask; }));
         apiBody.Children.Add(new Expander { Header = "本地模型目录与选择", Content = local, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch });
         var save = ActionButton("保存 API 配置", SaveAsync, true); save.HorizontalAlignment = HorizontalAlignment.Right; apiBody.Children.Add(save);
+        var modeSettings = ManagedUi.Setting(WorkspaceUi.SettingsRow("sync", "转写模式", "选择自备 API 或云服务", _asrMode, compact: true), "asrServiceMode");
+        _cloudAsrNotice = new StackPanel
+        {
+            Margin = new Thickness(18), Spacing = 12,
+            Children = { WorkspaceUi.Text("成功 5 积分 · 失败免费 · 受理后主动取消 2 积分", 12), ActionButton("登录云服务", () => { ShowCloud(); return Task.CompletedTask; }) }
+        };
+        var apiContent = new StackPanel { Spacing = 14, Children = { modeSettings, _cloudAsrNotice, apiBody } };
         var apiSettings = new Expander
         {
             Header = Row("cloud", "API 设置", "配置云端转写服务、请求并发和超时", ActionButton("如何配置？", () => LaunchAsync("https://il.luyii.cn/guide.html#api-setup"))),
-            Content = new StackPanel { Spacing = 14, Children = { ManagedUi.Setting(WorkspaceUi.SettingsRow("sync", "转写模式", "选择自备 API 或云服务", _asrMode, compact: true), "asrServiceMode"), _cloudAsrNotice = new StackPanel { Margin = new Thickness(18), Spacing = 12, Children = { WorkspaceUi.Text("成功 5 积分 · 失败免费 · 受理后主动取消 2 积分", 12), ActionButton("登录云服务", () => { ShowCloud(); return Task.CompletedTask; }) } }, apiBody } }, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch
+            Content = apiContent, IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch
         };
         var authoring = CategoryPage("制作与智能体", "配置音频转写服务和智能体制作连接", ManagedUi.Wrap(apiSettings,()=>!ManagedRuntime.Allows("apiConfiguration")||ManagedRuntime.Policy.HideAsrConfiguration), ManagedUi.Wrap(mcpSettings,()=>!ManagedRuntime.Allows("mcp")));
         _liveLogs = ActionButton("实时日志分析", () =>

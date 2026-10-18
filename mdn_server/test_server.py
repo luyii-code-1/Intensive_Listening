@@ -45,6 +45,107 @@ class ManagementTests(unittest.TestCase):
     def save(self, scope, policy, csrf):
         return self.client.post("/admin/policy", data={"scope": scope, "policy_json": json.dumps(policy), "form_token": csrf})
 
+    def test_student_role_legacy_fallback_and_modern_capability(self):
+        csrf = self.login()
+        self.assertEqual(self.save("all", {"clientRole": "student", "disabledFeatures": ["updates"]}, csrf).status_code, 200)
+        legacy = self.client.get("/api/policy", headers=self.headers).json()
+        self.assertNotIn("clientRole", legacy)
+        self.assertEqual(set(legacy["disabledFeatures"]), {"updates", "authoring", "asr", "mcp", "export", "importProject", "apiConfiguration"})
+        self.assertTrue(self.client.get("/admin/status").json()["devices"][0]["role_warning"])
+        headers = self.headers | {"X-IL-Capabilities": "transcriptBlurIntensity, clientRoleV1"}
+        modern = self.client.get("/api/policy", headers=headers).json()
+        self.assertEqual(modern["clientRole"], "student")
+        device = self.client.get("/admin/status").json()["devices"][0]
+        self.assertEqual(device["role_label"], "学生端")
+        self.assertTrue(device["role_supported"])
+        self.assertEqual(device["role_warning"], "")
+        self.assertIn('id="client-role"', self.client.get("/admin?view=policy").text)
+        self.assertIn('class="role-state">学生端', self.client.get("/admin").text)
+
+    def test_student_role_inheritance_explicit_default_and_revoke(self):
+        csrf = self.login()
+        headers = self.headers | {"X-IL-Capabilities": "clientRoleV1"}
+        self.save("all", {"clientRole": "student", "settings": {"cloudConcurrency": 2}, "disabledFeatures": ["updates"]}, csrf)
+        self.save(self.identifier, {"disabledFeatures": []}, csrf)
+        inherited = self.client.get("/api/policy", headers=headers).json()
+        self.assertEqual(inherited["clientRole"], "student")
+        self.assertIn("authoring", inherited["disabledFeatures"])
+        self.save(self.identifier, {"clientRole": "default"}, csrf)
+        ordinary = self.client.get("/api/policy", headers=headers).json()
+        self.assertEqual(ordinary["clientRole"], "default")
+        self.assertEqual(ordinary["disabledFeatures"], ["updates"])
+        self.assertEqual(ordinary["settings"]["cloudConcurrency"], 2)
+        self.client.post("/admin/device", data={"device_id": self.identifier, "action": "inherit", "form_token": csrf})
+        self.assertEqual(self.client.get("/api/policy", headers=headers).json()["clientRole"], "student")
+        self.save("all", {"disabledFeatures": ["updates"], "lockedSettings": ["cloudConcurrency"]}, csrf)
+        revoked = self.client.get("/api/policy", headers=headers).json()
+        self.assertEqual(revoked["clientRole"], "default")
+        self.assertEqual(revoked["disabledFeatures"], ["updates"])
+        self.assertEqual(revoked["lockedSettings"], ["cloudConcurrency"])
+
+    def test_role_change_notifies_and_waits_for_current_receipt(self):
+        csrf = self.login()
+        previous = self.client.get("/api/policy", headers=self.headers).json()["revision"]
+        self.client.post("/api/policy/receipt", headers=self.headers, json={"revision": previous})
+        with self.client.websocket_connect("/api/connect", headers=self.headers) as socket:
+            socket.receive_json()
+            self.save(self.identifier, {"clientRole": "student"}, csrf)
+            self.assertEqual(socket.receive_json()["type"], "policy")
+            device = self.client.get("/admin/status").json()["devices"][0]
+            self.assertFalse(device["policy_current"])
+            self.assertEqual(device["client_role"], "student")
+            current = self.client.get("/api/policy", headers=self.headers).json()["revision"]
+            self.client.post("/api/policy/receipt", headers=self.headers, json={"revision": current})
+            self.assertTrue(self.client.get("/admin/status").json()["devices"][0]["policy_current"])
+
+    def test_role_persists_and_capability_column_migrates(self):
+        import sqlite3
+        from contextlib import closing
+        csrf = self.login()
+        self.save(self.identifier, {"clientRole": "student", "asrMode": "forceCloud"}, csrf)
+        with closing(sqlite3.connect(self.root / "mdn.sqlite3")) as conn:
+            conn.execute("ALTER TABLE devices DROP COLUMN capabilities")
+            conn.commit()
+        self.client.close()
+        self.client = TestClient(create_app(self.root, self.config), base_url="https://mdn.example.edu")
+        headers = self.headers | {"X-IL-Capabilities": "clientRoleV1,asrModeV1"}
+        restored = self.client.get("/api/policy", headers=headers).json()
+        self.assertEqual(restored["clientRole"], "student")
+        self.assertEqual(restored["asrMode"], "forceCloud")
+        self.login()
+        self.assertTrue(self.client.get("/admin/status").json()["devices"][0]["role_supported"])
+        self.client.get("/api/policy", headers=self.headers)
+        self.assertFalse(self.client.get("/admin/status").json()["devices"][0]["role_supported"])
+
+    def test_invalid_role_and_asr_mode_are_rejected(self):
+        csrf = self.login()
+        for value in ("teacher", None, 1, [], {}):
+            self.assertEqual(self.save("all", {"clientRole": value}, csrf).status_code, 422)
+        for value in ("cloud", "local", None, 1, [], {}):
+            self.assertEqual(self.save("all", {"asrMode": value}, csrf).status_code, 422)
+
+    def test_asr_mode_inheritance_capability_and_unlock(self):
+        csrf = self.login()
+        headers = self.headers | {"X-IL-Capabilities": "clientRoleV1,asrModeV1"}
+        self.save("all", {"asrMode": "forceApi", "settings": {"cloudModel": "model"}}, csrf)
+        self.save(self.identifier, {"clientRole": "default"}, csrf)
+        inherited = self.client.get("/api/policy", headers=headers).json()
+        self.assertEqual(inherited["asrMode"], "forceApi")
+        self.assertEqual(inherited["settings"]["cloudModel"], "model")
+        self.assertTrue(self.client.get("/admin/status").json()["devices"][0]["asr_supported"])
+        self.assertNotIn("asrMode", self.client.get("/api/policy", headers=self.headers).json())
+        device = self.client.get("/admin/status").json()["devices"][0]
+        self.assertEqual(device["asr_label"], "强制传统 API")
+        self.assertTrue(device["asr_warning"])
+        self.save(self.identifier, {"asrMode": "forceCloud"}, csrf)
+        self.assertEqual(self.client.get("/api/policy", headers=headers).json()["asrMode"], "forceCloud")
+        self.assertFalse(self.client.get("/admin/status").json()["devices"][0]["asr_warning"])
+        self.save(self.identifier, {"asrMode": "followLocal"}, csrf)
+        self.assertEqual(self.client.get("/api/policy", headers=headers).json()["asrMode"], "followLocal")
+        self.client.post("/admin/device", data={"device_id": self.identifier, "action": "inherit", "form_token": csrf})
+        self.assertEqual(self.client.get("/api/policy", headers=headers).json()["asrMode"], "forceApi")
+        self.assertIn('id="asr-mode"', self.client.get("/admin?view=policy").text)
+
     def test_policy_receipt_is_monotonic_and_dashboard_shows_pending(self):
         csrf = self.login()
         revision = self.client.get("/api/policy", headers=self.headers).json()["revision"]

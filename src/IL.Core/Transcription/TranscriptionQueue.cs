@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using IL.Core.Asr;
+using IL.Core.Cloud;
 using IL.Core.Infrastructure;
 namespace IL.Core.Transcription;
 public sealed class TranscriptionQueue : IAsyncDisposable
@@ -11,6 +12,10 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     private readonly HashSet<Task> executions=[];private Task persistence=Task.CompletedTask;private bool disposed;private int sequence;
     public TranscriptionQueue(AsrRunner runner,Func<string,Task<DuplicateMatch?>> resolveDuplicate,QueueStore store,SrtRecognitionCache cache,Func<string> resolveCacheProfile,int maxConcurrent=1,int maxRetained=50)
     {this.runner=runner;this.resolveDuplicate=resolveDuplicate;this.store=store;this.cache=cache;this.resolveCacheProfile=resolveCacheProfile;this.maxConcurrent=Math.Max(1,maxConcurrent);this.maxRetained=Math.Max(0,maxRetained);}
+    public Func<string, string, IProgress<AsrProgress>?, CancellationToken, TimeSpan?, Task<string>>? RunJob { get; set; }
+    private readonly HashSet<string> userCancellations = [];
+    public bool WasUserCancelled(string id) { lock (sync) return userCancellations.Contains(id); }
+    public void SetChargedCredits(string id, decimal credits) => Update(id, job => job with { ChargedCredits = credits }, true);
     public event EventHandler? Changed;
     public event Action<TranscriptionJob,bool>? Completed;
     public IReadOnlyList<TranscriptionJob> Jobs {get{lock(sync)return jobs.ToArray();}}
@@ -34,9 +39,10 @@ public sealed class TranscriptionQueue : IAsyncDisposable
         var job=JobById(id);if(job?.Status!=TranscriptionJobStatus.AwaitingDecision)return;
         Update(id,j=>proceed?j with{Status=TranscriptionJobStatus.Queued,Stage=TranscriptionStage.Queued,Duplicate=null,DuplicateApproved=true,Fraction=null,Message="等待前面的任务完成。"}:j with{Status=TranscriptionJobStatus.Canceled,Duplicate=null,Fraction=null,FinishedAt=DateTimeOffset.Now,Message="任务已取消。"},true);Trim();Pump();
     }
-    public void Cancel(string id)
+    public void Cancel(string id, bool userInitiated = false)
     {
         var job=JobById(id);if(job==null||job.IsTerminal)return;
+        if (userInitiated) { lock (sync) userCancellations.Add(id); }
         if(job.Status==TranscriptionJobStatus.Running){Update(id,j=>j with{Message="正在取消。"});lock(sync)if(running.TryGetValue(id,out var cancellation))cancellation.Cancel();}
         else{Update(id,j=>j with{Status=TranscriptionJobStatus.Canceled,Duplicate=null,Fraction=null,FinishedAt=DateTimeOffset.Now,Message="任务已取消。"},true);Trim();Pump();}
     }
@@ -45,6 +51,7 @@ public sealed class TranscriptionQueue : IAsyncDisposable
         var job=JobById(id);if(job==null||job.Status is not (TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted))return;
         if (job.Status == TranscriptionJobStatus.Failed && job.Srt is not null && job.AudioMd5 is not null && job.CacheProfile is not null)
             cache.Invalidate(job.AudioMd5, job.CacheProfile);
+        lock (sync) userCancellations.Remove(id);
         Update(id,j=>j with{Status=TranscriptionJobStatus.Queued,Stage=TranscriptionStage.Queued,Message="等待前面的任务完成。",Fraction=null,StartedAt=null,FinishedAt=null,Duplicate=null,Srt=null,SrtConsumed=false,ErrorDetails=null},true);Pump();
     }
     public void MarkSrtConsumed(string id)=>Update(id,j=>j with{SrtConsumed=true,Srt=null},true);
@@ -131,9 +138,15 @@ public sealed class TranscriptionQueue : IAsyncDisposable
             ct.ThrowIfCancellationRequested();
             if(duplicate!=null){Update(id,j=>j with{Status=TranscriptionJobStatus.AwaitingDecision,Stage=TranscriptionStage.Queued,Fraction=null,BytesDone=0,BytesTotal=0,Duplicate=duplicate,Message="等待确认是否继续。"},true);return;}
             Update(id,j=>j with{Stage=TranscriptionStage.Uploading,Fraction=0.05,Message="正在发送音频。"});
-            srt=await runner(job.AudioPath,new InlineProgress(p=>ApplyProgress(id,p)),ct,EstimateProcessingTime(job.AudioDuration));ct.ThrowIfCancellationRequested();
-            await cache.WriteAsync(job.AudioMd5!,profile,srt,ct);ct.ThrowIfCancellationRequested();Complete(id,srt,false);
+            srt=await (RunJob is { } contextual ? contextual(id,job.AudioPath,new InlineProgress(p=>ApplyProgress(id,p)),ct,EstimateProcessingTime(job.AudioDuration)) : runner(job.AudioPath,new InlineProgress(p=>ApplyProgress(id,p)),ct,EstimateProcessingTime(job.AudioDuration)));
+            var cloudCompleted = profile.Contains("il-cloud-service-v1", StringComparison.Ordinal);
+            if (!cloudCompleted) ct.ThrowIfCancellationRequested();
+            await cache.WriteAsync(job.AudioMd5!,profile,srt,cloudCompleted ? CancellationToken.None : ct);
+            if (!cloudCompleted) ct.ThrowIfCancellationRequested();
+            Complete(id,srt,false);
         }
+        catch(CloudAsrCompletedAfterCancellationException completed) { if (!disposed) Complete(id, completed.Transcript, false); }
+        catch(CloudAsrWaitingInterruptedException interrupted) { if (!disposed) Update(id, j => j with { Status=TranscriptionJobStatus.Interrupted, Fraction=null, Message=interrupted.Message }, true); }
         catch(OperationCanceledException){if(!disposed)Update(id,j=>j with{Status=TranscriptionJobStatus.Canceled,Fraction=null,FinishedAt=DateTimeOffset.Now,Message="任务已取消。"},true);}
         catch(Exception ex)
         {

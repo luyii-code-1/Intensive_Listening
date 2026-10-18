@@ -60,7 +60,7 @@ public sealed class CloudLoopbackCallback : IAsyncDisposable
 
     private static Task RespondAsync(NetworkStream stream, bool accepted, CancellationToken ct)
     {
-        var body = Encoding.UTF8.GetBytes("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><title>IL Cloud</title><p>"
+        var body = Encoding.UTF8.GetBytes("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><title>Intensive Listening 云服务</title><p>"
             + (accepted ? "授权结果已收到，请返回 Intensive Listening。" : "授权回调无效，请返回应用重新登录。") + "</p></html>");
         var headers = Encoding.ASCII.GetBytes($"HTTP/1.1 {(accepted ? "200 OK" : "400 Bad Request")}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {body.Length}\r\nConnection: close\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\n\r\n");
         return stream.WriteAsync(headers.Concat(body).ToArray(), ct).AsTask();

@@ -27,6 +27,7 @@ namespace IL.App.Views;
 
 public sealed class TeacherView : UserControl
 {
+    public Func<Task>? CloudTransfers { get; set; }
     public Action? ProjectOpened { get; set; }
     public bool HasOpenProject => _vm.Project is not null || _agentAuthoringHost.IsVisible;
     private readonly CourseProjectStore _store;
@@ -210,6 +211,7 @@ public sealed class TeacherView : UserControl
             var export = WorkspaceUi.Button("导出工程", () => RunAsync(ExportArchiveAsync)); export.IsEnabled = _vm.Project != null; _projectCommands.Children.Add(ManagedUi.Feature(export,"export"));
             if (_vm.Project != null) _projectCommands.Children.Add(MenuButton("试卷", [("导入 DOCX", () => RunAsync(ImportExamAsync), true), ("导出 TXT", () => RunAsync(ExportExamAsync), true)]));
         }
+        _projectCommands.Children.Add(WorkspaceUi.Button("云端工程", () => CloudTransfers?.Invoke() ?? Task.CompletedTask));
         var create = WorkspaceUi.Button("新建项目", () => RunAsync(NewAsync), true);
         var createLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; createLabel.Children.Add(WorkspaceUi.Icon("add")); createLabel.Children.Add(WorkspaceUi.Text("新建项目")); create.Content = createLabel; _projectCommands.Children.Add(create);
         var settings = WorkspaceUi.IconButton("settings", "设置", () => { _openSettings(); return Task.CompletedTask; }); settings.Classes.Add("subtle"); ToolTip.SetTip(settings, "设置"); _projectCommands.Children.Add(settings);
@@ -684,7 +686,7 @@ public sealed class TeacherView : UserControl
     private async Task TranscribeAsync()
     { IL.Core.Management.ManagedRuntime.Require("asr");
         await SaveDraftAsync(); if (_vm.Project?.AudioPath == null) throw new InvalidOperationException("请先绑定音频。");
-        if (!_settings().CloudReady) { _openSettings(); return; }
+        if (_settings().AsrServiceMode == AsrServiceMode.Api && !_settings().CloudReady) { _openSettings(); return; }
         await _vm.SaveEditingAsync(_vm.Project);
         var project = await _transcriptions.EnqueueAsync(_vm.Project);
         await _transcriptions.FlushAsync(); await _vm.OpenAsync(project.Id); RenderProject();

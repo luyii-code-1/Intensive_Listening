@@ -5,8 +5,11 @@ using IL.Core.Infrastructure;
 namespace IL.Core.Settings;
 
 public enum AsrProviderKind { Cloud, Local }
+public enum AsrServiceMode { Api, CloudService }
 public sealed record AppSettings
 {
+    public bool CloudServiceEnabled { get; init; }
+    public AsrServiceMode AsrServiceMode { get; init; }
     public AsrProviderKind AsrProvider { get; init; } = AsrProviderKind.Cloud;
     public string CloudBaseUrl { get; init; } = "https://dashscope.aliyuncs.com";
     public string CloudEndpoint { get; init; } = "/api/v1/services/aigc/multimodal-generation/generation";
@@ -40,8 +43,8 @@ public sealed record AppSettings
     public IL.Core.Asr.AsrConfig CloudAsrConfig => new(CloudBaseUrl,CloudEndpoint,CloudModel,CloudApiKey,CloudLanguage);
     public bool CloudReady => new[] { CloudBaseUrl, CloudEndpoint, CloudModel, CloudApiKey }.All(x => !string.IsNullOrWhiteSpace(x));
     public bool LocalReady => !string.IsNullOrWhiteSpace(LocalModelsDirectory) && !string.IsNullOrWhiteSpace(SelectedLocalModel);
-    private string RawAsrCacheProfile => JsonSerializer.Serialize(new { provider = AsrProvider.ToString().ToLowerInvariant(), baseUrl = CloudBaseUrl.Trim(), endpoint = CloudEndpoint.Trim(), model = CloudModel.Trim(), language = CloudLanguage.Trim(), translateChineseToEnglish = TranslateChineseToEnglish, localModel = SelectedLocalModel.Trim(), segmentMaxSeconds = 120 }, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-    public string AsrCacheProfile => IL.Core.Management.ManagedRuntime.IsManaged && IL.Core.Management.ManagedRuntime.Policy.HideAsrConfiguration
+    private string RawAsrCacheProfile => AsrServiceMode == AsrServiceMode.CloudService ? "{\"provider\":\"il-cloud-service-v1\"}" : JsonSerializer.Serialize(new { provider = AsrProvider.ToString().ToLowerInvariant(), baseUrl = CloudBaseUrl.Trim(), endpoint = CloudEndpoint.Trim(), model = CloudModel.Trim(), language = CloudLanguage.Trim(), translateChineseToEnglish = TranslateChineseToEnglish, localModel = SelectedLocalModel.Trim(), segmentMaxSeconds = 120 }, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+    public string AsrCacheProfile => AsrServiceMode != AsrServiceMode.CloudService && IL.Core.Management.ManagedRuntime.IsManaged && IL.Core.Management.ManagedRuntime.Policy.HideAsrConfiguration
         ? JsonSerializer.Serialize(new { provider="cloud", model="managed", configurationId=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(RawAsrCacheProfile))) }) : RawAsrCacheProfile;
     internal static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
     public static AppSettings Defaults() => new() { CloudBaseUrl = Environment.GetEnvironmentVariable("ILP_ASR_BASE_URL") ?? "https://dashscope.aliyuncs.com", CloudEndpoint = Environment.GetEnvironmentVariable("ILP_ASR_ENDPOINT") ?? "/api/v1/services/aigc/multimodal-generation/generation", CloudModel = Environment.GetEnvironmentVariable("ILP_ASR_MODEL") ?? "qwen-audio-3.0-asr-flash", CloudApiKey = Environment.GetEnvironmentVariable("ILP_ASR_API_KEY") ?? "" };
@@ -49,6 +52,8 @@ public sealed record AppSettings
     public bool NeedsOnboarding(string installationId) => EulaAcceptedVersion.Length == 0 || (!string.IsNullOrWhiteSpace(installationId) && CompletedInstallationId != installationId);
     public static AppSettings FromJson(JsonObject j) => new()
     {
+        CloudServiceEnabled = Bool(j, "cloudServiceEnabled"),
+        AsrServiceMode = String(j, "asrServiceMode", "api") == "cloudService" ? AsrServiceMode.CloudService : AsrServiceMode.Api,
         CompletedInstallationId = String(j, "completedInstallationId", ""),
         StartAtLogin = Bool(j, "startAtLogin"),
         CreateProjectOnAudioImport = Bool(j, "createProjectOnAudioImport", true),

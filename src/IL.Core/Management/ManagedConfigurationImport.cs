@@ -9,7 +9,7 @@ public static class ManagedConfigurationImport
 
     public static int Apply(string source, string dataDirectory)
     {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        if (!(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())) throw new PlatformNotSupportedException();
         if (!string.Equals(Path.GetFileName(source), "il_mdn_config.yaml", StringComparison.OrdinalIgnoreCase))
             throw new FormatException("安装配置文件名需要为 il_mdn_config.yaml。");
         var incoming = MdnConfiguration.Load(Path.GetDirectoryName(Path.GetFullPath(source))!)
@@ -19,7 +19,7 @@ public static class ManagedConfigurationImport
         JsonObject? state = null;
         if (File.Exists(target) && File.Exists(statePath))
         {
-            state = JsonNode.Parse(WindowsSecretStore.Load(statePath))!.AsObject();
+            state = JsonNode.Parse(ManagedSecretStore.Load(statePath))!.AsObject();
             var policy = state["policy"]?.Deserialize<ManagedPolicy>(ManagedPolicy.Json)
                 ?? throw new FormatException("已有组织策略缓存无效。");
             policy.Validate();
@@ -35,7 +35,7 @@ public static class ManagedConfigurationImport
         {
             // A hostname, IP or protocol change does not invalidate a device credential.
             state!["server"] = incoming.Server.AbsoluteUri;
-            WindowsSecretStore.Save(statePath, state.ToJsonString(ManagedPolicy.Json));
+            ManagedSecretStore.Save(statePath, state.ToJsonString(ManagedPolicy.Json));
         }
         else
         {

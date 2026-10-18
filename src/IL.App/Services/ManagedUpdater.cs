@@ -28,6 +28,7 @@ public sealed class ManagedUpdater : IDisposable
     private string Root => Path.Combine(_data, "updates");
     public string Status { get; private set; } = "尚无组织更新任务";
     public bool IsBusy => _busy || _automaticPending;
+    public bool Enabled { get; set; } = true;
     public bool HasUpdate => _offered is not null && _offered == EligibleUpdate();
     public bool CanUpdate => HasUpdate && !IsBusy && !_journal.Attempted(_offered!.Id);
     public bool CanInstall => CanUpdate && _ready == _offered && _file is not null;
@@ -63,7 +64,7 @@ public sealed class ManagedUpdater : IDisposable
     private ManagedUpdate? EligibleUpdate()
     {
         var update = _policy().Update;
-        return update is not null && Guid.TryParse(update.Id, out _) && _configuration() is not null &&
+        return Enabled && update is not null && Guid.TryParse(update.Id, out _) && _configuration() is not null &&
             !_policy().DisabledFeatures.Contains("updates") && ManagedUpdateJournal.AllowsVersion(_version, update.Version) && !_journal.Completed(update.Id) ? update : null;
     }
     private ManagedUpdateDownloader Downloader(ManagedUpdate update)

@@ -1,36 +1,42 @@
-# IL Cloud 客户端
+# Intensive Listening 云服务客户端
 
-云服务入口位于设置页的 **IL Cloud** 分类，适用于 Windows 和 macOS 主程序。
+Windows 与 macOS 主程序共用云服务客户端。连接默认关闭，在设置的 **Intensive Listening 云服务** 中启用后，通过浏览器完成登录。设备名称由应用生成。
 
-## 浏览器授权
+## 登录与凭据
 
-客户端标识为 `il-desktop`，请求权限为 `cloud.library cloud.projects`。通过系统浏览器访问
-`https://cloud.il.luyii.cn/connect/authorize`，采用 Authorization Code + PKCE S256。
-应用先绑定 `127.0.0.1` 的系统分配端口，回调路径固定为 `/callback`；校验回调地址、随机 state 和重复字段。
-浏览器等待五分钟后结束，也可在设置页取消。
+沿用 PKCE S256 和回环地址回调，使用 `cloud.library`、`cloud.projects`、`cloud.asr` 权限。旧授权需要重新登录才能使用云 ASR。
 
-授权码通过 `/connect/token` 换取令牌。访问令牌仅保存在内存；刷新令牌保存在 Windows 凭据管理器
-或 macOS 钥匙串。刷新过程串行执行，收到轮换令牌后先原子写入系统凭据，再供请求使用。
-`invalid_grant`、`invalid_token` 或资源接口 401 会清理当前凭据，要求重新授权。
-退出登录调用 `/connect/revoke`；网络失败时仍清理本机凭据，并显示云端撤销尚未完成的状态。
+刷新令牌存入 Windows 系统凭据或 macOS Keychain。Bearer 只发送到云服务自身的 HTTPS 地址，自动重定向关闭。关闭云连接保留本地课程和系统凭据，恢复连接后可继续登录会话。
 
-`CloudApiTransport` 只向 IL Cloud 本身发送 Bearer 凭据并禁用自动重定向。
-文件统一由云服务中转；客户端拒绝外域文件地址和重定向。
+## 播放课程
 
-## 资源接入
+播放首页读取 `GET /api/v1/library/playable`。服务端根据当前账号权限返回可播放且已完成审阅的课程；客户端不以制作工程列表推断可播放状态。
 
-设置页显示账号、共享容量、制作席位、云端文件、制作工程及最近制作任务。制作工程通过
-`CourseProjectStore.ExportZipToFileAsync` / `ImportZipAsync` 互传；精听包通过
-`IlpImporter` / `IlpLibrary` 校验与导入。配额和积分由云服务核定：免费两个制作席位，
-ILP 与工程共用 200 MiB；上传免费，每次下载授权 0.2 积分。
+- 云图标：尚未下载；点击申请下载。
+- 圆环：显示下载进度。
+- 重试：下载失败或超时，沿用未完成的授权与 Range 续传。
+- 打开：文件校验、导入完成后可播放。
+- 下载更新：云端版本与本地副本不同时，由用户点击下载。
 
-传输记录存入数据目录的 `cloud-transfers`，按账号、资源和格式区分操作。
-下载失败保留授权 ID 与已接收片段，重试复用原幂等键和授权；按登录设备区分下载记录。
-接收时校验授权中的字节数与 SHA-256，成功保存、导入后清理缓存。
-授权过期时清理该记录并提示再次申请的积分费用。
-工程上传复用同一版本的 ZIP 快照，避免重试生成不同请求内容。
-任务列表仅在设置页可见且有排队或执行中的任务时每五秒刷新。
+课程副本按账号、稳定来源 ID 和内容版本关联。下载校验大小与 SHA-256，匹配清单版本后再导入；同 UUID 的课程替换保留播放与答题记录。正在播放的课程需先返回首页再更新。
 
-参考：[RFC 8252](https://www.rfc-editor.org/rfc/rfc8252)、[RFC 7636](https://www.rfc-editor.org/rfc/rfc7636)、
-[Windows Credential Manager](https://learn.microsoft.com/en-us/windows/win32/api/wincred/nf-wincred-credwritew)、
-[macOS Keychain](https://developer.apple.com/documentation/security/keychain-services)。
+读取列表免费，下载和更新按服务端返回的 `downloadCredits` 报价。当前每次新授权为 0.1 积分，过期后重新授权会产生新费用。工程上传、下载和制作任务移至制作界面的“云端工程”。
+
+## ASR 模式
+
+设置 → 制作与智能体 → API 设置可选择 **ASR API / 云服务**。API 模式沿用用户的服务地址、模型和密钥。云服务模式需启用连接并登录，客户端上传音频，服务端调用供应商并返回 SRT；供应商密钥不下发到客户端。
+
+云 ASR 成功 5 积分，服务失败免费；服务端受理前取消免费，受理后主动取消 2 积分。任务队列显示服务端实际结算金额，完成与取消竞态按服务端终态处理。
+
+任务提交采用持久化幂等键。断网、超时、关闭应用或组织策略中断只停止本地等待，保留任务 ID；点击重试恢复原任务。只有任务中心的主动取消操作请求远端取消。上传后尚未提交的取消不创建任务。
+
+## MDN
+
+客户端声明 `clientRoleV1` 和 `asrModeV1`：
+
+- `clientRole: default | student`：学生端保留课程登录、下载和播放；制作导航、命令、MCP、ASR、工程导入导出和制作设置受限。
+- `asrMode: followLocal | forceApi | forceCloud`：强制模式锁定本地选择；学生端的制作限制优先。
+
+有效策略沿用离线缓存；撤销后恢复个人偏好。云连接开关和登录凭据保留用户操作入口。Windows MDN 缓存继续使用 DPAPI。macOS 使用 Keychain 保存随机密钥，并以 AES-GCM 加密设备凭据、策略、事件和回执队列。
+
+本轮开发在 Windows 主机完成；macOS Keychain 交互、注册及实时策略链路需在 macOS 实机验收。MDN 安装包更新执行仍为 Windows 专用。

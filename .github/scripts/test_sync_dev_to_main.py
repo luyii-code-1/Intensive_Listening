@@ -67,9 +67,9 @@ class SnapshotTests(unittest.TestCase):
                                     "conclusion": "FAILURE" if self.failed else "SUCCESS"}]})
         self.fail(f"Unexpected command: {args}")
 
-    def run_sync(self):
+    def run_sync(self, release_tag=None):
         with patch.object(sync, "command", self.command), patch.dict(sync.os.environ, {"GITHUB_STEP_SUMMARY": ""}):
-            self.publisher.run()
+            self.publisher.run(release_tag)
 
     def test_snapshot_replaces_main_tree_and_preserves_binary_and_executable_mode(self):
         commit, tree = sync.snapshot(self.dev, self.main, self.git)
@@ -149,6 +149,51 @@ class SnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "head changed"):
             sync.check_state(state, "expected")
 
+    def release_fixture(self):
+        self.release_tag = "v2.9.0"
+        self.release_prerelease = False
+        self.git("tag", self.release_tag, self.dev)
+        self.git("push", "origin", "refs/tags/" + self.release_tag)
+
+    def test_release_uses_tag_tree_and_preserves_newer_development(self):
+        self.release_fixture()
+        (self.repo / "README.md").write_text("new work after Release", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-m", "next development")
+        newer = self.git("rev-parse", "HEAD")
+        self.git("push", "origin", "2.0-dev")
+        self.run_sync(self.release_tag)
+        self.assertEqual(self.git("rev-parse", f"{self.dev}^{{tree}}"), self.git("rev-parse", "origin/main^{tree}"))
+        self.assertEqual(newer, self.remote_ref("2.0-dev"))
+
+    def test_prerelease_cannot_publish_main(self):
+        self.release_fixture()
+        self.release_prerelease = True
+        with self.assertRaisesRegex(RuntimeError, "stable Release"):
+            self.run_sync(self.release_tag)
+        self.assertEqual(self.main, self.remote_ref("main"))
+        self.assertNotIn(("pulls", "POST"), self.calls)
+
+    def test_release_preserves_development_that_advances_after_merge(self):
+        self.release_fixture()
+        self.source_moves_after_merge = True
+        self.run_sync(self.release_tag)
+        self.assertEqual(self.moved_dev, self.remote_ref("2.0-dev"))
+        self.assertEqual(self.git("rev-parse", f"{self.dev}^{{tree}}"), self.git("rev-parse", "origin/main^{tree}"))
+
+    def test_release_tag_change_during_checks_stops_merge(self):
+        self.release_fixture()
+        original = self.publisher.release_source
+        reads = 0
+        def moved(tag):
+            nonlocal reads
+            reads += 1
+            return original(tag) if reads == 1 else self.main
+        with patch.object(self.publisher, "release_source", moved):
+            with self.assertRaisesRegex(RuntimeError, "Release changed"):
+                self.run_sync(self.release_tag)
+        self.assertEqual(self.main, self.remote_ref("main"))
+
 
 class FakeSync(sync.Sync):
     def __init__(self, fixture):
@@ -159,6 +204,10 @@ class FakeSync(sync.Sync):
         fixture = self.fixture
         if path.startswith("git/ref/heads/"):
             return {"object": {"sha": fixture.remote_ref(path[len("git/ref/heads/"):])}}
+        if path.startswith("releases/"):
+            return {"id": 42, "tag_name": fixture.release_tag, "draft": False, "prerelease": fixture.release_prerelease}
+        if path.startswith("git/ref/tags/"):
+            return {"object": {"sha": fixture.dev, "type": "commit"}}
         fixture.calls.append((path, method))
         if path == "pulls/7/merge":
             head = fixture.remote_ref(sync.BRANCH)

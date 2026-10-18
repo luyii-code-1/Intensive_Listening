@@ -34,6 +34,8 @@ public sealed class StudentView : UserControl
     private readonly StackPanel _lessons = new() { Spacing = 4 };
     private readonly SpringListCollection<Control> _lessonMotion;
     private Grid? _homeContent;
+    private readonly Control? _cloudLessons;
+    private TextBlock? _localEmpty;
     private readonly StackPanel _index = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly Dictionary<int, List<(Control Control, LessonTextPart Part)>> _words = [];
     private readonly Dictionary<int, Border> _cueRows = [];
@@ -62,9 +64,9 @@ public sealed class StudentView : UserControl
     private string? _openingLessonId, _deletingLessonId;
     private DateTimeOffset _lastInteraction = DateTimeOffset.UtcNow;
 
-    public StudentView(StudentViewModel vm)
+    public StudentView(StudentViewModel vm, Control? cloudLessons = null)
     {
-        _vm = vm; DataContext = vm;
+        _vm = vm; DataContext = vm; _cloudLessons = cloudLessons;
         _transcriptBlur = new() { Radius = vm.TranscriptBlurIntensity };
         _lessonMotion = new(_lessons, _lessons.Children, frame => frame, _lessons.Children.Move);
         _materialCloze = WorkspaceUi.Button("显示本段挖空", () => { vm.ToggleMaterialCloze(); return Task.CompletedTask; });
@@ -209,22 +211,18 @@ public sealed class StudentView : UserControl
     private void BuildHome()
     {
         BuildHeader();
-        if (_vm.Lessons.Count == 0)
-        {
-            var actions = Row(ManagedUi.Wrap(WorkspaceUi.Button("导入精听包或音频", ImportAsync, true),()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp"))); actions.HorizontalAlignment = HorizontalAlignment.Center;
-            var empty = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 360 };
-            var icon = WorkspaceUi.Icon("open_file", 40); icon.HorizontalAlignment = HorizontalAlignment.Center; icon.Margin = new Thickness(0, 0, 0, 18);
-            empty.Children.Add(icon); empty.Children.Add(new TextBlock { Text = "打开音频或精听包", FontSize = 17, FontWeight = FontWeight.Bold, TextAlignment = TextAlignment.Center });
-            empty.Children.Add(new TextBlock { Text = "直接播放常见音频，或导入带有题目与挖空练习的 .ilp 精听包。", TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 8, 0, 18) }); empty.Children.Add(actions);
-            _lessonMotion.Update([]); PresentBody(empty, "home:empty"); return;
-        }
         _lessonMotion.Update(_vm.Lessons.OrderByDescending(item => _vm.ProgressFor(item.Id)?.LastOpenedAt ?? DateTimeOffset.MinValue).Select(lesson => (lesson.Id, LessonRow(lesson))));
         if (_homeContent == null)
         {
-            _homeContent = new Grid { RowDefinitions = new RowDefinitions("auto,*"), MaxWidth = 1200, HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(24, 4, 24, 24) };
-            var title = Text("最近课程", 17, true); title.Margin = new Thickness(0, 0, 0, 12); _homeContent.Children.Add(title);
-            _homeContent.Children.Add(new ScrollViewer { Content = _lessons, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, [Grid.RowProperty] = 1 });
+            var list = new StackPanel { Spacing = 12 };
+            list.Children.Add(Text("最近课程", 17, true));
+            _localEmpty = Text("导入音频或精听包，开始精听。", 13); list.Children.Add(_localEmpty);
+            list.Children.Add(_lessons);
+            if (_cloudLessons is not null) list.Children.Add(_cloudLessons);
+            _homeContent = new Grid { MaxWidth = 1200, HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(24, 4, 24, 24) };
+            _homeContent.Children.Add(new ScrollViewer { Content = list, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         }
+        _localEmpty!.IsVisible = _vm.Lessons.Count == 0;
         PresentBody(_homeContent, "home:list");
     }
     private Control LessonRow(LessonListItem lesson)

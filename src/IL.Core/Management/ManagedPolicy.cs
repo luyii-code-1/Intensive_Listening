@@ -9,6 +9,12 @@ public sealed record ManagedUpdate(string Id, string Mode, string Version, strin
 }
 public sealed record ManagedPolicy
 {
+    public string AsrMode { get; init; } = "followLocal";
+    public string ClientRole { get; init; } = "default";
+    [System.Text.Json.Serialization.JsonIgnore] public bool IsStudent => ClientRole == "student";
+    private static readonly string[] StudentFeatures = ["authoring", "asr", "mcp", "export", "importProject", "apiConfiguration"];
+    public bool Allows(string feature) => !DisabledFeatures.Contains(feature) && !(IsStudent && StudentFeatures.Contains(feature));
+    private static bool AuthoringSetting(string name) => IsAsr(name) || name is "mcpEnabled" or "createProjectOnAudioImport" or "asrServiceMode";
     public long Revision { get; init; }
     public JsonObject Settings { get; init; } = new();
     public string[] LockedSettings { get; init; } = [];
@@ -22,17 +28,17 @@ public sealed record ManagedPolicy
     public static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     public static readonly string[] Features = ["playback", "importAudio", "importIlp", "authoring", "asr", "mcp", "export", "importProject", "dataMaintenance", "apiConfiguration", "updates"];
     // Legal consent and optional Aliyun consent remain personal; MDN telemetry has a separate transport.
-    private static readonly string[] LocalOnly = ["eulaAcceptedVersion", "completedInstallationId", "telemetryEnabled", "telemetryPrompted", "fileAssociationPrompted", "startAtLogin"];
+    private static readonly string[] LocalOnly = ["eulaAcceptedVersion", "completedInstallationId", "telemetryEnabled", "telemetryPrompted", "fileAssociationPrompted", "startAtLogin", "cloudServiceEnabled", "asrServiceMode"];
     public static string[] SettingNames => AppSettings.Defaults().ToJson().Select(p => p.Key).Except(LocalOnly).ToArray();
-    public bool IsLocked(string name) => !LocalOnly.Contains(name) && (LockAllSettings || LockedSettings.Contains(name) || Settings.ContainsKey(name) || HideAsrConfiguration && IsAsr(name));
+    public bool IsLocked(string name) => name == "asrServiceMode" && AsrMode != "followLocal" || IsStudent && AuthoringSetting(name) || !LocalOnly.Contains(name) && (LockAllSettings || LockedSettings.Contains(name) || Settings.ContainsKey(name) || HideAsrConfiguration && IsAsr(name));
     public string[] AllowedImportExtensions() =>
         (DisabledFeatures.Contains("importIlp") ? Array.Empty<string>() : new[] { "ilp" })
         .Concat(DisabledFeatures.Contains("importAudio") ? Array.Empty<string>() : new[] { "mp3", "m4a", "wav", "flac", "ogg" }).ToArray();
-    public static bool IsAsr(string name) => name.StartsWith("cloud", StringComparison.Ordinal) || name.StartsWith("local", StringComparison.Ordinal) || name is "asrProvider" or "selectedLocalModel" or "detectedLocalModels" or "translateChineseToEnglish";
+    public static bool IsAsr(string name) => name != "cloudServiceEnabled" && (name.StartsWith("cloud", StringComparison.Ordinal) || name.StartsWith("local", StringComparison.Ordinal) || name is "asrProvider" or "selectedLocalModel" or "detectedLocalModels" or "translateChineseToEnglish");
     public void Validate()
     {
         var defaults = AppSettings.Defaults().ToJson(); var allowed = SettingNames;
-        if (Revision < 0 || Lessons is null || Lessons.Length > 1000 || Lessons.Any(l => l is null || !Guid.TryParse(l.Id, out _) || !Guid.TryParse(l.PackageUuid, out _) || l.PackageVersion < 1) || LockedSettings.Any(s => !allowed.Contains(s)) || DisabledFeatures.Any(s => !Features.Contains(s))) throw new FormatException("集控策略包含未知设置或功能。");
+        if (AsrMode is not ("followLocal" or "forceApi" or "forceCloud") || ClientRole is not ("default" or "student") || Revision < 0 || Lessons is null || Lessons.Length > 1000 || Lessons.Any(l => l is null || !Guid.TryParse(l.Id, out _) || !Guid.TryParse(l.PackageUuid, out _) || l.PackageVersion < 1) || LockedSettings.Any(s => !allowed.Contains(s)) || DisabledFeatures.Any(s => !Features.Contains(s))) throw new FormatException("集控策略包含未知设置或功能。");
         foreach (var pair in Settings)
             if (!allowed.Contains(pair.Key) || pair.Value is null || JsonType(defaults[pair.Key]) != JsonType(pair.Value)) throw new FormatException("集控策略字段类型无效：" + pair.Key);
         if (HideAsrConfiguration && !Settings.ContainsKey("cloudApiKey")) throw new FormatException("隐藏 API 配置需要下发 API Key。");
@@ -42,13 +48,15 @@ public sealed record ManagedPolicy
     public AppSettings Apply(AppSettings personal)
     {
         var json = personal.ToJson(); foreach (var pair in Settings) json[pair.Key] = pair.Value?.DeepClone();
-        if (DisabledFeatures.Contains("mcp")) json["mcpEnabled"] = false;
+        if (!Allows("mcp")) json["mcpEnabled"] = false;
+        if (IsStudent) json["createProjectOnAudioImport"] = false;
+        if (AsrMode != "followLocal") json["asrServiceMode"] = AsrMode == "forceCloud" ? "cloudService" : "api";
         return AppSettings.FromJson(json);
     }
     public AppSettings PreservePersonal(AppSettings proposed, AppSettings personal)
     {
         var json = proposed.ToJson(); var original = personal.ToJson();
-        foreach (var key in SettingNames.Where(IsLocked)) json[key] = original[key]?.DeepClone();
+        foreach (var key in original.Select(p => p.Key).Where(IsLocked)) json[key] = original[key]?.DeepClone();
         return AppSettings.FromJson(json);
     }
 }
@@ -60,7 +68,7 @@ public static class ManagedRuntime
     public static AppSettings Effective(AppSettings settings) => IsManaged ? Policy.Apply(settings) : settings;
     public static AppSettings Display(AppSettings settings) => IsManaged && Policy.HideAsrConfiguration ? settings with
     { CloudApiKey = "", CloudBaseUrl = "", CloudEndpoint = "", CloudModel = "", LocalModelsDirectory = "", SelectedLocalModel = "", DetectedLocalModels = [] } : settings;
-    public static bool Allows(string feature) => !IsManaged || !Policy.DisabledFeatures.Contains(feature);
+    public static bool Allows(string feature) => !IsManaged || Policy.Allows(feature);
     public static string Redact(string text)
     {
         if(!IsManaged)return text;

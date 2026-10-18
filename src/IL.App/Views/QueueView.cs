@@ -20,10 +20,10 @@ public sealed class QueueView : UserControl, IDisposable
     private readonly StackPanel _content = new() { Spacing = 10 };
     private readonly DispatcherTimer _refresh = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private bool _listening, _disposed;
-    private sealed record JobLayout(TranscriptionJobStatus Status, TranscriptionStage Stage, string Title, bool Consumed, string? Srt, DuplicateMatch? Duplicate, bool Segments);
+    private sealed record JobLayout(TranscriptionJobStatus Status, TranscriptionStage Stage, string Title, bool Consumed, string? Srt, DuplicateMatch? Duplicate, bool Segments, decimal? ChargedCredits);
     private sealed record JobRow(JobLayout Layout, Control Card, TextBlock Message, ProgressBar? Progress, TextBlock? Percentage, TextBlock? Segments);
     private readonly Dictionary<string, JobRow> _jobRows = [];
-    private static JobLayout LayoutFor(TranscriptionJob job) => new(job.Status, job.Stage, job.Title, job.SrtConsumed, job.Srt, job.Duplicate, job.SegmentTotal is > 0);
+    private static JobLayout LayoutFor(TranscriptionJob job) => new(job.Status, job.Stage, job.Title, job.SrtConsumed, job.Srt, job.Duplicate, job.SegmentTotal is > 0, job.ChargedCredits);
     private static void UpdateProgress(JobRow row, TranscriptionJob job)
     {
         var elapsed = Elapsed(job); row.Message.Text = elapsed == null ? job.Message : $"{job.Message}（{elapsed}）";
@@ -87,10 +87,11 @@ public sealed class QueueView : UserControl, IDisposable
                 var value = percentageLabel = WorkspaceUi.Text($"{percentage}%", 12); value.TextAlignment = TextAlignment.Right; Grid.SetColumn(value, 2); progressRow.Children.Add(value); body.Children.Add(progressRow);
             }
             if (job.SegmentTotal is int total && total > 0) body.Children.Add(segments = WorkspaceUi.Text($"分段 {job.SegmentIndex ?? 0}/{total}", 12));
+            if (job.ChargedCredits is { } charged) body.Children.Add(WorkspaceUi.Text($"已结算 {charged:0.##} 积分", 12));
             var actions = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
             if (job.Status == TranscriptionJobStatus.Completed && !job.SrtConsumed && !string.IsNullOrWhiteSpace(job.Srt)) actions.Children.Add(Action("载入字幕", () => _loadSrt(job), true));
             if (job.Status == TranscriptionJobStatus.AwaitingDecision && job.Duplicate != null) actions.Children.Add(Action("处理重复音频", () => ResolveDuplicateAsync(job), true));
-            if (job.IsActive) actions.Children.Add(Action("取消", () => { _queue.Cancel(job.Id); return Task.CompletedTask; }));
+            if (job.IsActive) actions.Children.Add(Action("取消", async () => { if (job.CacheProfile?.Contains("il-cloud-service-v1", StringComparison.Ordinal) == true && !await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "取消云端转写", "服务端受理后主动取消收取 2 积分，完成与取消以服务端终态为准。", "取消任务")) return; _queue.Cancel(job.Id, userInitiated: true); }));
             if (job.Status is TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted) actions.Children.Add(Action("重试", () => { _queue.Retry(job.Id); return Task.CompletedTask; }));
             if (job.Status == TranscriptionJobStatus.Completed && !string.IsNullOrWhiteSpace(job.Srt)) actions.Children.Add(Action("导出 SRT", async () => { var path = await WorkspaceUi.Save(this, "导出转写字幕", job.Title + ".srt", "srt"); if (path != null) await File.WriteAllTextAsync(path, job.Srt); }));
             if (!string.IsNullOrWhiteSpace(job.ErrorDetails))
@@ -99,7 +100,7 @@ public sealed class QueueView : UserControl, IDisposable
                 body.Children.Add(new Expander { Header = "完整错误详情", Content = details, HorizontalAlignment = HorizontalAlignment.Stretch });
                 actions.Children.Add(Action("复制完整错误", async () => { if (TopLevel.GetTopLevel(this)?.Clipboard is {} clipboard) await clipboard.SetTextAsync(job.ErrorDetails); }));
             }
-            actions.Children.Add(Action("删除", async () => { if (await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "删除转写任务？", job.IsActive ? $"将取消并永久删除「{job.Title}」。" : $"将永久删除「{job.Title}」的任务记录。", "删除")) { _queue.Delete(job.Id); WorkspaceToast.Show(this, "任务已删除", $"「{job.Title}」已从转写队列移除。"); } }));
+            if (!job.IsActive || job.CacheProfile?.Contains("il-cloud-service-v1", StringComparison.Ordinal) != true) actions.Children.Add(Action("删除", async () => { if (await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "删除转写任务？", job.IsActive ? $"将取消并永久删除「{job.Title}」。" : $"将永久删除「{job.Title}」的任务记录。", "删除")) { _queue.Delete(job.Id); WorkspaceToast.Show(this, "任务已删除", $"「{job.Title}」已从转写队列移除。"); } }));
             body.Children.Add(actions); Grid.SetColumn(body, 2); row.Children.Add(body); var card = WorkspaceUi.Surface(row, new Thickness(14));
             _jobRows[job.Id] = new(layout, card, message, progress, percentageLabel, segments); entries.Add((job.Id, card));
         }

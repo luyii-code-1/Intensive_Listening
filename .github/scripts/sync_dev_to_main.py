@@ -5,9 +5,10 @@ import os
 from pathlib import Path
 import subprocess
 import time
+from urllib.parse import quote
 
 BRANCH = "automation/sync-2.0-dev-main"
-TITLE = "chore(release): sync 2.0-dev snapshot to main"
+TITLE = "chore(release): publish stable Release source to main"
 
 
 def command(args, input=None):
@@ -23,7 +24,7 @@ def git(*args, input=None):
 
 def snapshot(dev_sha, main_sha, git_command=git):
     tree = git_command("rev-parse", f"{dev_sha}^{{tree}}")
-    message = f"{TITLE}\n\nSource 2.0-dev commit: {dev_sha}\n"
+    message = f"{TITLE}\n\nSource commit: {dev_sha}\n"
     commit = git_command("-c", "user.name=github-actions[bot]", "-c",
                          "user.email=41898282+github-actions[bot]@users.noreply.github.com",
                          "commit-tree", tree, "-p", main_sha, "-p", dev_sha, input=message)
@@ -85,8 +86,30 @@ class Sync:
         self.summary("Published and branches aligned", published_main, captured_dev, tree, url)
         print(f"main and 2.0-dev are aligned at {published_main}; development tree: {tree}")
 
-    def run(self):
+    def release_source(self, tag):
+        if not tag or not tag.startswith("v2.") or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_" for c in tag):
+            raise RuntimeError("An explicit desktop Release tag is required.")
+        release = self.api("releases/tags/" + quote(tag, safe=""))
+        latest = self.api("releases/latest")
+        if release.get("draft") or release.get("prerelease") or release.get("tag_name") != tag or latest.get("id") != release.get("id"):
+            raise RuntimeError("Only the current published stable Release can update main.")
+        target = self.api("git/ref/tags/" + quote(tag, safe=""))["object"]
+        while target["type"] == "tag":
+            target = self.api("git/tags/" + target["sha"])["object"]
+        if target["type"] != "commit":
+            raise RuntimeError("Release tag does not identify a commit.")
+        return target["sha"]
+
+    def run(self, release_tag=None):
         main_sha, dev_sha = self.fetch()
+        captured_dev = dev_sha
+        if release_tag is not None:
+            dev_sha = self.release_source(release_tag)
+            git("fetch", "origin", f"refs/tags/{release_tag}")
+            if git("rev-parse", "FETCH_HEAD^{commit}") != dev_sha:
+                raise RuntimeError("Release tag changed while fetching.")
+            if git("merge-base", captured_dev, dev_sha) != dev_sha:
+                raise RuntimeError("Release source is not in development history.")
         tree = git("rev-parse", f"{dev_sha}^{{tree}}")
         if main_sha == dev_sha:
             self.summary("Already up to date", main_sha, dev_sha, tree)
@@ -94,14 +117,17 @@ class Sync:
             return
 
         if git("rev-parse", f"{main_sha}^{{tree}}") == tree and git("merge-base", main_sha, dev_sha) == dev_sha:
-            self.align_development(main_sha, dev_sha, tree)
+            if captured_dev == dev_sha:
+                self.align_development(main_sha, dev_sha, tree)
+            else:
+                self.summary("Release already published; development preserved", main_sha, dev_sha, tree)
             return
 
         commit, tree = snapshot(dev_sha, main_sha)
         refs = git("ls-remote", "--heads", "origin", f"refs/heads/{BRANCH}")
         previous = refs.split()[0] if refs else ""
         git("push", f"--force-with-lease=refs/heads/{BRANCH}:{previous}", "origin", f"{commit}:refs/heads/{BRANCH}")
-        body = f"Publish the complete `2.0-dev` tree to `main` while preserving both branch histories.\n\nSource: `{dev_sha}`\nBase main: `{main_sha}`\nTree: `{tree}`\n\nThe sync workflow waits for the required `build` check, merges this snapshot, verifies the published tree, and fast-forwards `2.0-dev` to the published commit."
+        body = f"Publish the fixed source tree to `main` while preserving both branch histories.\n\nRelease: `{release_tag or 'integration fixture'}`\nSource: `{dev_sha}`\nBase main: `{main_sha}`\nTree: `{tree}`\n\nThe sync workflow waits for the required `build` check, merges this snapshot, verifies the published tree, and preserves newer development commits. When development still points to the release source, it fast-forwards to the published commit."
         existing = self.open_pr()
         if len(existing) > 1:
             raise RuntimeError("Multiple sync PRs found; inspect them before rerunning.")
@@ -124,15 +150,25 @@ class Sync:
         else:
             raise RuntimeError(f"Timed out waiting for build and merge eligibility: {url}")
 
-        assert_refs(main_sha, dev_sha, self.ref("main"), self.ref("2.0-dev"))
+        if release_tag is None:
+            assert_refs(main_sha, dev_sha, self.ref("main"), self.ref("2.0-dev"))
+        elif self.ref("main") != main_sha or self.release_source(release_tag) != dev_sha:
+            raise RuntimeError("main or the published Release changed during checks.")
         merged = self.api(f"pulls/{number}/merge", {"sha": commit, "merge_method": "merge"}, "PUT")
         if not merged.get("merged"):
             raise RuntimeError(f"GitHub did not merge the sync PR: {merged.get('message', '')}")
         published_main, current_dev = self.fetch()
-        assert_refs(merged["sha"], dev_sha, published_main, current_dev)
-        if git("rev-parse", f"{published_main}^{{tree}}") != tree or git("rev-parse", f"{current_dev}^{{tree}}") != tree:
+        if release_tag is None:
+            assert_refs(merged["sha"], dev_sha, published_main, current_dev)
+        elif published_main != merged["sha"]:
+            raise RuntimeError("main changed after the Release merge.")
+        if git("rev-parse", f"{published_main}^{{tree}}") != tree:
             raise RuntimeError("Published main or current development tree differs from the captured snapshot.")
-        self.align_development(published_main, dev_sha, tree, url)
+        if current_dev == dev_sha:
+            self.align_development(published_main, dev_sha, tree, url)
+        else:
+            self.summary("Release published; development preserved", published_main, dev_sha, tree, url)
+            print(f"main contains Release {release_tag} at {published_main}; newer development remains at {current_dev}")
 
     @staticmethod
     def summary(status, main_sha, dev_sha, tree, url=""):
@@ -145,7 +181,10 @@ class Sync:
 
 if __name__ == "__main__":
     try:
-        Sync(os.environ["GITHUB_REPOSITORY"]).run()
+        tag = os.environ.get("RELEASE_TAG", "").strip()
+        if not tag:
+            raise RuntimeError("Set RELEASE_TAG to the published stable Release tag.")
+        Sync(os.environ["GITHUB_REPOSITORY"]).run(tag)
     except (RuntimeError, KeyError) as error:
         print(f"::error::{error}", flush=True)
         if path := os.environ.get("GITHUB_STEP_SUMMARY"):

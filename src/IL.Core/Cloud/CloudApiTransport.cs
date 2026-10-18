@@ -21,7 +21,7 @@ public sealed class CloudApiTransport : IDisposable
         var target = request.RequestUri;
         if (target is null || !target.IsAbsoluteUri || target.Scheme != CloudAuthClient.Server.Scheme
             || target.Host != CloudAuthClient.Server.Host || target.Port != CloudAuthClient.Server.Port || target.UserInfo.Length != 0)
-            throw new ArgumentException("IL Cloud 凭据只能用于云服务自身的接口请求。", nameof(request));
+            throw new ArgumentException("Intensive Listening 云服务 凭据只能用于云服务自身的接口请求。", nameof(request));
         var access = await _authentication.GetAccessTokenAsync(ct);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
         var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -29,7 +29,7 @@ public sealed class CloudApiTransport : IDisposable
         {
             response.Dispose();
             await _authentication.InvalidateAsync(access, CancellationToken.None);
-            throw new CloudAuthenticationException("login_required", "登录已失效，请重新授权 IL Cloud。");
+            throw new CloudAuthenticationException("login_required", "登录已失效，请重新授权 Intensive Listening 云服务。");
         }
         return response;
     }

@@ -48,6 +48,15 @@ public sealed class CloudAsrClientTests
         Assert.Equal(1, fixture.CancelCalls);
     }
 
+    [Fact]
+    public async Task MissingCloudScopeRequestsReauthorizationWithoutSubmittingTask()
+    {
+        using var fixture = new Fixture { ScopeDenied = true };
+        var error = await Assert.ThrowsAsync<CloudAuthenticationException>(() => fixture.RunAsync());
+        Assert.Equal("scope", error.Code); Assert.Equal(0, fixture.Submissions); Assert.Equal(0, fixture.CancelCalls);
+        Assert.Null(fixture.Charged);
+    }
+
     private sealed class Fixture : IDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "il-cloud-asr-" + Guid.NewGuid().ToString("N"));
@@ -55,7 +64,7 @@ public sealed class CloudAsrClientTests
         private readonly CloudAuthClient _auth;
         private readonly CloudAsrClient _client;
         public CancellationTokenSource Stop { get; } = new();
-        public bool UserCancellation, FailStatusOnce;
+        public bool UserCancellation, FailStatusOnce, ScopeDenied;
         public string CancellationState = "cancelled";
         public Action? OnAccepted;
         public int Uploads, Submissions, CancelCalls;
@@ -72,7 +81,7 @@ public sealed class CloudAsrClientTests
             {
                 case "/connect/token": return Json(new { access_token = "access", refresh_token = "rotated", token_type = "Bearer", expires_in = 900 });
                 case "/api/v1/auth/me": return Json(new { id = "user" });
-                case "/api/v1/asr/assets": Uploads++; return Json(new { id = "asset" });
+                case "/api/v1/asr/assets": if (ScopeDenied) { var denied = Json(new { error = "scope", message = "missing scope" }); denied.StatusCode = HttpStatusCode.Forbidden; return denied; } Uploads++; return Json(new { id = "asset" });
                 case "/api/v1/asr/tasks":
                     Submissions++; Assert.Single(request.Headers.GetValues("Idempotency-Key")); OnAccepted?.Invoke(); return TaskResponse("queued", 0);
                 case "/api/v1/asr/tasks/task":

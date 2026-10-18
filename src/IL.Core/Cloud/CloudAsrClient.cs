@@ -107,6 +107,8 @@ public sealed class CloudAsrClient : IDisposable
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadFromJsonAsync<JsonElement>(Json, deadline.Token);
+            if (response.StatusCode == System.Net.HttpStatusCode.Forbidden && body.TryGetProperty("error", out var scope) && scope.GetString() == "scope")
+                throw new CloudAuthenticationException("scope", "请在设置中重新登录 Intensive Listening 云服务，授权云端转写。此次未提交新的转写任务。");
             throw new CloudApiException(body.TryGetProperty("error", out var code) ? code.GetString() ?? "http" : "http",
                 body.TryGetProperty("message", out var message) ? message.GetString() ?? "云服务请求失败。" : "云服务请求失败。");
         }

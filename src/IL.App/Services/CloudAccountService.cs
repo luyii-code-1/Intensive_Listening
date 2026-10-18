@@ -75,7 +75,6 @@ public sealed class CloudAccountService : IDisposable
 
     public void AuthenticationFailed(string message)
     {
-        if (IsSignedIn) return;
         Status = message; Notify();
     }
 

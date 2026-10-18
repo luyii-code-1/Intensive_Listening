@@ -99,6 +99,8 @@ public sealed class AppServices : IAsyncDisposable
         var started = System.Diagnostics.Stopwatch.StartNew();
         try { var result = await CloudAsr.RunAsync(id, audio, progress, ct, () => Queue.WasUserCancelled(id), credits => Queue.SetChargedCredits(id, credits)); Mdn.Report("asr", new { durationMs = started.ElapsedMilliseconds, success = true, provider = "ilCloud" }); return result; }
         catch (CloudAsrCompletedAfterCancellationException) { Mdn.Report("asr", new { durationMs = started.ElapsedMilliseconds, success = true, provider = "ilCloud" }); throw; }
+        catch (CloudAuthenticationException error) { CloudAccount.AuthenticationFailed(error.Message); throw new AsrException(error.Message, error); }
+        catch (CloudApiException error) { throw new AsrException(error.Message, error); }
         catch (Exception error) { Mdn.Report("asr", new { durationMs = started.ElapsedMilliseconds, success = false, provider = "ilCloud", errorType = error.GetType().Name }); throw; }
     }
     private async Task<string> RunAsrAsync(string audio,IProgress<AsrProgress>? progress,CancellationToken ct,TimeSpan? estimated)

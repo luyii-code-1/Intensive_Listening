@@ -40,6 +40,7 @@ public static class ManagedConfigurationImport
         else
         {
             if (File.Exists(statePath)) File.Delete(statePath);
+            var cloud = Path.Combine(dataDirectory, "mdn", "cloud.bin"); if (File.Exists(cloud)) File.Delete(cloud);
             var events = Path.Combine(dataDirectory, "mdn", "events.bin");
             if (File.Exists(events)) File.Delete(events);
             var markers = Path.Combine(dataDirectory, "mdn", "crashes");

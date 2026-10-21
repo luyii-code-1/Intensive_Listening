@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -87,7 +88,7 @@ class Sync:
         print(f"main and 2.0-dev are aligned at {published_main}; development tree: {tree}")
 
     def release_source(self, tag):
-        if not tag or not tag.startswith("v2.") or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_" for c in tag):
+        if not tag or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
             raise RuntimeError("An explicit desktop Release tag is required.")
         release = self.api("releases/tags/" + quote(tag, safe=""))
         latest = self.api("releases/latest")

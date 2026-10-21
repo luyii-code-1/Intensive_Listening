@@ -33,7 +33,7 @@ public sealed class AppServices : IAsyncDisposable
     public ManagedLessonReceiver ManagedLessons { get; }
     public CloudAccountService CloudAccount { get; } = new();
     public CloudResources CloudFiles { get; }
-    public CloudAsrClient CloudAsr { get; }
+    public CloudAsrProxyClient CloudAsr { get; }
     public Func<Task<bool>>? ConfirmForcedCuts {get;set;}
     public bool Standalone {get;}
     public string? PreconfigurationError { get; private set; }
@@ -47,6 +47,8 @@ public sealed class AppServices : IAsyncDisposable
         Queue.RunJob = RunAsrJobAsync;
         Transcriptions=new(Projects,Queue);
         Mdn.Changed += ApplyStartup;
+        CloudAccount.Changed += CloudStateChanged;
+        CloudAccount.CommandCompleted += CloudCommandCompleted;
         Api=new(Projects,LibraryDirectory);Server=new(Api.DispatchAsync,Path.Combine(DataDirectory,"mcp","server.json"));
         Api.AgentName = () => Server.ActiveAgentName;
         Api.ExportStandalone=ExportStandaloneAsync;
@@ -77,6 +79,7 @@ public sealed class AppServices : IAsyncDisposable
         settings=await SettingsStore.NormalizeAsync(settings); Settings=settings;AppLog.DebugEnabled=settings.DebugLogging;
         ApplyStartup();
         await CloudAccount.ApplyEnabledAsync(settings.CloudServiceEnabled);
+        await CloudAccount.ApplyManagementAsync();
         CrashMonitor.SetConsent(settings.TelemetryEnabled && !Standalone);
         Student.TranscriptFontSize=settings.TranscriptFontSize;
         Student.TranscriptBlurIntensity=settings.TranscriptBlurIntensity;
@@ -84,6 +87,16 @@ public sealed class AppServices : IAsyncDisposable
         if(!Standalone){if(settings.FileAssociationPrompted || ManagedRuntime.Policy.Settings.ContainsKey("fileAssociationEnabled"))await new IlpFileAssociation().ApplyAsync(settings.FileAssociationEnabled);if(settings.McpEnabled)await Server.StartAsync();else await Server.StopAsync();}
         await Telemetry.ApplyConsentAsync(settings.TelemetryEnabled,!Standalone);
         if (!Standalone) await new CrashReportStore(DataDirectory).FlushAsync(settings.TelemetryEnabled, Telemetry.ReportCrashAsync);
+    }
+    private async void CloudStateChanged()
+    {
+        try { if (!CloudAccount.IsSignedIn) foreach (var job in Queue.Jobs.Where(j => j.IsActive && j.CacheProfile?.Contains("il-cloud-service-v1", StringComparison.Ordinal) == true)) Queue.Cancel(job.Id); await Mdn.ReportCloudAsync(CloudAccount.ManagementSnapshot); }
+        catch (Exception error) { AppLog.Warning("云服务状态暂未保存", error); }
+    }
+    private async void CloudCommandCompleted(string id, ManagedCloudReceipt receipt)
+    {
+        try { await Mdn.ReportCloudReceiptAsync(id, receipt); }
+        catch (Exception error) { AppLog.Warning("云服务退出回执暂未保存", error); }
     }
     private void ApplyStartup()
     {
@@ -94,10 +107,15 @@ public sealed class AppServices : IAsyncDisposable
     private async Task<string> RunAsrJobAsync(string id, string audio, IProgress<AsrProgress>? progress, CancellationToken ct, TimeSpan? estimated)
     {
         ManagedRuntime.Require("asr");
-        if (Settings.AsrServiceMode != AsrServiceMode.CloudService) return await RunAsrAsync(audio, progress, ct, estimated);
+        var profile = Queue.JobById(id)?.CacheProfile ?? Settings.AsrCacheProfile;
+        var cloudJob = profile.Contains("il-cloud-service-v1", StringComparison.Ordinal);
+        if (cloudJob != (Settings.AsrServiceMode == AsrServiceMode.CloudService)) throw new AsrException("转写模式已更改，请在当前模式下新建转写任务。");
+        if (!cloudJob) return await RunAsrAsync(audio, progress, ct, estimated);
+        if (!profile.Contains("proxy-batch-v1", StringComparison.Ordinal)) throw new AsrException("这是旧版云端转写任务。请先确认云端原任务状态，再新建转写任务。");
+        if (ManagedRuntime.IsManaged && ManagedRuntime.Policy.CloudService.Mode == "disabled") throw new AsrException("云服务由您的组织关闭。");
         if (!CloudAccount.IsSignedIn) throw new AsrException("请先启用并登录 Intensive Listening 云服务。");
         var started = System.Diagnostics.Stopwatch.StartNew();
-        try { var result = await CloudAsr.RunAsync(id, audio, progress, ct, () => Queue.WasUserCancelled(id), credits => Queue.SetChargedCredits(id, credits)); Mdn.Report("asr", new { durationMs = started.ElapsedMilliseconds, success = true, provider = "ilCloud" }); return result; }
+        try { var result = await CloudAsr.RunAsync(id, audio, progress, ct, () => Queue.WasUserCancelled(id), credits => Queue.SetChargedCredits(id, credits), ConfirmForcedCuts); Mdn.Report("asr", new { durationMs = started.ElapsedMilliseconds, success = true, provider = "ilCloud" }); return result; }
         catch (CloudAsrCompletedAfterCancellationException) { Mdn.Report("asr", new { durationMs = started.ElapsedMilliseconds, success = true, provider = "ilCloud" }); throw; }
         catch (CloudAuthenticationException error) { CloudAccount.AuthenticationFailed(error.Message); throw new AsrException(error.Message, error); }
         catch (CloudApiException error) { throw new AsrException(error.Message, error); }
@@ -129,6 +147,6 @@ public sealed class AppServices : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         try { ManagedLessons.Dispose();ManagedUpdates.Dispose();Updates.Dispose();await Mdn.DisposeAsync();await Server.DisposeAsync();await Queue.DisposeAsync();CloudAsr.Dispose();CloudFiles.Dispose();CloudAccount.Dispose();await Transcriptions.DisposeAsync();await Student.DisposeAsync();await Telemetry.ShutdownAsync(); }
-        finally { Mdn.Changed -= ApplyStartup; AppLog.DebugEnabled = false; await RuntimeDiagnostics.Completion; }
+        finally { CloudAccount.Changed -= CloudStateChanged; CloudAccount.CommandCompleted -= CloudCommandCompleted; Mdn.Changed -= ApplyStartup; AppLog.DebugEnabled = false; await RuntimeDiagnostics.Completion; }
     }
 }

@@ -48,7 +48,7 @@ public sealed class CloudSettingsView : UserControl
             Children =
             {
                 WorkspaceUi.Text(ServiceName, 20, true),
-                WorkspaceUi.SettingsRow("cloud", "启用云服务", "登录后使用云端课程和云端转写", _enabled, compact: true),
+                ManagedUi.Setting(WorkspaceUi.SettingsRow("cloud", "启用云服务", "登录后使用云端课程和云端转写", _enabled, compact: true), "cloudServiceEnabled"),
                 _status, WorkspaceUi.Row(_login, _cancel, _logout, web)
             }
         };
@@ -68,10 +68,10 @@ public sealed class CloudSettingsView : UserControl
             _status.Text = account.Enabled ? account.Status : "云服务已关闭";
             _login.IsVisible = account.Enabled;
             _login.Content = account.IsSignedIn ? "重新授权" : "浏览器登录";
-            _login.IsEnabled = !account.IsBusy;
+            _login.IsEnabled = account.CanAuthorize;
             _cancel.IsVisible = account.IsBusy;
             _logout.IsVisible = account.IsSignedIn;
-            _logout.IsEnabled = !account.IsBusy;
+            _logout.IsEnabled = account.CanSignOut;
         }
         finally { _refreshing = false; }
     }

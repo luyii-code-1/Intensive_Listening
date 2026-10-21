@@ -91,7 +91,7 @@ public sealed class QueueView : UserControl, IDisposable
             var actions = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
             if (job.Status == TranscriptionJobStatus.Completed && !job.SrtConsumed && !string.IsNullOrWhiteSpace(job.Srt)) actions.Children.Add(Action("载入字幕", () => _loadSrt(job), true));
             if (job.Status == TranscriptionJobStatus.AwaitingDecision && job.Duplicate != null) actions.Children.Add(Action("处理重复音频", () => ResolveDuplicateAsync(job), true));
-            if (job.IsActive) actions.Children.Add(Action("取消", async () => { if (job.CacheProfile?.Contains("il-cloud-service-v1", StringComparison.Ordinal) == true && !await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "取消云端转写", "服务端受理后主动取消收取 2 积分，完成与取消以服务端终态为准。", "取消任务")) return; _queue.Cancel(job.Id, userInitiated: true); }));
+            if (job.IsActive) actions.Children.Add(Action("取消", async () => { if (job.CacheProfile?.Contains("il-cloud-service-v1", StringComparison.Ordinal) == true && !await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "取消云端转写", "取消未完成整单将释放冻结积分；若整单已经成功，则按服务端终态结算。", "取消任务")) return; _queue.Cancel(job.Id, userInitiated: true); }));
             if (job.Status is TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted) actions.Children.Add(Action("重试", () => { _queue.Retry(job.Id); return Task.CompletedTask; }));
             if (job.Status == TranscriptionJobStatus.Completed && !string.IsNullOrWhiteSpace(job.Srt)) actions.Children.Add(Action("导出 SRT", async () => { var path = await WorkspaceUi.Save(this, "导出转写字幕", job.Title + ".srt", "srt"); if (path != null) await File.WriteAllTextAsync(path, job.Srt); }));
             if (!string.IsNullOrWhiteSpace(job.ErrorDetails))

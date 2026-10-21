@@ -4,7 +4,7 @@
 
 ## 发布来源
 
-**Publish Release source to main** 在正式 Release 的 `C# Windows build` 流水线成功后运行。也可手动运行，必须指定已发布的正式 Release 标签。
+**Publish Release source to main** 在正式 Release 的 `C# Windows build` 流水线成功后运行。也可手动运行，必须指定已发布的三段正式 Release 标签（当前基础版本 `v2.4.2`）。
 
 工作流检查标签是当前 Latest 正式 Release，解析标签所指的固定提交。预发布、草稿和旧正式版不会推进 main。普通开发推送和 PR 检查只执行构建，不触发发布同步。
 
@@ -45,3 +45,5 @@ python -m unittest discover -s .github/scripts -p test_sync_dev_to_main.py -v
 ```
 
 测试使用临时 Git 仓库和模拟 GitHub 响应，覆盖完整树、双父历史、权限与二进制保留、PR 检查、并发推进，以及固定 Release 来源、预发布拒绝和后续开发保留。
+
+Desktop 三渠道标识与构建入口见 [Desktop 版本与发布](DESKTOP_VERSIONING.md)。官网仅由正式 Latest Release 构建完成后更新；PWA 保留自身工作流。

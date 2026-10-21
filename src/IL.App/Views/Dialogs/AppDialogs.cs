@@ -78,6 +78,6 @@ public static class AppDialogs
         dialog.CloseButtonText = "关闭";
         await dialog.ShowAsync(owner);
     }
-    public static Task<AppSettings?> FirstRunAsync(Window owner, AppSettings initial, string agreement, string privacy, bool welcomeOnly = false) =>
-        FirstRunWizard.ShowAsync(owner, initial, agreement, privacy, welcomeOnly);
+    public static Task<AppSettings?> FirstRunAsync(Window owner, AppSettings initial, string agreement, string privacy, bool welcomeOnly = false, IL.App.Services.CloudAccountService? cloudAccount = null) =>
+        FirstRunWizard.ShowAsync(owner, initial, agreement, privacy, welcomeOnly, cloudAccount);
 }

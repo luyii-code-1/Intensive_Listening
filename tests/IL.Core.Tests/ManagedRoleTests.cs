@@ -43,6 +43,25 @@ public sealed class ManagedRoleTests
         Assert.DoesNotContain("cloudApiKey", restored.AsrCacheProfile);
     }
     [Fact]
+    public void CloudPolicyOverridesConnectionAndRestoresPersonalChoice()
+    {
+        var personal = AppSettings.Defaults() with { CloudServiceEnabled = false };
+        var policy = new ManagedPolicy { CloudService = new() { Mode = "enabled", RequireLogin = true, LockAccount = true } };
+        policy.Validate(); var effective = policy.Apply(personal);
+        Assert.True(effective.CloudServiceEnabled); Assert.True(policy.IsLocked("cloudServiceEnabled"));
+        Assert.False(policy.PreservePersonal(effective, personal).CloudServiceEnabled);
+        Assert.False(new ManagedPolicy { CloudService = new() { Mode = "disabled" }, AsrMode = "forceCloud" }.Apply(personal).CloudServiceEnabled);
+        Assert.False(new ManagedPolicy().IsLocked("cloudServiceEnabled"));
+    }
+    [Fact]
+    public void LogoutCommandsAreRetainedEvenWithoutPolicyRevisionChange()
+    {
+        var wire = """{"revision":12,"cloudService":{"mode":"enabled","lockAccount":true},"cloudCommands":[{"id":"c805346a-c73c-454b-a649-1d9e6c975226","type":"logout","targetSessionId":"2ed0f887-6c35-4234-be31-eb446f4f882a","createdAt":1}]}""";
+        var policy = System.Text.Json.JsonSerializer.Deserialize<ManagedPolicy>(wire, ManagedPolicy.Json)!;
+        policy.Validate(); Assert.Equal(12, policy.Revision); Assert.Single(policy.CloudCommands);
+        Assert.True(policy.CloudService.LockAccount);
+    }
+    [Fact]
     public void ManagedCacheRejectsTamperingAndDifferentPurpose()
     {
         var key = RandomNumberGenerator.GetBytes(32); var original = Encoding.UTF8.GetBytes("private device credential and policy");

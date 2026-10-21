@@ -83,7 +83,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
                 throw new IOException(_services.Student.Status);
         };
         _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(_services.Server.IsRunning);},_services.Server,
-            standalone ? null : new CloudSettingsView(_services, () => _settings?.Populate(_services.Settings)));
+            standalone ? null : new CloudSettingsView(_services, () => _settings?.Populate(_services.Settings)), standalone ? null : _services.CloudAsr, standalone ? null : _services.CloudAccount);
         _teacher.CloudTransfers = async () =>
         {
             ManagedRuntime.Require("authoring");
@@ -469,12 +469,12 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
             if(!_services.Standalone&&_services.Settings.NeedsOnboarding(installationId))
             {
                 var legal=Path.Combine(AppContext.BaseDirectory,"assets","legal");
-                var settings=await AppDialogs.FirstRunAsync(this,_services.Settings,await File.ReadAllTextAsync(Path.Combine(legal,"eula_zh_cn.txt")),await File.ReadAllTextAsync(Path.Combine(legal,"privacy_zh_cn.txt")),InstallationOnboarding.WelcomeOnly(_services.DataDirectory));
+                var settings=await AppDialogs.FirstRunAsync(this,_services.Settings,await File.ReadAllTextAsync(Path.Combine(legal,"eula_zh_cn.txt")),await File.ReadAllTextAsync(Path.Combine(legal,"privacy_zh_cn.txt")),InstallationOnboarding.WelcomeOnly(_services.DataDirectory), _services.CloudAccount);
                 if(settings is null){await ExitAsync();return;}settings=settings with { CompletedInstallationId=installationId };await _services.SettingsStore.SaveAsync(settings);_settings.Populate(settings);ApplyTheme(settings);await _services.ApplySettingsAsync(settings);
             }
             else await _services.ApplySettingsAsync(_services.Settings);
             if (File.Exists(updateResult)) File.Delete(updateResult);
-            if (!_services.Standalone) _ = _services.Updates.CheckAsync(AppBuildInfo.Version);
+            if (!_services.Standalone) _ = _services.Updates.CheckAsync(AppBuildInfo.UpdateVersion);
             if (_services.PreconfigurationError is {} presetError) WorkspaceToast.Show(this, "预设配置", presetError, true);
             _residence?.UpdateMcpState(_services.Server.IsRunning);
             for(var i=0;i<Program.Arguments.Length;i++)

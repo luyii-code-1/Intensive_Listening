@@ -21,6 +21,8 @@ internal sealed class FirstRunWizard : Border
     private const string Disclosure = "开启后，应用会向阿里云 ARMS 发送匿名设备 ID、应用版本、启动日期、ASR 模型、API 主机名、耗时与缓存命中状态、系统和硬件信息，以及应用内红色错误提示的原文。SDK 默认自动采集支持的网络请求信息和原生崩溃诊断信息。网络请求信息可能包含 URL 及参数；错误和崩溃信息可能包含文件名、服务响应或调用堆栈；服务还可能记录时间戳和网络 IP。";
     private readonly Window _owner;
     private readonly AppSettings _initial;
+    private readonly CloudAccountService? _cloudAccount;
+    private bool _cloudEnabled, _useCloudAsr;
     private readonly string _agreement, _privacy;
     private readonly Action<AppSettings?> _finish;
     private readonly Grid _page = new() { ClipToBounds = true, Name = "OobePageHost" };
@@ -38,9 +40,10 @@ internal sealed class FirstRunWizard : Border
     private bool _association, _mcp, _createProject, _skip, _telemetry, _accepted, _privateAccepted;
     private string _theme, _key;
 
-    private FirstRunWizard(Window owner, AppSettings initial, string agreement, string privacy, Action<AppSettings?> finish, bool windows = false, bool welcomeOnly = false)
+    private FirstRunWizard(Window owner, AppSettings initial, string agreement, string privacy, Action<AppSettings?> finish, bool windows = false, bool welcomeOnly = false, CloudAccountService? cloudAccount = null)
     {
-        _owner = owner; _initial = initial; _agreement = agreement; _privacy = privacy; _finish = finish; _windows = windows; _welcomeOnly = welcomeOnly;
+        _owner = owner; _initial = initial; _agreement = agreement; _privacy = privacy; _finish = finish; _windows = windows; _welcomeOnly = welcomeOnly; _cloudAccount = cloudAccount;
+        _cloudEnabled = initial.CloudServiceEnabled; _useCloudAsr = initial.AsrServiceMode == AsrServiceMode.CloudService;
         _bindings = AppSettings.DefaultPlayerBindings(initial.PlayerKeyBindings);
         _accepted = _privateAccepted = welcomeOnly && initial.EulaAcceptedVersion.Length > 0;
         _association = initial.FileAssociationEnabled;
@@ -81,8 +84,8 @@ internal sealed class FirstRunWizard : Border
         };
         DetachedFromVisualTree += (_, _) => { _attached = false; CancelTransition(); };
     }
-    internal static Task<AppSettings?> ShowAsync(Window owner, AppSettings initial, string agreement, string privacy, bool welcomeOnly = false) =>
-        ShowInlineAsync(owner, initial, agreement, privacy, welcomeOnly);
+    internal static Task<AppSettings?> ShowAsync(Window owner, AppSettings initial, string agreement, string privacy, bool welcomeOnly = false, CloudAccountService? cloudAccount = null) =>
+        ShowInlineAsync(owner, initial, agreement, privacy, welcomeOnly, cloudAccount);
 
     internal static Window CreateWindowsWindow(Window owner, AppSettings initial, string agreement, string privacy)
     {
@@ -103,13 +106,13 @@ internal sealed class FirstRunWizard : Border
     internal static async Task<AppSettings?> ShowWindowsAsync(Window owner, AppSettings initial, string agreement, string privacy) =>
         await CreateWindowsWindow(owner, initial, agreement, privacy).ShowDialog<AppSettings?>(owner);
 
-    private static async Task<AppSettings?> ShowInlineAsync(Window owner, AppSettings initial, string agreement, string privacy, bool welcomeOnly)
+    private static async Task<AppSettings?> ShowInlineAsync(Window owner, AppSettings initial, string agreement, string privacy, bool welcomeOnly, CloudAccountService? cloudAccount)
     {
         var completion = new TaskCompletionSource<AppSettings?>();
         var root = owner.Content as Grid ?? throw new InvalidOperationException("首次设置需要应用根布局。");
         var layer = new Border { Focusable = true };
         layer.Bind(BackgroundProperty, new DynamicResourceExtension("WorkspaceBackgroundBrush"));
-        var wizard = new FirstRunWizard(owner, initial, agreement, privacy, value => completion.TrySetResult(value), windows: true, welcomeOnly: welcomeOnly);
+        var wizard = new FirstRunWizard(owner, initial, agreement, privacy, value => completion.TrySetResult(value), windows: true, welcomeOnly: welcomeOnly, cloudAccount: cloudAccount);
         layer.Child = wizard;
         EventHandler closed = (_, _) => completion.TrySetResult(null);
         var underlying = root.Children.Select(control => (Control: control, Enabled: control.IsEnabled)).ToArray();
@@ -118,7 +121,7 @@ internal sealed class FirstRunWizard : Border
         layer.KeyDown += (_, e) => { if (e.Key == Key.Escape) { completion.TrySetResult(null); e.Handled = true; } };
         Grid.SetRowSpan(layer,Math.Max(1,root.RowDefinitions.Count));Grid.SetColumnSpan(layer,Math.Max(1,root.ColumnDefinitions.Count));
         root.Children.Add(layer); layer.Focus();
-        try { return await completion.Task; } finally { owner.Closed -= closed; root.Children.Remove(layer); foreach (var item in underlying) item.Control.IsEnabled = item.Enabled; }
+        try { return await completion.Task; } finally { if (cloudAccount is not null) { cloudAccount.CancelLogin(); if (completion.Task.Result is null) await cloudAccount.ApplyEnabledAsync(initial.CloudServiceEnabled); } owner.Closed -= closed; root.Children.Remove(layer); foreach (var item in underlying) item.Control.IsEnabled = item.Enabled; }
     }
     private sealed class ViewportHeightConverter : Avalonia.Data.Converters.IValueConverter
     {
@@ -151,8 +154,6 @@ internal sealed class FirstRunWizard : Border
     private Control Card(string icon, string title, string description, Control trailing)
     {
         var card = WorkspaceUi.SettingsRow(icon, title, description, trailing);
-        if (_windows && card is Border surface) surface.Padding = new Thickness(16, 10);
-        if (card is Border { Child: Grid grid } && grid.Children[0] is TextBlock glyph) glyph.Foreground = WorkspaceUi.Accent;
         string? setting=title switch {"关联 .ilp 文件"=>"fileAssociationEnabled","MCP 制作接口"=>"mcpEnabled","跳过题前提示"=>"skipOpeningPrompts","导入音频时同时建立项目"=>"createProjectOnAudioImport","API Key"=>"cloudApiKey",_=>null};
         return setting is null?card:ManagedUi.Setting(card,setting);
     }
@@ -170,10 +171,10 @@ internal sealed class FirstRunWizard : Border
         if (!first)
         {
             var back = RoundButton("chevron_left", "上一步", false); back.Name = "OobeBack";
-            back.Click += (_, _) => { _step = _initial.CloudReady && _step == 6 ? 4 : _step - 1; Render(); };
+            back.Click += (_, _) => { _step--; Render(); };
             row.Children.Add(back);
         }
-        var next = RoundButton(_welcomeOnly || _step == 6 ? "accept" : "chevron_right", _welcomeOnly ? "进入应用" : _step == 6 ? "完成设置" : "下一步", true);
+        var next = RoundButton(_welcomeOnly || _step == 7 ? "accept" : "chevron_right", _welcomeOnly ? "进入应用" : _step == 7 ? "完成设置" : "下一步", true);
         next.Name = "OobeNext"; next.Click += (_, _) => Next();
         next.IsEnabled = !(_step == 1 || _welcomeOnly) || (_accepted && _privateAccepted);
         if (_step == 1 || _welcomeOnly) _licenseNext = next;
@@ -183,8 +184,8 @@ internal sealed class FirstRunWizard : Border
     {
         if ((_step == 1 || _welcomeOnly) && (!_accepted || !_privateAccepted)) return;
         if (_welcomeOnly) { _finish(_initial with { EulaAcceptedVersion = _initial.EulaAcceptedVersion.Length == 0 ? "2026-09-22" : _initial.EulaAcceptedVersion }); return; }
-        if (_step == 6) { _finish(_initial with { EulaAcceptedVersion = "2026-09-22", FileAssociationEnabled = _association, FileAssociationPrompted = true, McpEnabled = _mcp, SkipOpeningPrompts = _skip, CreateProjectOnAudioImport = _createProject, TelemetryEnabled = _telemetry, TelemetryPrompted = true, TranscriptFontSize = _font, ThemeMode = _theme, PlayerKeyBindings = _bindings, CloudApiKey = _key.Trim() }); return; }
-        _step = _initial.CloudReady && _step == 4 ? 6 : _step + 1; Render();
+        if (_step == 7) { _finish(_initial with { EulaAcceptedVersion = "2026-09-22", FileAssociationEnabled = _association, FileAssociationPrompted = true, McpEnabled = _mcp, SkipOpeningPrompts = _skip, CreateProjectOnAudioImport = _createProject, TelemetryEnabled = _telemetry, TelemetryPrompted = true, TranscriptFontSize = _font, ThemeMode = _theme, PlayerKeyBindings = _bindings, CloudApiKey = _key.Trim(), CloudServiceEnabled = _cloudEnabled, AsrServiceMode = _useCloudAsr ? AsrServiceMode.CloudService : AsrServiceMode.Api }); return; }
+        _step++; Render();
     }
     private CheckBox Consent(string document, string text, bool value, Action<bool> set)
     {
@@ -207,7 +208,7 @@ internal sealed class FirstRunWizard : Border
                 var brand = Brand(_windows ? 80 : 76); brand.Name = "OobeWelcomeLogo"; brand.Margin = new Thickness(0, 0, 0, 8); body.Children.Add(brand);
                 var brandTitle = CenterText("Intensive Listening", _windows ? 32 : 22, true);
                 if (_windows) brandTitle.FontWeight = FontWeight.Bold;
-                body.Children.Add(brandTitle); body.Children.Add(CenterText(AppBuildInfo.SuccessfulUpdateVersion is {} updated ? $"已成功更新到 v{updated}" : "欢迎使用精听课程制作与播放"));
+                body.Children.Add(brandTitle); body.Children.Add(CenterText(AppBuildInfo.SuccessfulUpdateVersion is {} updated ? $"已成功更新到 {updated}" : "欢迎使用精听课程制作与播放"));
                 var build = CenterText(AppBuildInfo.Display, 12); build.Name = "OobeBuildInfo"; build.Opacity = .65; build.Margin = new Thickness(0, 4, 0, 0); body.Children.Add(build);
                 if (_welcomeOnly && _initial.EulaAcceptedVersion.Length == 0)
                 { body.Children.Add(Consent("用户协议", _agreement, _accepted, value => _accepted = value)); body.Children.Add(Consent("隐私说明", _privacy, _privateAccepted, value => _privateAccepted = value)); }
@@ -243,10 +244,23 @@ internal sealed class FirstRunWizard : Border
                 font.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) { _font = (int)Math.Round(font.Value); value.Text = _font.ToString(); } };
                 body.Children.Add(Card("font", "字幕字体大小", "调整播放页逐句字幕的字号。", WorkspaceUi.Row(font, value))); break;
             case 5:
-                body = Page("云端转写", "填写 API Key 后即可制作课程，也可以稍后再配置。");
+                body = Page("Intensive Listening 云服务", "登录后可使用云端课程和转写服务，也可以稍后设置。");
+                if (_cloudAccount is not null)
+                    body.Children.Add(new CloudOnboardingView(_cloudAccount, _cloudEnabled, enabled => _cloudEnabled = enabled));
+                else body.Children.Add(CenterText("稍后可在设置中启用云服务。", 12));
+                var skipCloud = WorkspaceUi.Button("暂时跳过", () => { _cloudAccount?.CancelLogin(); _step++; Render(); return Task.CompletedTask; });
+                skipCloud.HorizontalAlignment = HorizontalAlignment.Center; body.Children.Add(skipCloud);
+                break;
+            case 6:
+                body = Page("转写接口", "使用云服务，或填写自己的 API Key。");
                 var key = new TextBox { Text = _key, PasswordChar = '●', PlaceholderText = "可留空", Width = 270 };
                 key.TextChanged += (_, _) => _key = key.Text ?? "";
-                body.Children.Add(Card("cloud", "API Key", "密钥只保存在本机设置中。", key));
+                var useCloud = new CheckBox { Content = "使用云服务提供的接口", IsChecked = _useCloudAsr, HorizontalAlignment = HorizontalAlignment.Center };
+                var keyRow = Card("cloud", "API Key", "密钥只保存在本机设置中。", key);
+                var mode = ManagedUi.Setting(useCloud, "asrServiceMode"); body.Children.Add(mode);
+                void RefreshMode() { keyRow.IsVisible = !_useCloudAsr; }
+                useCloud.IsCheckedChanged += (_, _) => { _useCloudAsr = useCloud.IsChecked == true; RefreshMode(); };
+                body.Children.Add(keyRow); RefreshMode();
                 var help = WorkspaceUi.Button("如何配置？", () => { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://il.luyii.cn/guide.html#api-setup") { UseShellExecute = true }); return Task.CompletedTask; }); help.HorizontalAlignment = HorizontalAlignment.Center; help.Margin = new Thickness(0, 6, 0, 0); body.Children.Add(help); break;
             default:
                 body = new StackPanel { Spacing = 10 }; var doneBrand = Brand(66); doneBrand.Name = "OobeDoneLogo"; doneBrand.Margin = new Thickness(0, 0, 0, 14); body.Children.Add(doneBrand); body.Children.Add(CenterText("设置完成", 22, true)); body.Children.Add(CenterText("现在可以开始播放精听包，或创建一份课程。")); break;
@@ -262,7 +276,7 @@ internal sealed class FirstRunWizard : Border
         CancelTransition();
         if (!_pages.TryGetValue(_step, out var body)) _pages[_step] = body = BuildPageSurface();
         _visibleStep = _step;
-        _fraction.Text = $"{(_initial.CloudReady && _step == 6 ? 6 : _step + 1)} / {(_initial.CloudReady ? 6 : 7)}";
+        _fraction.Text = $"{_step + 1} / 8";
         _fraction.IsVisible = !_welcomeOnly && _step != 0;
         if (!_attached)
         {

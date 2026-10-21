@@ -8,7 +8,7 @@ public sealed record CrashReport
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public DateTimeOffset OccurredAt { get; init; } = DateTimeOffset.UtcNow;
-    public string AppVersion { get; init; } = "2.1.2.4";
+    public string AppVersion { get; init; } = "2.4.2";
     public string Platform { get; init; } = RuntimeInformation.OSDescription;
     public string Architecture { get; init; } = RuntimeInformation.ProcessArchitecture.ToString();
     public int ProcessId { get; init; } = Environment.ProcessId;

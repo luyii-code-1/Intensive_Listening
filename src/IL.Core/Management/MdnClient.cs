@@ -8,7 +8,7 @@ using IL.Core.Infrastructure;
 namespace IL.Core.Management;
 
 /// <summary>Organization transport is independent of the optional Aliyun transport.</summary>
-public sealed class MdnClient : IAsyncDisposable
+public sealed partial class MdnClient : IAsyncDisposable
 {
     private readonly string _root, _version;
     private HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
@@ -103,7 +103,7 @@ public sealed class MdnClient : IAsyncDisposable
         {
             if (_token is null) throw new InvalidOperationException("设备尚未注册，请先连接服务器。");
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/leave"));
-            request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1");
+            request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
             using var response = await _http.SendAsync(request, ct);
             if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
@@ -115,7 +115,7 @@ public sealed class MdnClient : IAsyncDisposable
         if (_loop is not null) await _loop;
         if (_realtime is not null) await _realtime;
         File.Delete(Path.Combine(Path.GetDirectoryName(_root)!, "il_mdn_config.yaml"));
-        foreach (var file in new[] { "state.bin", "events.bin" }) File.Delete(Path.Combine(_root, file));
+        foreach (var file in new[] { "state.bin", "events.bin", "cloud.bin" }) File.Delete(Path.Combine(_root, file));
         while (_events.Reader.TryRead(out _)) { }
         _stop.Dispose(); _stop = new(); _loop = null; _realtime = null; _token = null; Configuration = null;
         Policy = new(); LastSynchronizedAt = null; LastConnectionError = null; PolicyReceiptConfirmed = false; LatencyMs = null; Status = "未加入管理"; Changed?.Invoke();
@@ -135,7 +135,7 @@ public sealed class MdnClient : IAsyncDisposable
                 else
                 {
                     await _request.WaitAsync(_stop.Token);
-                    try { await FlushEventsAsync(_stop.Token); await FlushCrashesAsync(_stop.Token); await FlushUpdateReceiptsAsync(_stop.Token); }
+                    try { await FlushEventsAsync(_stop.Token); await FlushCrashesAsync(_stop.Token); await FlushUpdateReceiptsAsync(_stop.Token); await FlushCloudAsync(_stop.Token); }
                     finally { _request.Release(); }
                 }
             }
@@ -161,7 +161,7 @@ public sealed class MdnClient : IAsyncDisposable
                 using var socket = new ClientWebSocket();
                 using var transport = new HttpMessageInvoker(MdnConfiguration.CreateHttpHandler(config.ServerCertificateSha256));
                 _socket = socket;
-                socket.Options.SetRequestHeader("X-IL-Capabilities", "clientRoleV1,asrModeV1");
+                socket.Options.SetRequestHeader("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
                 socket.Options.SetRequestHeader("Authorization", "Bearer " + _token);
                 var endpoint = new UriBuilder(new Uri(config.Server, "api/connect")) { Scheme = config.DisableSsl ? "ws" : "wss" }.Uri;
                 using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token))
@@ -196,9 +196,11 @@ public sealed class MdnClient : IAsyncDisposable
                             var latency = (int)Math.Clamp(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - stamp, 0, 60000);
                             if (json.RootElement.TryGetProperty("revision", out var revision) && revision.TryGetInt64(out var latest) && latest > Policy.Revision)
                             { AppLog.Operation("mdn", $"心跳发现待同步策略 revision={latest}"); await SynchronizeAsync(session.Token); }
+                            if (json.RootElement.TryGetProperty("cloudCommandId", out var cloudCommand) && cloudCommand.ValueKind == JsonValueKind.String && cloudCommand.GetString() is { Length: > 0 } pendingCommand && !Policy.CloudCommands.Any(c => c.Id == pendingCommand))
+                                await SynchronizeAsync(session.Token);
                             LatencyMs = latency; Changed?.Invoke();
                             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(config.Server, "api/connection"));
-                            request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1");
+                            request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
                             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
                             request.Content = JsonContent.Create(new { latency });
                             using var response = await _http.SendAsync(request, session.Token);
@@ -239,7 +241,7 @@ public sealed class MdnClient : IAsyncDisposable
                 _token = json.RootElement.GetProperty("deviceToken").GetString() ?? throw new FormatException(); Save();
             }
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(Configuration.Server, "api/policy"));
-            request.Headers.Add("X-IL-Capabilities", "transcriptBlurIntensity,lessonDistribution,clientRoleV1,asrModeV1");
+            request.Headers.Add("X-IL-Capabilities", "transcriptBlurIntensity,lessonDistribution,clientRoleV1,asrModeV1,cloudServiceV1");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
             using var response = await _http.SendAsync(request, ct); response.EnsureSuccessStatusCode();
             var policy = await response.Content.ReadFromJsonAsync<ManagedPolicy>(ManagedPolicy.Json, ct) ?? throw new FormatException(); policy.Validate();
@@ -262,7 +264,7 @@ public sealed class MdnClient : IAsyncDisposable
             Report("online", new { });
             await FlushEventsAsync(ct);
             await FlushCrashesAsync(ct); Changed?.Invoke();
-            await FlushUpdateReceiptsAsync(ct);
+            await FlushUpdateReceiptsAsync(ct); await FlushCloudAsync(ct);
         }
         catch (Exception error)
         {
@@ -278,7 +280,7 @@ public sealed class MdnClient : IAsyncDisposable
         {
             if (Configuration is null || _token is null) return false;
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/lessons/" + Guid.Parse(id).ToString("D") + "/receipt"));
-            request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1");
+            request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
             request.Content = JsonContent.Create(new { status, message }, options: ManagedPolicy.Json);
             using var response = await _http.SendAsync(request, ct); return response.IsSuccessStatusCode;
@@ -312,7 +314,7 @@ public sealed class MdnClient : IAsyncDisposable
             foreach (var pair in pending.ToArray())
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/updates/" + pair.Key + "/receipt"));
-                request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1");
+                request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
                 request.Content = JsonContent.Create(pair.Value);
                 using var response = await _http.SendAsync(request, ct);
@@ -325,7 +327,7 @@ public sealed class MdnClient : IAsyncDisposable
     private async Task<bool> SendEventAsync(object payload, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration!.Server, "api/telemetry"));
-        request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1");
+        request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
         request.Content = JsonContent.Create(payload, options: ManagedPolicy.Json);
         using var response = await _http.SendAsync(request, ct); return response.IsSuccessStatusCode;

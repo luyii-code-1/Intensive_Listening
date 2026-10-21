@@ -282,3 +282,7 @@ docs/            迁移、兼容与诊断说明
 欢迎通过 [Issues](https://github.com/luyii-code-1/Intensive_Listening/issues) 提交反馈。问题报告请提供应用版本、操作系统、复现步骤、预期和实际表现，以及日志、报告 ID 或截图。代码贡献请说明使用场景并运行现有测试。
 
 Copyright © 2026 Luyii。源码使用 [GPL-3.0-only](LICENSE)，第三方字体、FFmpeg 和其他组件适用各自许可证，见 [第三方许可说明](THIRD_PARTY_NOTICES.md)。
+
+### Desktop 版本与云服务
+
+当前基础版本为 `2.4.2`，正式版、Insider Preview 和 Beta 规则见 [版本与发布说明](docs/DESKTOP_VERSIONING.md)。完整 OOBE 支持可跳过的云服务登录；“使用云服务提供的接口”采用整单 ASR 代理，供应商密钥保留在服务器。云连接与账号可由 MDN 管理，见 [云服务客户端](docs/il-cloud-client.md)。

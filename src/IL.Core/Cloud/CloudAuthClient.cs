@@ -24,6 +24,8 @@ public sealed class CloudAuthClient : IDisposable
     private bool _loaded;
     public bool HasCredentials { get; private set; }
     public string? DeviceId { get; private set; }
+    public event Action<bool>? ConnectivityChanged;
+    internal void ReportConnectivity(bool connected) => ConnectivityChanged?.Invoke(connected);
 
     public CloudAuthClient(ICloudTokenStore store, HttpClient? http = null)
     {
@@ -98,6 +100,12 @@ public sealed class CloudAuthClient : IDisposable
             return _accessToken!;
         }
         finally { _gate.Release(); }
+    }
+
+    public async Task RevokeRefreshTokenAsync(string token, CancellationToken ct = default)
+    {
+        using var response = await _http.PostAsync(new Uri(Server, "connect/revoke"), new FormUrlEncodedContent(new Dictionary<string, string> { ["client_id"] = ClientId, ["token"] = token }), ct);
+        if (!response.IsSuccessStatusCode) throw new CloudAuthenticationException("revocation_failed", "云端设备撤销未完成。");
     }
 
     public async Task SignOutAsync(CancellationToken ct = default)

@@ -92,9 +92,9 @@ public sealed class CloudAuthoringView : UserControl
     {
         _status.Text = _account.Status;
         _login.Content = _account.IsSignedIn ? "重新授权" : "浏览器登录";
-        _login.IsEnabled = _account.Enabled && !_account.IsBusy && !_transferring && !_loading;
+        _login.IsEnabled = _account.CanAuthorize && !_transferring && !_loading;
         _logout.IsVisible = _account.IsSignedIn;
-        _logout.IsEnabled = !_account.IsBusy && !_transferring && !_loading;
+        _logout.IsEnabled = _account.CanSignOut && !_transferring && !_loading;
         _cancel.IsVisible = _account.IsBusy;
         _resources.IsVisible = _account.IsSignedIn && !_account.IsBusy;
         _reload.IsEnabled = _uploadFile.IsEnabled = _uploadProject.IsEnabled = !_account.IsBusy && !_loading && !_transferring;
@@ -102,6 +102,7 @@ public sealed class CloudAuthoringView : UserControl
         _files.IsEnabled = _courses.IsEnabled = !_transferring && !_loading && !_account.IsBusy;
         if (!_account.IsSignedIn)
         {
+            _transferCancellation?.Cancel();
             _poll.Stop(); _identity.Text = _quota.Text = "";
             _downloadCredits = null; _price.Text = "";
             _files.ItemsSource = null; _courses.ItemsSource = null; _jobs.ItemsSource = null;

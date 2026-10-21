@@ -9,6 +9,8 @@ public sealed record ManagedUpdate(string Id, string Mode, string Version, strin
 }
 public sealed record ManagedPolicy
 {
+    public ManagedCloudPolicy CloudService { get; init; } = new();
+    public ManagedCloudCommand[] CloudCommands { get; init; } = [];
     public string AsrMode { get; init; } = "followLocal";
     public string ClientRole { get; init; } = "default";
     [System.Text.Json.Serialization.JsonIgnore] public bool IsStudent => ClientRole == "student";
@@ -30,7 +32,7 @@ public sealed record ManagedPolicy
     // Legal consent and optional Aliyun consent remain personal; MDN telemetry has a separate transport.
     private static readonly string[] LocalOnly = ["eulaAcceptedVersion", "completedInstallationId", "telemetryEnabled", "telemetryPrompted", "fileAssociationPrompted", "startAtLogin", "cloudServiceEnabled", "asrServiceMode"];
     public static string[] SettingNames => AppSettings.Defaults().ToJson().Select(p => p.Key).Except(LocalOnly).ToArray();
-    public bool IsLocked(string name) => name == "asrServiceMode" && AsrMode != "followLocal" || IsStudent && AuthoringSetting(name) || !LocalOnly.Contains(name) && (LockAllSettings || LockedSettings.Contains(name) || Settings.ContainsKey(name) || HideAsrConfiguration && IsAsr(name));
+    public bool IsLocked(string name) => name == "cloudServiceEnabled" && CloudService.Mode != "followLocal" || name == "asrServiceMode" && AsrMode != "followLocal" || IsStudent && AuthoringSetting(name) || !LocalOnly.Contains(name) && (LockAllSettings || LockedSettings.Contains(name) || Settings.ContainsKey(name) || HideAsrConfiguration && IsAsr(name));
     public string[] AllowedImportExtensions() =>
         (DisabledFeatures.Contains("importIlp") ? Array.Empty<string>() : new[] { "ilp" })
         .Concat(DisabledFeatures.Contains("importAudio") ? Array.Empty<string>() : new[] { "mp3", "m4a", "wav", "flac", "ogg" }).ToArray();
@@ -38,6 +40,7 @@ public sealed record ManagedPolicy
     public void Validate()
     {
         var defaults = AppSettings.Defaults().ToJson(); var allowed = SettingNames;
+        if (CloudService is null || CloudService.Mode is not ("followLocal" or "enabled" or "disabled") || CloudCommands is null || CloudCommands.Length > 100 || CloudCommands.Any(c => c is null || c.Type != "logout" || !Guid.TryParse(c.Id, out _) || !Guid.TryParse(c.TargetSessionId, out _))) throw new FormatException("云服务管理策略无效。");
         if (AsrMode is not ("followLocal" or "forceApi" or "forceCloud") || ClientRole is not ("default" or "student") || Revision < 0 || Lessons is null || Lessons.Length > 1000 || Lessons.Any(l => l is null || !Guid.TryParse(l.Id, out _) || !Guid.TryParse(l.PackageUuid, out _) || l.PackageVersion < 1) || LockedSettings.Any(s => !allowed.Contains(s)) || DisabledFeatures.Any(s => !Features.Contains(s))) throw new FormatException("集控策略包含未知设置或功能。");
         foreach (var pair in Settings)
             if (!allowed.Contains(pair.Key) || pair.Value is null || JsonType(defaults[pair.Key]) != JsonType(pair.Value)) throw new FormatException("集控策略字段类型无效：" + pair.Key);
@@ -48,6 +51,7 @@ public sealed record ManagedPolicy
     public AppSettings Apply(AppSettings personal)
     {
         var json = personal.ToJson(); foreach (var pair in Settings) json[pair.Key] = pair.Value?.DeepClone();
+        if (CloudService.Mode != "followLocal") json["cloudServiceEnabled"] = CloudService.Mode == "enabled";
         if (!Allows("mcp")) json["mcpEnabled"] = false;
         if (IsStudent) json["createProjectOnAudioImport"] = false;
         if (AsrMode != "followLocal") json["asrServiceMode"] = AsrMode == "forceCloud" ? "cloudService" : "api";

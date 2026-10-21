@@ -27,7 +27,7 @@ public sealed class GitHubUpdateChecker(HttpMessageHandler? handler = null) : ID
             var url = release.GetProperty("html_url").GetString();
             if (!Uri.TryCreate(url, UriKind.Absolute, out var link) || link.Scheme != "https" || link.Host != "github.com" ||
                 !link.AbsolutePath.StartsWith("/luyii-code-1/Intensive_Listening/releases/", StringComparison.Ordinal)) throw new FormatException("Release 链接无效。");
-            Set(latest > installed ? new("available", $"发现新版本 {tag}", tag, url) : new("current", "当前已是最新版本", tag, url));
+            Set(latest > installed || latest == installed && Regex.IsMatch(current, @"-(insider|beta)\.", RegexOptions.IgnoreCase) ? new("available", $"发现新版本 {tag}", tag, url) : new("current", "当前已是最新版本", tag, url));
         }
         catch (OperationCanceledException) { Set(new("failed", cancellation.IsCancellationRequested ? "更新检查已取消" : "检查更新失败：连接超过 10 秒")); }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or FormatException or KeyNotFoundException or InvalidOperationException)

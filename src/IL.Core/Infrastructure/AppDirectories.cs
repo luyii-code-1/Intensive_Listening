@@ -49,7 +49,7 @@ public static class AppDirectories
         }
         var application = Path.Combine(root, "application data");
         Directory.CreateDirectory(application);
-        File.WriteAllText(Path.Combine(application, "version.json"), JsonSerializer.Serialize(new { appVersion = "2.1.2.4", dataSchemaVersion = 1 }));
+        File.WriteAllText(Path.Combine(application, "version.json"), JsonSerializer.Serialize(new { appVersion = "2.4.2", dataSchemaVersion = 1 }));
         return data;
     }
 }

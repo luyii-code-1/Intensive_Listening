@@ -45,6 +45,151 @@ class ManagementTests(unittest.TestCase):
     def save(self, scope, policy, csrf):
         return self.client.post("/admin/policy", data={"scope": scope, "policy_json": json.dumps(policy), "form_token": csrf})
 
+    def cloud_report(self, sequence=1, **changes):
+        headers = self.headers | {"X-IL-Capabilities": "clientRoleV1,asrModeV1,cloudServiceV1"}
+        policy = self.client.get("/api/policy", headers=headers).json()
+        payload = {"sequence": sequence, "policyRevision": policy["revision"], "enabled": True,
+                   "authentication": "signedIn", "connection": "connected",
+                   "account": {"id": "user-123", "email": "learner@example.com", "displayName": "学习者"},
+                   "sessionId": str(uuid.uuid4()), "errorCode": None} | changes
+        response = self.client.post("/api/cloud/status", headers=headers, json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        return headers, payload
+
+    def cloud_logout(self, csrf, command_id=None, identifier=None):
+        return self.client.post("/admin/cloud/logout", data={"device_id": identifier or self.identifier,
+            "command_id": command_id or str(uuid.uuid4()), "form_token": csrf})
+
+    def test_cloud_policy_nested_inheritance_and_legacy_filter(self):
+        csrf = self.login()
+        self.assertEqual(self.save("all", {"clientRole": "student", "asrMode": "forceCloud", "cloudService": {"mode": "enabled", "requireLogin": True, "lockAccount": True}}, csrf).status_code, 200)
+        self.assertEqual(self.save(self.identifier, {"cloudService": {"requireLogin": False}}, csrf).status_code, 200)
+        headers, _ = self.cloud_report()
+        policy = self.client.get("/api/policy", headers=headers).json()
+        self.assertEqual(policy["cloudService"], {"mode": "enabled", "requireLogin": False, "lockAccount": True})
+        self.assertEqual(policy["clientRole"], "student")
+        self.assertEqual(policy["asrMode"], "forceCloud")
+        legacy = self.client.get("/api/policy", headers=self.headers).json()
+        self.assertNotIn("cloudService", legacy)
+        self.assertNotIn("cloudCommands", legacy)
+        self.client.post("/admin/device", data={"device_id": self.identifier, "action": "inherit", "form_token": csrf})
+        self.assertTrue(self.client.get("/api/policy", headers=headers).json()["cloudService"]["requireLogin"])
+        self.save("all", {}, csrf)
+        self.assertEqual(self.client.get("/api/policy", headers=headers).json()["cloudService"], {"mode": "followLocal", "requireLogin": False, "lockAccount": False})
+        for value in (None, [], {"mode": "on"}, {"lockAccount": 1}, {"requireLogin": "true"}, {"token": "secret"}):
+            self.assertEqual(self.save("all", {"cloudService": value}, csrf).status_code, 422)
+
+    def test_cloud_status_sequence_encryption_and_field_validation(self):
+        import sqlite3
+        from contextlib import closing
+        csrf = self.login()
+        headers, payload = self.cloud_report(sequence=3)
+        old = payload | {"sequence": 2, "account": {"id": "older", "email": "", "displayName": ""}}
+        self.assertTrue(self.client.post("/api/cloud/status", headers=headers, json=old).json()["stale"])
+        self.assertTrue(self.client.post("/api/cloud/status", headers=headers, json=payload).json()["stale"])
+        cloud = self.client.get("/admin/status").json()["devices"][0]["cloud"]
+        self.assertEqual(cloud["state"]["account"]["id"], "user-123")
+        self.assertTrue(cloud["supported"])
+        with closing(sqlite3.connect(self.root / "mdn.sqlite3")) as conn:
+            blob = conn.execute("SELECT payload FROM cloud_status").fetchone()[0]
+        self.assertNotIn(b"learner@example.com", blob)
+        self.assertEqual(SecretStore().decode(blob), payload)
+        self.assertEqual(self.client.post("/api/cloud/status", json=payload).status_code, 401)
+        self.assertEqual(self.client.post("/api/cloud/status", headers=self.headers, json=payload).status_code, 409)
+        for changed in ({"sequence": True}, {"policyRevision": payload["policyRevision"] + 1}, {"accessToken": "secret"},
+                        {"account": payload["account"] | {"displayName": "bad\nname"}}, {"authentication": "signedOut"},
+                        {"enabled": False}, {"errorCode": "token=secret"}, {"sessionId": "bad"}):
+            self.assertEqual(self.client.post("/api/cloud/status", headers=headers, json=payload | changed).status_code, 422)
+        self.cloud_report(sequence=4, authentication="signedOut", account=None, sessionId=None)
+        self.assertIsNone(self.client.get("/admin/status").json()["devices"][0]["cloud"]["state"]["account"])
+
+    def test_cloud_logout_idempotency_session_binding_and_receipt_isolation(self):
+        csrf = self.login()
+        headers, payload = self.cloud_report()
+        request_id, alias_id = str(uuid.uuid4()), str(uuid.uuid4())
+        first = self.cloud_logout(csrf, request_id).json()["command"]
+        self.assertEqual(first["targetSessionId"], payload["sessionId"])
+        self.assertEqual(self.cloud_logout(csrf, request_id).json()["command"], first)
+        self.assertEqual(self.cloud_logout(csrf, alias_id).json()["command"], first)
+        policy = self.client.get("/api/policy", headers=headers).json()
+        self.assertEqual(policy["revision"], payload["policyRevision"])
+        self.assertEqual(policy["cloudCommands"], [first])
+        other_id = str(uuid.uuid4())
+        other = self.register(other_id)
+        self.assertEqual(self.cloud_logout(csrf, request_id, other_id).status_code, 409)
+        receipt = "/api/cloud/commands/" + first["id"] + "/receipt"
+        skipped = {"status": "skipped", "revocation": "notRequired", "errorCode": "sessionMismatch"}
+        self.assertEqual(self.client.post(receipt, headers={"Authorization": "Bearer " + other, "X-IL-Capabilities": "cloudServiceV1"}, json=skipped).status_code, 404)
+        self.cloud_report(sequence=2)
+        self.assertFalse(self.client.post(receipt, headers=headers, json=skipped).json()["stale"])
+        self.assertEqual(self.client.get("/api/policy", headers=headers).json()["cloudCommands"], [])
+        self.assertEqual(self.cloud_logout(csrf, alias_id).json()["command"], first)
+        self.assertEqual(self.client.get("/api/policy", headers=headers).json()["cloudCommands"], [])
+        fresh = self.cloud_logout(csrf).json()["command"]
+        self.assertNotEqual(fresh["targetSessionId"], first["targetSessionId"])
+
+    def test_cloud_logout_receipt_terminal_monotonicity(self):
+        csrf = self.login()
+        headers, _ = self.cloud_report()
+        command = self.cloud_logout(csrf).json()["command"]
+        receipt = "/api/cloud/commands/" + command["id"] + "/receipt"
+        body = {"status": "completed", "revocation": "pending", "errorCode": "network"}
+        self.assertFalse(self.client.post(receipt, headers=headers, json=body).json()["stale"])
+        regressed = {"status": "failed", "revocation": "notRequired", "errorCode": "credentialStore"}
+        self.assertTrue(self.client.post(receipt, headers=headers, json=regressed).json()["stale"])
+        self.assertIn("云端撤销待确认", self.client.get("/admin/status").json()["devices"][0]["cloud"]["commandText"])
+        final = {"status": "completed", "revocation": "revoked", "errorCode": None}
+        self.assertFalse(self.client.post(receipt, headers=headers, json=final).json()["stale"])
+        self.assertTrue(self.client.post(receipt, headers=headers, json=body).json()["stale"])
+        self.assertEqual(self.client.get("/admin/status").json()["devices"][0]["cloud"]["command"]["revocation"], "revoked")
+        for invalid in ({"status": "skipped", "revocation": "revoked"}, final | {"errorCode": "raw exception"}, final | {"token": "secret"}):
+            self.assertEqual(self.client.post(receipt, headers=headers, json=invalid).status_code, 422)
+
+    def test_cloud_logout_push_persistence_and_registration_cleanup(self):
+        import sqlite3
+        import time
+        from contextlib import closing
+        csrf = self.login()
+        headers, _ = self.cloud_report()
+        with self.client.websocket_connect("/api/connect", headers=headers) as socket:
+            socket.receive_json()
+            command = self.cloud_logout(csrf).json()["command"]
+            self.assertEqual(socket.receive_json()["type"], "policy")
+            socket.send_json({"type": "heartbeat", "sentAt": 42})
+            self.assertEqual(socket.receive_json()["cloudCommandId"], command["id"])
+        self.client.close()
+        self.client = TestClient(create_app(self.root, self.config), base_url="https://mdn.example.edu")
+        self.assertEqual(self.client.get("/api/policy", headers=headers).json()["cloudCommands"], [command])
+        with closing(sqlite3.connect(self.root / "mdn.sqlite3")) as conn:
+            conn.execute("UPDATE devices SET last_seen=? WHERE id=?", (time.time() - 120, self.identifier))
+            conn.commit()
+        csrf = self.login()
+        cloud = self.client.get("/admin/status").json()["devices"][0]["cloud"]
+        self.assertEqual(cloud["state"]["account"]["email"], "learner@example.com")
+        self.assertTrue(cloud["stale"])
+        self.assertIn('data-cloud-option="mode"', self.client.get("/admin").text)
+        self.assertIn("远程退出云账号", self.client.get("/admin").text)
+        self.client.post("/admin/device", data={"device_id": self.identifier, "action": "reset", "form_token": csrf})
+        with closing(sqlite3.connect(self.root / "mdn.sqlite3")) as conn:
+            for table in ("cloud_status", "cloud_commands", "cloud_command_requests"):
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM " + table).fetchone()[0], 0)
+
+    def test_cloud_logout_requires_known_account_capability_and_csrf(self):
+        csrf = self.login()
+        self.assertEqual(self.cloud_logout(csrf).status_code, 409)
+        headers, payload = self.cloud_report()
+        self.assertEqual(self.cloud_logout("invalid").status_code, 403)
+        self.cloud_report(sequence=2, authentication="signedOut", account=None, sessionId=None)
+        self.assertEqual(self.cloud_logout(csrf).status_code, 409)
+        self.cloud_report(sequence=3, enabled=False, connection="disabled")
+        self.assertEqual(self.cloud_logout(csrf).status_code, 200)
+        self.client.post("/admin/device", data={"device_id": self.identifier, "action": "allow_leave", "form_token": csrf})
+        self.assertEqual(self.client.post("/api/leave", headers=headers).status_code, 200)
+        self.token = self.register(self.identifier)
+        self.headers = {"Authorization": "Bearer " + self.token, "X-IL-Capabilities": "cloudServiceV1"}
+        self.assertEqual(self.client.get("/api/policy", headers=self.headers).json()["cloudCommands"], [])
+        self.cloud_report()
+
     def test_student_role_legacy_fallback_and_modern_capability(self):
         csrf = self.login()
         self.assertEqual(self.save("all", {"clientRole": "student", "disabledFeatures": ["updates"]}, csrf).status_code, 200)

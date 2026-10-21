@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from starlette.middleware.sessions import SessionMiddleware
 from lesson_distribution import LessonDistribution
 from update_state import initialize_updates, assign_update, effective_update, stop_updates, active_ids, update_dashboard
+from cloud_management import CLOUD_DEFAULT, CloudManagement, CloudStatus, CloudCommandReceipt, cloud_policy, validate_cloud_policy
 
 ASSETS = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
 FEATURES = ["playback", "importAudio", "importIlp", "authoring", "asr", "mcp", "export", "importProject", "dataMaintenance", "apiConfiguration", "updates"]
@@ -42,6 +43,7 @@ SCHEMA = json.loads((ASSETS / "settings-schema.json").read_text(encoding="utf-8"
 DEFAULT_POLICY = {"settings": {}, "lockedSettings": [], "disabledFeatures": [], "lockAllSettings": False, "lockManagement": False, "hideAsrConfiguration": False, "automaticOobe": False, "update": None}
 DEFAULT_POLICY["clientRole"] = "default"
 DEFAULT_POLICY["asrMode"] = "followLocal"
+DEFAULT_POLICY["cloudService"] = CLOUD_DEFAULT
 STUDENT_FEATURES = ["authoring", "asr", "mcp", "export", "importProject", "apiConfiguration"]
 MDN_LOOP = "asyncio:SelectorEventLoop"
 
@@ -172,6 +174,8 @@ def validate_policy(policy: dict):
         raise ValueError("clientRole 必须为 default 或 student。")
     if "asrMode" in policy and policy["asrMode"] not in ("followLocal", "forceApi", "forceCloud"):
         raise ValueError("asrMode 必须为 followLocal、forceApi 或 forceCloud。")
+    if "cloudService" in policy:
+        validate_cloud_policy(policy["cloudService"])
     for key in ("lockAllSettings", "lockManagement", "hideAsrConfiguration", "automaticOobe"):
         if key in policy and type(policy[key]) is not bool:
             raise ValueError(key + " 必须是布尔值。")
@@ -266,6 +270,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                 if update:
                     conn.execute("INSERT OR IGNORE INTO update_tasks VALUES(?,?,?,?,?,?)", (update["id"], row["scope"], update["version"], update["mode"], row["revision"] / 1000000, store.encode(update)))
         initialize_updates(conn, store)
+    cloud_management = CloudManagement(db, store)
     app = FastAPI(title="Intensive Listening MDN", version="2.1.2.4", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=not config.get("disable_ssl", False), same_site="strict", max_age=3600)
     template_directory = expand_web(root)
@@ -361,7 +366,9 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                 device(socket)
                 with db() as conn:
                     revision = conn.execute("SELECT max(revision) FROM policies WHERE scope IN ('all',?)", (identifier,)).fetchone()[0]
-                await connections.send(socket, {"type": "heartbeat", "sentAt": json.loads(text).get("sentAt"), "revision": revision})
+                    pending = cloud_management.pending(conn, identifier)
+                await connections.send(socket, {"type": "heartbeat", "sentAt": json.loads(text).get("sentAt"), "revision": revision,
+                                                 "cloudCommandId": pending[0]["id"] if pending else None})
         except HTTPException:
             await socket.close(code=4403)
         except (WebSocketDisconnect, RuntimeError, OSError):
@@ -405,6 +412,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
             stop_updates(conn, identifier)
             conn.execute("DELETE FROM update_assignments WHERE device_id=?", (identifier,))
             conn.execute("DELETE FROM policies WHERE scope=?", (identifier,))
+            cloud_management.clear(conn, identifier)
             conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), "leave", identifier))
         await connections.revoke(identifier)
         return {"accepted": True}
@@ -413,13 +421,16 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         with db() as conn:
             global_row = conn.execute("SELECT * FROM policies WHERE scope='all'").fetchone()
             result = DEFAULT_POLICY | store.decode(global_row["payload"])
+            result["cloudService"] = cloud_policy(result)
             own = conn.execute("SELECT * FROM policies WHERE scope=?", (identifier,)).fetchone()
             revision = global_row["revision"]
             if own:
                 override = store.decode(own["payload"])
                 result["settings"].update(override.get("settings", {}))
                 for key, value in override.items():
-                    if key != "settings":
+                    if key == "cloudService":
+                        result[key] = cloud_policy(result, override)
+                    elif key != "settings":
                         result[key] = value
                 revision = max(revision, own["revision"])
             result["revision"] = revision
@@ -427,13 +438,14 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                 result["disabledFeatures"] = list(dict.fromkeys(result["disabledFeatures"] + STUDENT_FEATURES))
             result["update"] = effective_update(conn, identifier, store)
             result["lessons"] = lesson_distribution.available(identifier)
+            result["cloudCommands"] = cloud_management.pending(conn, identifier)
             return result
 
     @app.get("/api/policy")
     def policy(request: Request):
         identifier = device(request)
         capabilities = {name.strip() for name in request.headers.get("x-il-capabilities", "").split(",")}
-        supported = ",".join(sorted(capabilities & {"transcriptBlurIntensity", "lessonDistribution", "clientRoleV1", "asrModeV1"}))
+        supported = ",".join(sorted(capabilities & {"transcriptBlurIntensity", "lessonDistribution", "clientRoleV1", "asrModeV1", "cloudServiceV1"}))
         with db() as conn:
             conn.execute("UPDATE devices SET last_poll=?, realtime=?, capabilities=? WHERE id=?", (time.time(), int(bool(connections.peers.get(identifier))), supported, identifier))
         result = policy_for(identifier)
@@ -441,6 +453,9 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
             result.pop("clientRole", None)
         if "asrModeV1" not in capabilities:
             result.pop("asrMode", None)
+        if "cloudServiceV1" not in capabilities:
+            result.pop("cloudService", None)
+            result.pop("cloudCommands", None)
         if "transcriptBlurIntensity" not in capabilities:
             result["settings"].pop("transcriptBlurIntensity", None)
             result["lockedSettings"] = [name for name in result.get("lockedSettings", []) if name != "transcriptBlurIntensity"]
@@ -468,6 +483,27 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         with db() as conn:
             conn.execute("UPDATE devices SET latency=? WHERE id=?", (latency, identifier))
         return {"accepted": True}
+
+    @app.post("/api/cloud/status")
+    def cloud_status(request: Request, payload: CloudStatus):
+        identifier = device(request)
+        cloud_management.require_capability(request)
+        if payload.policyRevision > policy_for(identifier)["revision"]:
+            raise HTTPException(422, "策略版本无效。")
+        return cloud_management.report(identifier, payload)
+
+    @app.post("/api/cloud/commands/{command_id}/receipt")
+    def cloud_command_receipt(command_id: uuid.UUID, request: Request, payload: CloudCommandReceipt):
+        identifier = device(request)
+        cloud_management.require_capability(request)
+        return cloud_management.receipt(identifier, str(command_id), payload)
+
+    @app.post("/admin/cloud/logout")
+    async def cloud_logout(request: Request, device_id: str = Form(...), command_id: uuid.UUID = Form(...), form_token: str = Form(...)):
+        csrf(request, form_token)
+        command = cloud_management.enqueue_logout(device_id, str(command_id))
+        await connections.notify(device_id)
+        return {"accepted": True, "command": command, "nextCommandId": str(uuid.uuid4())}
 
     @app.post("/api/updates/{task_id}/receipt")
     async def update_receipt(task_id: str, request: Request):
@@ -646,11 +682,14 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         client["asr_label"] = {"followLocal": "ASR 跟随本机", "forceApi": "强制传统 API", "forceCloud": "强制云服务"}[client["asr_mode"]]
         client["asr_supported"] = "asrModeV1" in client["capabilities"].split(",")
         client["asr_warning"] = "需升级客户端以执行 ASR 强制模式" if client["asr_mode"] != "followLocal" and not client["asr_supported"] else ""
+        client["cloud"] = cloud_management.dashboard(client["id"], client["capabilities"], cloud_policy(global_policy, own_policy), client["online"])
         received = client["policy_revision"]
         expected = client["expected_revision"]
         client["policy_state"] = "策略已接收" if received >= expected else "等待接收新策略" if received else "等待策略回执"
         client["policy_detail"] = "最近接收：" + datetime.fromtimestamp(client["policy_received"]).astimezone().strftime("%m-%d %H:%M:%S") if client["policy_received"] else "旧版客户端可能不支持策略回执"
         client["policy_current"] = received >= expected
+        client["logout_request_id"] = str(uuid.uuid4())
+        client["cloud"]["canLogout"] = client["cloud"]["canLogout"] and bool(client["enabled"])
         return client
 
     @app.get("/admin/status")
@@ -658,7 +697,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         admin(request)
         with db() as conn:
             clients = [describe_device(row) for row in conn.execute("SELECT d.*,g.payload AS global_payload,p.payload AS own_payload,MAX(g.revision,COALESCE(p.revision,0)) AS expected_revision FROM devices d JOIN policies g ON g.scope='all' LEFT JOIN policies p ON p.scope=d.id ORDER BY d.last_seen DESC")]
-            result = {"devices": [{"id": row["id"], "name": row["name"], "original_name": row["original_name"], "online": row["online"], "enabled": bool(row["enabled"]), "connection": row["connection_text"], "version": row["version"], "seen_text": row["seen_text"], "policy_state": row["policy_state"], "policy_detail": row["policy_detail"], "policy_current": row["policy_current"], "client_role": row["client_role"], "role_label": row["role_label"], "role_supported": row["role_supported"], "role_warning": row["role_warning"], "asr_mode": row["asr_mode"], "asr_label": row["asr_label"], "asr_supported": row["asr_supported"], "asr_warning": row["asr_warning"]} for row in clients]}
+            result = {"devices": [{"id": row["id"], "name": row["name"], "original_name": row["original_name"], "online": row["online"], "enabled": bool(row["enabled"]), "connection": row["connection_text"], "version": row["version"], "seen_text": row["seen_text"], "policy_state": row["policy_state"], "policy_detail": row["policy_detail"], "policy_current": row["policy_current"], "client_role": row["client_role"], "role_label": row["role_label"], "role_supported": row["role_supported"], "role_warning": row["role_warning"], "asr_mode": row["asr_mode"], "asr_label": row["asr_label"], "asr_supported": row["asr_supported"], "asr_warning": row["asr_warning"], "cloud": row["cloud"]} for row in clients]}
             result["device_rows_html"] = templates.get_template("device-rows.html").render(request=request, clients=clients, csrf=request.session["csrf"])
             if updates:
                 scope_exists(conn, scope)
@@ -693,6 +732,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                     raise ValueError("隐藏配置需要提供或继承 cloudApiKey。")
                 if scope == "all":
                     payload = DEFAULT_POLICY | payload
+                    payload["cloudService"] = cloud_policy(payload)
                 if old.get("update"):
                     payload["update"] = old["update"]
                 write_policy(conn, scope, payload)
@@ -711,6 +751,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                 conn.execute("UPDATE devices SET enabled=? WHERE id=?", (int(action == "enable"), device_id))
             elif action == "reset":
                 stop_updates(conn, device_id)
+                cloud_management.clear(conn, device_id)
                 conn.execute("DELETE FROM update_assignments WHERE device_id=?", (device_id,))
                 conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
             elif action in ("allow_leave", "cancel_leave"):

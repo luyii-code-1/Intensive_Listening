@@ -3,3 +3,5 @@
 .action-feedback{position:sticky;top:12px;z-index:5;padding:12px 16px;border:1px solid var(--line);border-left:3px solid #3977ac;background:#f1f6fc;box-shadow:0 3px 12px #0001;margin-bottom:16px;white-space:pre-wrap}.action-feedback.confirmed{border-left-color:#268039;background:#edf6ed}.action-feedback.failed{border-left-color:#ba2929;background:#fff0f0}.policy-state.confirmed{color:#207333}.policy-state.pending{color:#8c6700}
 
 .role-picker{max-width:340px}.role-warning{max-width:220px;line-height:1.5}
+
+.cloud-state{min-width:230px;max-width:340px;overflow-wrap:anywhere}.cloud-state form{margin-top:12px}.cloud-state button{font-size:12px}.cloud-command{line-height:1.5}

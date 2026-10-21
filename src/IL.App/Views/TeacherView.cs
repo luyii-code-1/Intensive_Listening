@@ -284,13 +284,23 @@ public sealed class TeacherView : UserControl
             var actions = WorkspaceUi.Button(job?.Status == TranscriptionJobStatus.Failed ? "重新转写" : "开始转写", () => RunAsync(TranscribeAsync), true); actions.IsEnabled = job?.IsActive != true;
             var replace = WorkspaceUi.Button("更换音频", () => RunAsync(BindAudioAsync)); replace.IsEnabled = job?.Status != TranscriptionJobStatus.Running;
             var body = WorkspaceUi.Stack(); if (job != null) body.Children.Add(WorkspaceUi.Text(job.Message));
+            if (job is { Status: TranscriptionJobStatus.AwaitingDecision, Duplicate: { } duplicate })
+            {
+                body.Children.Add(WorkspaceUi.Text($"“{duplicate.ExistingTitle}”已使用这段音频。确认后可继续本次转写。", 12));
+                body.Children.Add(WorkspaceUi.Row(
+                    ManagedUi.Feature(WorkspaceUi.Button("继续转写", () => { _queue.Resolve(job.Id, true); return Task.CompletedTask; }, true), "asr"),
+                    WorkspaceUi.Button("取消", () => { _queue.Resolve(job.Id, false); return Task.CompletedTask; })));
+            }
             if (job?.Status == TranscriptionJobStatus.Running)
             {
                 var progress = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,Auto"), ClipToBounds = true };
                 progress.Children.Add(new ProgressBar { Value = (job.Fraction ?? 0) * 100, Height = 4, MinWidth = 0, VerticalAlignment = VerticalAlignment.Center });
                 var percent = WorkspaceUi.Text($"{Math.Round((job.Fraction ?? 0) * 100)}%", 12); Grid.SetColumn(percent, 2); progress.Children.Add(percent); body.Children.Add(progress);
             }
-            body.Children.Add(WorkspaceUi.Row(ManagedUi.Feature(actions,"asr"), WorkspaceUi.Button("导入 SRT", () => RunAsync(ImportSrtAsync)), replace));
+            if (job?.Status == TranscriptionJobStatus.AwaitingDecision)
+                body.Children.Add(WorkspaceUi.Row(WorkspaceUi.Button("导入 SRT", () => RunAsync(ImportSrtAsync)), replace));
+            else
+                body.Children.Add(WorkspaceUi.Row(ManagedUi.Feature(actions,"asr"), WorkspaceUi.Button("导入 SRT", () => RunAsync(ImportSrtAsync)), replace));
             _stage.Content = StepSurface("转写", Path.GetFileName(p.AudioPath!), body); return;
         }
         _stage.Content = BuildReview(p);

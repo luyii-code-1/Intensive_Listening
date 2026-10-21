@@ -392,6 +392,7 @@ public sealed class SettingsView : UserControl
             _cloudAsrPrice.Text = $"{config.CreditsPerMinute:0.##} 积分 / 分钟，按整单分钟数向上取整。最长 {config.MaxAudioSeconds / 60} 分钟；失败或未完成时取消释放冻结积分。";
         }
         catch (IL.Core.Cloud.CloudAuthenticationException error) { _cloudAsrPrice.Text = error.Message; _cloudAccount.AuthenticationFailed(error.Message); }
+        catch (IL.Core.Cloud.CloudApiException error) { _cloudAsrPrice.Text = error.Message; }
         catch (Exception) { _cloudAsrPrice.Text = "价格与限制暂时无法读取，请稍后重试。"; }
         finally { _pricingPending = false; }
     }

@@ -13,22 +13,22 @@ spec.loader.exec_module(version)
 
 class BuildVersionTests(unittest.TestCase):
     def test_three_channel_identities(self):
-        release = version.identity('2.4.2', 'release', '20261021')
-        insider = version.identity('2.4.2', 'insider', '20261021', 3)
-        beta = version.identity('2.4.2', 'beta', '20261021')
-        self.assertEqual('v2.4.2', release['displayVersion'])
-        self.assertEqual('2.4.2', release['informationalVersion'])
-        self.assertEqual('v2.4.2 Insider Preview 1021 3', insider['displayVersion'])
-        self.assertEqual('2.4.2-insider.20261021.3', insider['informationalVersion'])
-        self.assertEqual('v2.4.2 Beta 1021', beta['displayVersion'])
-        self.assertEqual('2.4.2-beta.20261021', beta['informationalVersion'])
-        self.assertEqual('2.4.2.0', insider['fileVersion'])
-        self.assertEqual('2.4.2-Insider-Preview-1021-3', insider['artifactVersion'])
+        release = version.identity('2.2.0', 'release', '20261021')
+        insider = version.identity('2.2.0', 'insider', '20261021', 3)
+        beta = version.identity('2.2.0', 'beta', '20261021')
+        self.assertEqual('v2.2.0', release['displayVersion'])
+        self.assertEqual('2.2.0', release['informationalVersion'])
+        self.assertEqual('v2.2.0 Insider Preview 1021 3', insider['displayVersion'])
+        self.assertEqual('2.2.0-insider.20261021.3', insider['informationalVersion'])
+        self.assertEqual('v2.2.0 Beta 1021', beta['displayVersion'])
+        self.assertEqual('2.2.0-beta.20261021', beta['informationalVersion'])
+        self.assertEqual('2.2.0.0', insider['fileVersion'])
+        self.assertEqual('2.2.0-Insider-Preview-1021-3', insider['artifactVersion'])
 
     def test_four_part_base_and_invalid_date_rejected(self):
-        for invalid in ('2.4.2.1', 'v2.4.2', '2.4'):
+        for invalid in ('2.2.0.1', 'v2.2.0', '2.4'):
             with self.assertRaises(ValueError): version.identity(invalid, 'insider', '20261021')
-        with self.assertRaises(ValueError): version.identity('2.4.2', 'beta', '20260230')
+        with self.assertRaises(ValueError): version.identity('2.2.0', 'beta', '20260230')
 
     def test_local_daily_sequences_are_unique_under_concurrency(self):
         with tempfile.TemporaryDirectory() as root:
@@ -50,7 +50,7 @@ class BuildVersionTests(unittest.TestCase):
     def test_prepare_and_reuse_preserve_build_identity(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
-            (root / 'Directory.Build.props').write_text('<Project><PropertyGroup><DesktopBaseVersion>2.4.2</DesktopBaseVersion></PropertyGroup></Project>')
+            (root / 'Directory.Build.props').write_text('<Project><PropertyGroup><DesktopBaseVersion>2.2.0</DesktopBaseVersion></PropertyGroup></Project>')
             with patch.object(version, 'ROOT', root), patch('sys.argv', ['build_version.py']): version.main()
             initial = json.loads((root / 'artifacts/version/build.json').read_text())
             with patch.object(version, 'ROOT', root), patch('sys.argv', ['build_version.py', '--reuse']): version.main()

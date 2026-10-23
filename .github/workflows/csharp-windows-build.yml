@@ -150,6 +150,7 @@ jobs:
         run: bash scripts/publish-csharp-macos.sh
         env:
           IL_BUILD_VERSION_PREPARED: 1
+          IL_DISTRIBUTION_DIR: artifacts/installer
       - uses: actions/upload-artifact@v7
         with:
           name: macos-installer

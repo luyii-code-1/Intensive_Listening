@@ -5,7 +5,7 @@ namespace IL.App.Services;
 public static class AppBuildInfo
 {
     public const string ReleaseName = "2 Resonance";
-    private static readonly string Identity = typeof(AppBuildInfo).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "2.4.2-insider.20261021.1";
+    private static readonly string Identity = typeof(AppBuildInfo).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "2.2.0-insider.20261023.1";
     public static string UpdateVersion => Identity.Split('+')[0];
     public static string Version => UpdateVersion.Split('-')[0];
     public static string DisplayVersion => FormatVersion(UpdateVersion);

@@ -285,4 +285,4 @@ Copyright © 2026 Luyii。源码使用 [GPL-3.0-only](LICENSE)，第三方字体
 
 ### Desktop 版本与云服务
 
-当前基础版本为 `2.4.2`，正式版、Insider Preview 和 Beta 规则见 [版本与发布说明](docs/DESKTOP_VERSIONING.md)。完整 OOBE 支持可跳过的云服务登录；“使用云服务提供的接口”采用整单 ASR 代理，供应商密钥保留在服务器。云连接与账号可由 MDN 管理，见 [云服务客户端](docs/il-cloud-client.md)。
+当前基础版本为 `2.2.0`，正式版、Insider Preview 和 Beta 规则见 [版本与发布说明](docs/DESKTOP_VERSIONING.md)。完整 OOBE 支持可跳过的云服务登录；“使用云服务提供的接口”采用整单 ASR 代理，供应商密钥保留在服务器。云连接与账号可由 MDN 管理，见 [云服务客户端](docs/il-cloud-client.md)。

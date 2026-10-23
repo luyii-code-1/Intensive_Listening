@@ -448,10 +448,10 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
             {
                 var result=JsonNode.Parse(await File.ReadAllTextAsync(updateResult));
                 _services.ManagedUpdates.RecordResult(result?["id"]?.ToString() ?? "", result?["version"]?.ToString(), result?["success"]?.GetValue<bool>() == true);
-                if (result?["success"]?.GetValue<bool>() == true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.Version, result?["version"]?.ToString())) AppBuildInfo.SuccessfulUpdateVersion = AppBuildInfo.DisplayVersion;
+                if (result?["success"]?.GetValue<bool>() == true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.UpdateVersion, result?["version"]?.ToString())) AppBuildInfo.SuccessfulUpdateVersion = AppBuildInfo.DisplayVersion;
                 if (Guid.TryParse(result?["id"]?.ToString(), out var resultId))
-                    await _services.Mdn.ReportUpdateAsync(resultId.ToString(), result?["success"]?.GetValue<bool>() == true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.Version, result?["version"]?.ToString()) ? "success" : "failed", result?["success"]?.GetValue<bool>() == true ? "更新安装完成" : "安装未完成或用户取消 UAC");
-                if(result?["success"]?.GetValue<bool>()==true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.Version, result?["version"]?.ToString()) && result?["automaticOobe"]?.GetValue<bool>()==true && _services.Settings.EulaAcceptedVersion.Length>0 && ManagedRuntime.IsManaged)
+                    await _services.Mdn.ReportUpdateAsync(resultId.ToString(), result?["success"]?.GetValue<bool>() == true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.UpdateVersion, result?["version"]?.ToString()) ? "success" : "failed", result?["success"]?.GetValue<bool>() == true ? "更新安装完成" : "安装未完成或用户取消 UAC");
+                if(result?["success"]?.GetValue<bool>()==true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.UpdateVersion, result?["version"]?.ToString()) && result?["automaticOobe"]?.GetValue<bool>()==true && _services.Settings.EulaAcceptedVersion.Length>0 && ManagedRuntime.IsManaged)
                 { var completed=_services.Settings with{CompletedInstallationId=installationId};await _services.SettingsStore.SaveAsync(completed);await _services.ApplySettingsAsync(completed); }
                 if (result?["success"]?.GetValue<bool>() != true) File.Delete(updateResult);
             }

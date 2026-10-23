@@ -8,8 +8,9 @@ archive=artifacts/native/vlc-3.0.23-arm64.dmg
 mount="$PWD/artifacts/native/vlc-build-arm64"
 output="${1:-artifacts/build/macos-arm64/Intensive Listening 2.0.app}"
 package_format="${2:-dmg}"
+distribution="${IL_DISTRIBUTION_DIR:-$PWD/../dist}"
 case "$package_format" in dmg|zip) ;; *) echo 'Package format must be dmg or zip.'; exit 1 ;; esac
-mkdir -p artifacts/native artifacts/verification artifacts/build artifacts/installer
+mkdir -p artifacts/native artifacts/verification artifacts/build artifacts/installer "$distribution"
 if [[ ! -f "$archive" ]]; then
   curl -fL --retry 2 https://get.videolan.org/vlc/3.0.23/macosx/vlc-3.0.23-arm64.dmg -o "$archive"
 fi
@@ -35,7 +36,7 @@ if [[ "$package_format" == dmg ]]; then
   ditto "$output" "$stage/$(basename "$output")"
   ln -s /Applications "$stage/Applications"
   artifact_version="$(python3 -c 'import json; print(json.load(open("artifacts/version/build.json"))["artifactVersion"])')"
-  package="artifacts/installer/Intensive-Listening-${artifact_version}-osx-arm64.dmg"
+  package="$distribution/Intensive-Listening-${artifact_version}-osx-arm64.dmg"
   hdiutil create -volname 'Intensive Listening 2 Resonance' -srcfolder "$stage" -format UDZO -fs HFS+ -ov "$package"
 else
   package=artifacts/build/IL2-osx-arm64.zip

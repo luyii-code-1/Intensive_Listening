@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <DesktopBaseVersion>2.4.2</DesktopBaseVersion>
+    <DesktopBaseVersion>2.2.0</DesktopBaseVersion>
     <Version>$(DesktopBaseVersion)</Version>
     <AssemblyVersion>$(DesktopBaseVersion).0</AssemblyVersion>
     <FileVersion>$(DesktopBaseVersion).0</FileVersion>

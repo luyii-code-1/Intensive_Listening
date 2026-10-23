@@ -337,7 +337,15 @@ public sealed partial class MdnClient : IAsyncDisposable
         // Keep an undelivered batch encrypted across restarts, with a bounded queue.
         var path = Path.Combine(_root, "events.bin");
         var pending = new List<JsonElement>();
-        if (File.Exists(path)) pending.AddRange(JsonSerializer.Deserialize<List<JsonElement>>(ManagedSecretStore.Load(path)) ?? []);
+        if (File.Exists(path))
+        {
+            try { pending.AddRange(JsonSerializer.Deserialize<List<JsonElement>>(ManagedSecretStore.Load(path)) ?? []); }
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception { NativeErrorCode: 13 or 87 } or System.Security.Cryptography.CryptographicException or JsonException)
+            {
+                File.Move(path, path + ".unreadable-" + Guid.NewGuid().ToString("N"));
+                AppLog.Warning("集控事件缓存无法读取，已保留备份并重建队列", error);
+            }
+        }
         while (_events.Reader.TryRead(out var item)) pending.Add(JsonSerializer.SerializeToElement(item, ManagedPolicy.Json));
         pending = pending.TakeLast(128).ToList();
         ManagedSecretStore.Save(path, JsonSerializer.Serialize(pending));

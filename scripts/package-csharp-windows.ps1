@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$RuntimeDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$InnoCompiler)
+param([Parameter(Mandatory=$true)][string]$RuntimeDirectory,[string]$OutputDirectory = (Join-Path $PSScriptRoot '../../dist'),[string]$InnoCompiler)
 $ErrorActionPreference='Stop'
 if (-not $InnoCompiler) { $InnoCompiler=(Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source }
 if (-not $InnoCompiler) { $InnoCompiler='E:\dev\Inno\ISCC.exe' }

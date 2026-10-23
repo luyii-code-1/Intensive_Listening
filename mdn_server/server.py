@@ -34,6 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from starlette.middleware.sessions import SessionMiddleware
 from lesson_distribution import LessonDistribution
+from desktop_version import valid_version
 from update_state import initialize_updates, assign_update, effective_update, stop_updates, active_ids, update_dashboard
 from cloud_management import CLOUD_DEFAULT, CloudManagement, CloudStatus, CloudCommandReceipt, cloud_policy, validate_cloud_policy
 
@@ -271,7 +272,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                     conn.execute("INSERT OR IGNORE INTO update_tasks VALUES(?,?,?,?,?,?)", (update["id"], row["scope"], update["version"], update["mode"], row["revision"] / 1000000, store.encode(update)))
         initialize_updates(conn, store)
     cloud_management = CloudManagement(db, store)
-    app = FastAPI(title="Intensive Listening MDN", version="2.1.2.4", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="Intensive Listening MDN", version="2.2.0", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=not config.get("disable_ssl", False), same_site="strict", max_age=3600)
     template_directory = expand_web(root)
     templates = Jinja2Templates(directory=str(template_directory))
@@ -788,7 +789,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         import re
         try:
             valid_url(url, allow_http=True)
-            if mode not in ("ota", "cold") or not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", version) or not re.fullmatch(r"[a-fA-F0-9]{64}", sha256) or not 0 < size <= 2 * 1024**3:
+            if mode not in ("ota", "cold") or not valid_version(version) or not re.fullmatch(r"[a-fA-F0-9]{64}", sha256) or not 0 < size <= 2 * 1024**3:
                 raise ValueError("更新字段无效。")
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
@@ -815,7 +816,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         csrf(request, request.headers.get("x-csrf-token", ""))
         trace(request, "upload authenticated", started=upload_started)
         import re
-        if mode not in ("ota", "cold") or not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", version) or not filename.lower().endswith(".exe"):
+        if mode not in ("ota", "cold") or not valid_version(version) or not filename.lower().endswith(".exe"):
             raise HTTPException(422, "请选择 EXE 安装包并填写有效版本与更新方式。")
         with db() as conn:
             scope_exists(conn, scope)
@@ -939,7 +940,7 @@ def main():
     args.data = args.data.resolve()
     path = args.data / "config.bin"
     store = SecretStore()
-    print("Intensive Listening MDN 2.1.2.4")
+    print("Intensive Listening MDN 2.2.0")
     print("数据目录：" + str(args.data))
     if args.init and path.exists():
         raise ValueError("已有配置，初始化不会覆盖。")

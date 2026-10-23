@@ -39,7 +39,7 @@ public sealed class AppServices : IAsyncDisposable
     public string? PreconfigurationError { get; private set; }
     public AppServices(Action<Action> dispatch,bool standalone)
     {
-        Standalone=standalone; Mdn=new(DataDirectory,AppBuildInfo.Version); if(!standalone)ManagedRuntime.Client=Mdn; ManagedUpdates=new(Mdn,DataDirectory) { Enabled = OperatingSystem.IsWindows() }; Projects=new(Path.Combine(DataDirectory,"projects"));
+        Standalone=standalone; Mdn=new(DataDirectory,AppBuildInfo.UpdateVersion); if(!standalone)ManagedRuntime.Client=Mdn; ManagedUpdates=new(Mdn,DataDirectory) { Enabled = OperatingSystem.IsWindows() }; Projects=new(Path.Combine(DataDirectory,"projects"));
         CloudFiles = new(CloudAccount.Authentication, DataDirectory); CloudAsr = new(CloudAccount.Authentication, DataDirectory);
         Student=new(()=>new LibVlcAudioPlayer(),LibraryDirectory,new LessonProgressStore(Path.Combine(DataDirectory,"lesson_progress.json")),SettingsStore,dispatch);
         ManagedLessons = new(Mdn, LibraryDirectory, DataDirectory);

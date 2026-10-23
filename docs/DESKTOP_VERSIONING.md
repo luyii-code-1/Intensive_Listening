@@ -1,16 +1,16 @@
 # Desktop 版本与发布
 
-当前基础版本为 `2.4.2`，在 `Directory.Build.props` 的 `DesktopBaseVersion` 中维护。
+当前基础版本为 `2.2.0`，在 `Directory.Build.props` 的 `DesktopBaseVersion` 中维护。
 
 | 渠道 | 界面显示 | 标签 / 构建标识 |
 | --- | --- | --- |
-| 正式 Release | `v2.4.2` | 标签 `v2.4.2`，构建标识 `2.4.2` |
-| 日常开发 | `v2.4.2 Insider Preview 1021 3` | `2.4.2-insider.20261021.3` |
-| 人工 Pre Release | `v2.4.2 Beta 1021` | 标签 `v2.4.2-beta.20261021`，构建标识 `2.4.2-beta.20261021` |
+| 正式 Release | `v2.2.0` | 标签 `v2.2.0`，构建标识 `2.2.0` |
+| 日常开发 | `v2.2.0 Insider Preview 1021 3` | `2.2.0-insider.20261021.3` |
+| 人工 Pre Release | `v2.2.0 Beta 1021` | 标签 `v2.2.0-beta.20261021`，构建标识 `2.2.0-beta.20261021` |
 
 日期使用北京时间。本地通过独占文件预留同日序号，CI 按当天 Insider 运行顺序编号，重跑复用原运行日期和编号。正式版及 Beta 不占 Insider 序号。
 
-AppBuildInfo 的 Version 保留三段数值供协议、遥测和 MDN 比较；UpdateVersion 带渠道后缀用于 GitHub 更新检查；DisplayVersion 用于界面。Windows Assembly/FileVersion 使用 `2.4.2.0`，末位固定零；macOS plist 数值版本使用三段基础版本。MDN 同版本更新继续按任务 ID 去重。
+AppBuildInfo 的 Version 保留三段数值供协议、遥测和 MDN 比较；UpdateVersion 带渠道后缀用于 GitHub 更新检查；DisplayVersion 用于界面。Windows Assembly/FileVersion 使用 `2.2.0.0`，末位固定零；macOS plist 数值版本使用三段基础版本。MDN 同版本更新继续按任务 ID 去重。
 
 ## 本地入口
 
@@ -19,7 +19,7 @@ AppBuildInfo 的 Version 保留三段数值供协议、遥测和 MDN 比较；Up
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-csharp-windows.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-csharp-windows.ps1 -Channel beta
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-csharp-windows.ps1 -Channel release -ReleaseTag v2.4.2
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-csharp-windows.ps1 -Channel release -ReleaseTag v2.2.0
 ```
 
 完整 Windows/macOS 发布脚本同样准备版本。组合构建或直接运行 dotnet 前，先执行 `python scripts/build_version.py`，再设置 `IL_BUILD_VERSION_PREPARED=1` 让后续步骤复用标识。

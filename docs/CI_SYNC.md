@@ -4,7 +4,7 @@
 
 ## 发布来源
 
-**Publish Release source to main** 在正式 Release 的 `C# Windows build` 流水线成功后运行。也可手动运行，必须指定已发布的三段正式 Release 标签（当前基础版本 `v2.4.2`）。
+**Publish Release source to main** 在正式 Release 的 `C# Windows build` 流水线成功后运行。也可手动运行，必须指定已发布的三段正式 Release 标签（当前基础版本 `v2.2.0`）。
 
 工作流检查标签是当前 Latest 正式 Release，解析标签所指的固定提交。预发布、草稿和旧正式版不会推进 main。普通开发推送和 PR 检查只执行构建，不触发发布同步。
 

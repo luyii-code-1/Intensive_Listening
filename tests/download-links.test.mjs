@@ -55,7 +55,7 @@ test('routes both platforms through the first reachable mirror', async () => {
   assert.equal(links.windows.href, `https://gh-proxy.org/${WINDOWS}`);
   assert.equal(links.macos.href, `https://gh-proxy.org/${MACOS}`);
   assert.equal(links.windows.download, 'Intensive-Listening-2.1.0-win-x64-Setup.exe');
-  assert.equal(meta.textContent, 'v2.1.0 正式版，境内加速下载');
+  assert.equal(meta.textContent, '2.1.0 正式版，境内加速下载');
   assert.equal(probes.length, 1, '探测到一个可用节点后就不再试下一个');
 });
 
@@ -63,21 +63,21 @@ test('falls through to the next mirror when a node cannot serve the file', async
   const { links, meta } = await run({ head: (url) => !url.startsWith('https://gh-proxy.org/') });
   assert.equal(links.windows.href, `https://v4.gh-proxy.org/${WINDOWS}`);
   assert.equal(links.macos.href, `https://v4.gh-proxy.org/${MACOS}`);
-  assert.equal(meta.textContent, 'v2.1.0 正式版，境内加速下载');
+  assert.equal(meta.textContent, '2.1.0 正式版，境内加速下载');
 });
 
 test('falls back to GitHub direct links when every mirror is unreachable', async () => {
   const { links, meta } = await run({ head: () => false });
   assert.equal(links.windows.href, WINDOWS);
   assert.equal(links.macos.href, MACOS);
-  assert.equal(meta.textContent, 'v2.1.0 正式版，通过 GitHub 下载');
+  assert.equal(meta.textContent, '2.1.0 正式版，通过 GitHub 下载');
 });
 
 test('derives both platform links from DEFAULT_TAG when metadata is absent', async () => {
   const { links, meta } = await run({ metadata: null });
   assert.equal(links.windows.href, `https://gh-proxy.org/https://github.com/luyii-code-1/Intensive_Listening/releases/download/${DEFAULT_TAG}/Intensive-Listening-${DEFAULT_VERSION}-win-x64-Setup.exe`);
   assert.equal(links.macos.href, `https://gh-proxy.org/https://github.com/luyii-code-1/Intensive_Listening/releases/download/${DEFAULT_TAG}/Intensive-Listening-${DEFAULT_VERSION}-osx-arm64.dmg`);
-  assert.equal(meta.textContent, `${DEFAULT_TAG} 正式版，境内加速下载`);
+  assert.equal(meta.textContent, `${DEFAULT_TAG.replace(/^v/, '')} 正式版，境内加速下载`);
 });
 
 test('derives both platform links from DEFAULT_TAG when metadata is malformed', async () => {
@@ -97,7 +97,7 @@ test('rejects metadata whose asset source is not a known Release URL', async () 
 
 test('ignores a metadata tag that is not a stable v2 release', async () => {
   const { meta } = await run({ metadata: release({ tag: 'v1.9.0' }) });
-  assert.equal(meta.textContent, `${DEFAULT_TAG} 正式版，境内加速下载`);
+  assert.equal(meta.textContent, `${DEFAULT_TAG.replace(/^v/, '')} 正式版，境内加速下载`);
 });
 
 test('keeps the version in build output in step with DEFAULT_TAG', async () => {
@@ -110,5 +110,5 @@ test('uses four-component release download metadata', async () => {
   const metadata = JSON.parse(JSON.stringify(release()).replaceAll('2.1.0', '2.1.2.3'));
   const { links, meta } = await run({ metadata });
   assert.match(links.windows.href, /v2\.1\.2\.3\/Intensive-Listening-2\.1\.2\.3-win-x64-Setup\.exe$/);
-  assert.match(meta.textContent, /v2\.1\.2\.3/);
+  assert.match(meta.textContent, /^2\.1\.2\.3 正式版/);
 });

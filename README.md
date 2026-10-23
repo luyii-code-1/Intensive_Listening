@@ -29,7 +29,7 @@ GitHub Release published
 
 因此改版本号只需一处：发一次 Release，其余自动跟随。
 
-- **`__VERSION__` 占位符**：写在 `index.html` / `guide.html` 源码里的版本位置，构建时替换为不带 `v` 的版本号。`tests/publish-release.test.mjs` 与 CI 都会检查产物里没有残留占位符。
+- **`__VERSION__` 占位符**：写在 `index.html` / `guide.html` 源码里的版本位置，构建时替换为不带 `v` 的版本号；`release.js` 显示的正式版版本号同样不带 `v`，Release 标签仍为 `v2.x.y`。`tests/publish-release.test.mjs` 与 CI 都会检查产物里没有残留占位符。
 - **`DEFAULT_TAG`**：`release.js` 里的兜底版本号，仅当 `latest.json` 缺失或不可用时使用。由 CI 同步重写，正常情况无需手工维护。
 - 若 Release 不是当前最新稳定版（回填旧版），工作流会跳过，避免 `release.js` 的「最新版」语义被破坏。
 

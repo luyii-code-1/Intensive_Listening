@@ -73,7 +73,7 @@ async function switchDownloads() {
   }
 
   const label = document.getElementById('release-download-meta');
-  if (label) label.textContent = `${release.tag} 正式版，${base === null ? '通过 GitHub 下载' : '境内加速下载'}`;
+  if (label) label.textContent = `${release.tag.replace(/^v/, '')} 正式版，${base === null ? '通过 GitHub 下载' : '境内加速下载'}`;
 }
 
 switchDownloads();

@@ -1,9 +1,16 @@
 <Project>
   <PropertyGroup>
+    <DesktopBaseVersion>2.2.0</DesktopBaseVersion>
+    <Version>$(DesktopBaseVersion)</Version>
+    <AssemblyVersion>$(DesktopBaseVersion).0</AssemblyVersion>
+    <FileVersion>$(DesktopBaseVersion).0</FileVersion>
+    <DesktopBuildDate>$([System.DateTime]::UtcNow.AddHours(8).ToString('yyyyMMdd'))</DesktopBuildDate>
+    <InformationalVersion>$(DesktopBaseVersion)-insider.$(DesktopBuildDate).1</InformationalVersion>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+  <Import Project="$(MSBuildThisFileDirectory)artifacts/version/BuildVersion.props" Condition="Exists('$(MSBuildThisFileDirectory)artifacts/version/BuildVersion.props')" />
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
   </PropertyGroup>

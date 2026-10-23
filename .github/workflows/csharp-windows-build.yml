@@ -1,4 +1,5 @@
 name: C# Windows build
+run-name: ${{ github.event_name == 'release' && github.event.release.tag_name || format('Desktop {0}', inputs.channel || 'insider') }}
 on:
   push:
     branches: [2.0-dev, main]
@@ -7,34 +8,89 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      channel:
+        description: Desktop build channel
+        required: true
+        default: insider
+        type: choice
+        options: [insider, beta]
 permissions:
   contents: read
+  actions: read
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.identity.outputs.base }}
+      display: ${{ steps.identity.outputs.display }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Prepare desktop build identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_CHANNEL: ${{ inputs.channel }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          channel="${REQUESTED_CHANNEL:-insider}"
+          if [[ "$GITHUB_EVENT_NAME" == release ]]; then
+            channel=release
+            [[ "$IS_PRERELEASE" == true ]] && channel=beta
+          fi
+          args=(--channel "$channel" --ci)
+          [[ -n "$RELEASE_TAG" ]] && args+=(--tag "$RELEASE_TAG")
+          python3 scripts/build_version.py "${args[@]}"
+          python3 - <<'PY'
+          import json, os
+          value = json.load(open('artifacts/version/build.json'))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('base=' + value['baseVersion'] + '\n')
+              output.write('display=' + value['displayVersion'] + '\n')
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-build-identity
+          path: artifacts/version/*
+          if-no-files-found: error
   portable-build:
-    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v2.')
+    needs: version
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          name: desktop-build-identity
+          path: artifacts/version
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
       - name: Test release deployment and snapshot synchronization
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - run: scripts/publish-csharp-windows.sh
+        env:
+          IL_BUILD_VERSION_PREPARED: 1
       - uses: actions/upload-artifact@v7
         with:
           name: IL2-win-x64
           path: artifacts/build/IL2-win-x64/
           if-no-files-found: error
   build:
-    needs: portable-build
+    needs: [version, portable-build]
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          name: desktop-build-identity
+          path: artifacts/version
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
@@ -53,7 +109,7 @@ jobs:
           if ($process.ExitCode -ne 0) { throw 'Windows single-instance verification failed.' }
           $identity = Get-Content artifacts/verification/runtime.json -Raw | ConvertFrom-Json
           $commit = (git rev-parse --short=7 HEAD).Trim()
-          if ($identity.build -ne $commit -or $identity.version -ne '2.1.2.3') { throw 'Release build identity mismatch.' }
+          if ($identity.build -ne $commit -or $identity.version -ne '${{ needs.version.outputs.base }}' -or $identity.displayVersion -ne '${{ needs.version.outputs.display }}') { throw 'Release build identity mismatch.' }
       - name: Package installer
         shell: pwsh
         run: |
@@ -74,10 +130,15 @@ jobs:
             artifacts/verification/*
             !artifacts/verification/*.exe
   macos-build:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.'))
+    needs: version
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v'))
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: desktop-build-identity
+          path: artifacts/version
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
@@ -87,13 +148,16 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: '1'
       - name: Build and verify macOS application
         run: bash scripts/publish-csharp-macos.sh
+        env:
+          IL_BUILD_VERSION_PREPARED: 1
+          IL_DISTRIBUTION_DIR: artifacts/installer
       - uses: actions/upload-artifact@v7
         with:
           name: macos-installer
           path: artifacts/installer/*.dmg
           if-no-files-found: error
   publish:
-    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.')
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v')
     needs: [build, macos-build]
     runs-on: ubuntu-latest
     permissions:

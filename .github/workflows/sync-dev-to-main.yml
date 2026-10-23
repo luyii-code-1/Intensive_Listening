@@ -1,7 +1,15 @@
-name: Publish 2.0-dev snapshot to main
+name: Publish Release source to main
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable Release tag
+        required: true
+        type: string
+  workflow_run:
+    workflows: ["C# Windows build"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -12,6 +20,12 @@ concurrency:
 
 jobs:
   publish:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'release' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -66,4 +80,5 @@ jobs:
       - name: Publish through checked pull request
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.IL_SYNC_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
         run: python3 .github/scripts/sync_dev_to_main.py

@@ -21,7 +21,7 @@ def identity(base, channel, day, sequence=1):
         raise ValueError("Daily build sequence must be positive.")
     date = datetime.strptime(day, "%Y%m%d").strftime("%m%d")
     suffix = "" if channel == "release" else f"-{channel}.{day}" + (f".{sequence}" if channel == "insider" else "")
-    display = f"v{base}"
+    display = f"{base}"
     if channel == "insider":
         display += f" Insider Preview {date} {sequence}"
     elif channel == "beta":

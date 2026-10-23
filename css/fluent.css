@@ -542,6 +542,21 @@ body {
 }
 
 /* Recent Lessons Section */
+.start-options { width: 100%; text-align: left; }
+.player-help-link { color: var(--text-secondary); font-size: 13px; text-underline-offset: 3px; padding: 8px 4px; }
+.start-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-top: 1px solid var(--border-divider); }
+.start-option > div { min-width: 0; }
+.start-option h3 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+.start-option p { font-size: 13px; line-height: 1.6; color: var(--text-secondary); margin: 0; }
+.start-option button { flex-shrink: 0; }
+.player-start-help { width: 100%; max-width: 900px; margin: 28px auto 0; text-align: left; color: var(--text-secondary); font-size: 14px; line-height: 1.8; }
+.player-start-help summary { cursor: pointer; color: var(--text-primary); padding: 8px 0; }
+.player-start-help a { color: var(--accent); }
+@media (max-width: 560px) {
+  .start-option { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .start-option button { min-height: 44px; }
+}
+
 .recent-section {
   width: 100%;
   max-width: 900px;

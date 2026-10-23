@@ -73,6 +73,7 @@
         <div id="app-title" class="app-title">Intensive Listening</div>
       </div>
       <div class="header-right">
+        <a class="player-help-link" href="https://il.luyii.cn/guide.html#web-player" target="_blank" rel="noopener noreferrer">帮助</a>
         <!-- 课程信息按钮（仅在播放课程时显示，精致 Fluent 图标按钮风格） -->
         <button id="file-info-btn" class="icon-btn" title="课程文件信息" style="display: none;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -147,12 +148,21 @@
           <!-- Empty State -->
           <div id="empty-state" class="empty-state-box">
             <img src="icons/icon.svg" class="empty-logo-mark" alt="Intensive Listening Logo" width="64" height="64">
-            <h2 class="empty-title">打开音频或精听包</h2>
-            <p class="empty-desc">直接播放常见音频，或导入带有题目与挖空练习的 .ilp 精听包。<br>您也可以直接将 .ilp 文件拖拽至此窗口。</p>
-            <div class="empty-actions">
-              <button id="btn-empty-open-audio" class="fluent-btn">打开音频</button>
-              <button id="btn-empty-import" class="fluent-btn filled">导入精听包</button>
-              <button id="btn-empty-load-sample" class="fluent-btn">加载示例课程</button>
+            <h2 class="empty-title">先选一件你想做的事</h2>
+            <p class="empty-desc">第一次用，可以先体验示例；有自己的文件时，按文件类型选择。</p>
+            <div class="start-options">
+              <div class="start-option">
+                <div><h3>还没有课程，先体验一下</h3><p>载入后点击播放，再试试「下一句」和「单句循环」。</p></div>
+                <button id="btn-empty-load-sample" class="fluent-btn filled">加载示例课程</button>
+              </div>
+              <div class="start-option">
+                <div><h3>老师发来了 .ilp 课程文件</h3><p>先保存到电脑或手机，再选中它，即可练习字幕和题目。</p></div>
+                <button id="btn-empty-import" class="fluent-btn">导入精听包</button>
+              </div>
+              <div class="start-option">
+                <div><h3>我想播放 MP3 等录音</h3><p>普通音频可以直接播放；逐句字幕需要先用桌面版制作。</p></div>
+                <button id="btn-empty-open-audio" class="fluent-btn">打开音频</button>
+              </div>
             </div>
           </div>
 
@@ -161,6 +171,15 @@
             <h3 class="recent-title">最近课程</h3>
             <div id="lesson-list" class="lesson-list"></div>
           </div>
+          <details class="player-start-help">
+            <summary>第一次用？查看播放步骤</summary>
+            <ol>
+              <li>选择上面的示例或导入文件，出现课程后点三角形播放按钮。浏览器询问发声权限时，按提示允许。</li>
+              <li>有字幕的课程可以点「上一句 / 下一句」切换；「单句循环」会反复播放当前句。</li>
+              <li>回到首页，可以从「最近课程」继续。课程和进度保存在当前浏览器，清理网站数据会影响这些记录。</li>
+            </ol>
+            <a href="https://il.luyii.cn/guide.html#web-player" target="_blank" rel="noopener noreferrer">查看完整使用教程 →</a>
+          </details>
         </div>
 
         <!-- Bottom Footer: User Agreement & Privacy Policy Links -->

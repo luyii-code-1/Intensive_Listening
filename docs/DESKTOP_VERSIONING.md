@@ -1,12 +1,12 @@
 # Desktop 版本与发布
 
-当前基础版本为 `2.2.0`，在 `Directory.Build.props` 的 `DesktopBaseVersion` 中维护。
+当前基础版本为 `2.2.0`，在 `Directory.Build.props` 的 `DesktopBaseVersion` 中维护。界面显示版本不带 `v` 前缀；Git 标签保留 `v` 前缀。
 
 | 渠道 | 界面显示 | 标签 / 构建标识 |
 | --- | --- | --- |
-| 正式 Release | `v2.2.0` | 标签 `v2.2.0`，构建标识 `2.2.0` |
-| 日常开发 | `v2.2.0 Insider Preview 1021 3` | `2.2.0-insider.20261021.3` |
-| 人工 Pre Release | `v2.2.0 Beta 1021` | 标签 `v2.2.0-beta.20261021`，构建标识 `2.2.0-beta.20261021` |
+| 正式 Release | `2.2.0` | 标签 `v2.2.0`，构建标识 `2.2.0` |
+| 日常开发 | `2.2.0 Insider Preview 1023 1` | `2.2.0-insider.20261023.1` |
+| 人工 Pre Release | `2.2.0 Beta 1023` | 标签 `v2.2.0-beta.20261023`，构建标识 `2.2.0-beta.20261023` |
 
 日期使用北京时间。本地通过独占文件预留同日序号，CI 按当天 Insider 运行顺序编号，重跑复用原运行日期和编号。正式版及 Beta 不占 Insider 序号。
 

@@ -15,7 +15,7 @@ public static class AppBuildInfo
     internal static string FormatVersion(string identity)
     {
         var parts = identity.Split('+')[0].Split('-', 2);
-        var version = "v" + parts[0];
+        var version = parts[0];
         if (parts.Length == 1) return version;
         var suffix = parts[1].Split('.');
         if (suffix.Length >= 2 && DateTime.TryParseExact(suffix[1], "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var date))
@@ -23,6 +23,6 @@ public static class AppBuildInfo
             if (suffix[0] == "beta") return $"{version} Beta {date:MMdd}";
             if (suffix[0] == "insider" && suffix.Length == 3 && int.TryParse(suffix[2], out var sequence)) return $"{version} Insider Preview {date:MMdd} {sequence}";
         }
-        return "v" + identity.Split('+')[0];
+        return identity.Split('+')[0];
     }
 }

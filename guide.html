@@ -4,10 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#F3F3F1">
-    <meta name="description" content="Intensive Listening 2 Resonance 中文教程：安装与首次设置、阿里云百炼转写、人工与 MCP 智能体制课、保存导出及逐句精听。">
+    <meta name="description" content="Intensive Listening 2 Resonance 中文教程：安装与首次设置、阿里云百炼转写、人工与 MCP 智能体制课、保存导出及逐句精听，每一步都配当前版本的界面截图。">
     <meta property="og:type" content="article">
     <meta property="og:title" content="Intensive Listening 2 Resonance 使用教程">
-    <meta property="og:description" content="从音频与参考材料，到可分发的精听课程。">
+    <meta property="og:description" content="从音频与参考材料，到可分发的精听课程。每一步都配界面截图。">
     <meta property="og:image" content="https://il.luyii.cn/assets/promo-2-resonance/hero-resonance-flat.png">
     <meta property="og:url" content="https://il.luyii.cn/guide.html">
     <link rel="canonical" href="https://il.luyii.cn/guide.html">
@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="styles.css">
     <title>使用教程，Intensive Listening 2</title>
   </head>
-  <body class="guide-page">
+  <body class="docs-page">
     <a class="skip-link" href="#main">跳到主要内容</a>
     <header class="site-header">
       <div class="container header-inner">
@@ -33,120 +33,271 @@
     </header>
 
     <main id="main">
-      <section class="guide-hero">
-        <div class="container guide-hero-inner">
-          <h1>从一段音频开始，完成一节精听课</h1>
-          <p>对应 Intensive Listening 2 正式版。按实际操作顺序完成安装、制课与练习；教师可选择人工制作，亦可接入本机智能体协同整理。</p>
-          <div class="guide-hero-links">
-            <a class="button button-primary" href="#teacher">开始制课</a>
-            <a class="button button-secondary" href="#student">学生练习</a>
-          </div>
-        </div>
-      </section>
+      <div class="container docs-layout">
+        <aside class="docs-sidebar" aria-label="教程目录">
+          <details class="docs-nav-toggle" open>
+            <summary>教程目录</summary>
+            <nav class="docs-nav">
+              <p class="docs-nav-group">开始使用</p>
+              <a href="#quickstart">快速上手</a>
+              <a href="#prepare">安装与准备</a>
+              <a href="#first-run">首次运行</a>
+              <p class="docs-nav-group">教师</p>
+              <a href="#api-setup">云端转写配置</a>
+              <a href="#teacher">人工制课</a>
+              <a href="#agent">智能体制课</a>
+              <p class="docs-nav-group">学生</p>
+              <a href="#student">逐句精听</a>
+              <p class="docs-nav-group">参考</p>
+              <a href="#settings">设置与按键</a>
+              <a href="#help">常见问题</a>
+            </nav>
+          </details>
+        </aside>
 
-      <div class="container guide-layout">
-        <aside class="guide-sidebar" aria-label="教程目录"><div class="guide-sidebar-inner"><p class="sidebar-label">本页目录</p><nav><a href="#prepare">安装与准备</a><a href="#first-run">首次运行</a><a href="#api-setup">云端转写配置</a><a href="#teacher">01 人工制课</a><a href="#agent">02 智能体制课</a><a href="#student">03 逐句精听</a><a href="#settings">设置与按键</a><a href="#help">常见问题</a></nav></div></aside>
-        <div class="guide-content">
-          <section class="guide-section" id="prepare" aria-labelledby="prepare-title">
-            <div class="guide-section-head"><h2 id="prepare-title">安装与准备</h2><p>教师制作与学生练习都在 Intensive Listening 桌面应用中完成。</p></div>
-            <div class="prep-grid">
-              <div class="prep-item"><span>Windows</span><h3>Windows 10/11 x64</h3><p>从<a href="index.html#download">下载区</a>取得安装程序，运行后选择安装目录，再启动应用。</p></div>
-              <div class="prep-item"><span>macOS</span><h3>macOS 26.0+，Apple Silicon</h3><p>下载 DMG，打开后把应用拖入 Applications。首次打开若被系统拦截，可在「系统设置 → 隐私与安全性」中选择「仍要打开」；参见<a href="https://support.apple.com/zh-cn/102445" rel="noopener noreferrer">Apple 官方说明</a>。</p></div>
+        <article class="docs-content">
+          <nav class="docs-breadcrumb" aria-label="面包屑"><a href="index.html">首页</a><span aria-hidden="true">/</span><span>使用教程</span></nav>
+          <h1>使用教程</h1>
+          <p class="docs-lead">学生用老师发来的精听包练习，教师从一段音频制作课程。按下面的顺序操作即可，每一步都配有当前版本的界面截图。</p>
+          <div class="docs-meta"><span>适用 Intensive Listening 2</span><span>截图取自当前版本，使用示例课程与模拟音频</span></div>
+
+          <section class="docs-section" id="quickstart" aria-labelledby="quickstart-title">
+            <h2 id="quickstart-title">快速上手</h2>
+            <p>先确认你是哪一种用户。两条路线用到的界面完全不同。</p>
+            <div class="docs-cards">
+              <div class="docs-card">
+                <p class="docs-card-tag">学生</p>
+                <h3>打开课程，逐句听</h3>
+                <ol>
+                  <li>拿到老师发来的 <code>.ilp</code> 文件。</li>
+                  <li>点「导入精听包或音频」，选中这个文件。</li>
+                  <li>用「上一句／下一句」定位，开启「单句循环」反复听。</li>
+                </ol>
+                <a class="docs-link" href="#student">学生练习说明</a>
+              </div>
+              <div class="docs-card">
+                <p class="docs-card-tag">教师</p>
+                <h3>从音频制作课程</h3>
+                <ol>
+                  <li>左侧点「制作」，再点右上角「新建项目」。</li>
+                  <li>选择「人工制作」或「智能体制作」，绑定音频。</li>
+                  <li>校对字幕与题目、设置挖空，保存后导出精听包。</li>
+                </ol>
+                <a class="docs-link" href="#teacher">制课说明</a>
+              </div>
             </div>
-            <div class="guide-callout"><strong>准备材料</strong><p>人工制课至少需要一段 MP3、M4A 或 WAV 音频；试卷、答案、听力原文和已有 SRT 可帮助校对。智能体制课可附加多份 DOCX 或文字版 PDF。学生从教师处取得 <code>.ilp</code> 精听包即可练习。</p></div>
           </section>
 
-          <section class="guide-section" id="first-run" aria-labelledby="first-run-title">
-            <div class="guide-section-head"><h2 id="first-run-title">首次运行</h2><p>首次启动会在主窗口中引导完成协议和基本设置，之后进入课程工作区。</p></div>
-            <ol class="guide-steps">
-              <li><div class="step-content"><h3>确认协议与隐私选项</h3><p>阅读用户协议和隐私说明，按需选择匿名数据分析。之后仍可在「设置 → 隐私与关于」查看或调整。</p></div></li>
-              <li><div class="step-content"><h3>选择播放与制作设置</h3><p>根据用途设置 MCP、跳过题前提示与转写 API。Windows 还可关联 <code>.ilp</code> 文件，之后双击课程包即可交给应用打开。云端转写的 Key 可以稍后配置。</p></div></li>
-              <li><div class="step-content"><h3>进入工作区</h3><p>在「制作」创建课程，或在播放区域导入教师交付的 <code>.ilp</code>。学生使用已有精听包时无需配置 ASR。</p></div></li>
-            </ol>
+          <section class="docs-section" id="prepare" aria-labelledby="prepare-title">
+            <h2 id="prepare-title">安装与准备</h2>
+            <p>教师制作与学生练习都在 Intensive Listening 桌面应用中完成。</p>
+            <dl class="docs-keyvalues">
+              <div><dt>Windows</dt><dd>从<a href="index.html#download">下载区</a>取得安装程序，双击运行并选择安装目录，装完从开始菜单或桌面启动；首次启动会打开设置向导。</dd></div>
+              <div><dt>macOS</dt><dd>下载 DMG，把应用拖入 Applications。首次打开若被系统拦截，在「系统设置 → 隐私与安全性」选择「仍要打开」；参见<a href="https://support.apple.com/zh-cn/102445" rel="noopener noreferrer">Apple 官方说明</a>。</dd></div>
+              <div><dt>材料</dt><dd>人工制课至少需要一段 MP3、M4A 或 WAV 音频；试卷、答案、听力原文和已有 SRT 可帮助校对。智能体制课可附加多份 DOCX 或文字版 PDF。</dd></div>
+              <div><dt>学生</dt><dd>从教师处取得 <code>.ilp</code> 精听包即可练习，不需要配置转写。</dd></div>
+            </dl>
           </section>
 
-          <section class="guide-section" id="api-setup" aria-labelledby="api-setup-title">
-            <div class="guide-section-head"><h2 id="api-setup-title">配置阿里云百炼转写</h2><p>教师需要从音频自动生成字幕时，先配置自己的百炼 API Key。已有匹配的 SRT 可直接导入。</p></div>
-            <ol class="guide-steps">
-              <li><div class="step-content"><h3>创建 API Key</h3><p>打开<a href="https://bailian.console.aliyun.com/" rel="noopener noreferrer">阿里云百炼控制台</a>，开通服务并进入「API Key」页面。以华北 2（北京）为例，选择可调用语音转写模型的业务空间，创建并复制 Key。地域、接入域名与模型要相互对应。</p><p class="step-result"><strong>完成标志</strong>已取得可用的 API Key。</p></div></li>
-              <li><div class="step-content"><h3>填写应用配置</h3><p>在 Intensive Listening 中打开「设置 → 制作与智能体 → API 设置」。北京地域可使用应用预置的下列参数；如默认值相同，只需填写 Key。</p>
-                <dl class="api-config-list">
-                  <div><dt>API Endpoint</dt><dd><code>https://dashscope.aliyuncs.com</code></dd></div>
-                  <div><dt>Path</dt><dd><code>/api/v1/services/aigc/multimodal-generation/generation</code></dd></div>
-                  <div><dt>Name</dt><dd><code>qwen-audio-3.0-asr-flash</code></dd></div>
-                  <div><dt>Key</dt><dd>粘贴自己的百炼 API Key</dd></div>
-                  <div><dt>分段并发</dt><dd>默认 10，可设置为 1–10</dd></div>
-                  <div><dt>单段超时</dt><dd>默认 180 秒</dd></div>
-                </dl>
-                <p>点击「保存 API 配置」。如果使用其他地域，先按<a href="https://help.aliyun.com/zh/model-studio/regions" rel="noopener noreferrer">阿里云地域说明</a>核对接入地址与模型。</p></div></li>
-              <li><div class="step-content"><h3>开始转写</h3><p>回到课程项目，绑定音频后在「转写」步骤点击「开始转写」。任务加入队列；可在任务中心查看进度、取消、重试或导出 SRT。完成后返回工程校对逐句字幕。</p><p class="step-result"><strong>完成标志</strong>工程显示与音频对应的字幕和时间轴。</p></div></li>
-            </ol>
-            <p class="api-source">参考：<a href="https://help.aliyun.com/zh/model-studio/get-api-key" rel="noopener noreferrer">阿里云 API Key 说明</a>。</p>
-          </section>
+          <section class="docs-section" id="first-run" aria-labelledby="first-run-title">
+            <h2 id="first-run-title">首次运行</h2>
+            <p>首次启动会在主窗口中依次显示 8 个设置页面，从许可条款到转写接口。除许可条款外都可以先跳过，之后在「设置」里修改。</p>
 
-          <section class="guide-section" id="teacher" aria-labelledby="teacher-title">
-            <div class="guide-section-head"><span class="guide-section-no">01 人工制作</span><h2 id="teacher-title">从音频制作精听包</h2><p>在「制作」中点击「新建项目」，选择「人工制作」，按「音频 → 转写 → 审阅 → 完成」推进。</p></div>
-            <ol class="guide-steps">
-              <li><div class="step-content"><h3>创建工程并绑定音频</h3><p>新建空白工程，设置标题并选择一段 MP3、M4A 或 WAV 音频。需要参考试卷时，可以导入 DOCX 并提取文字；制作工程也能通过 ZIP 导入或导出。</p><p class="step-result"><strong>完成标志</strong>工程显示已绑定音频，进入转写步骤。</p></div></li>
-              <li><div class="step-content"><h3>生成或导入字幕</h3><p>配置云端 ASR 后点击「开始转写」，或导入时间与音频匹配的 SRT。转写任务会显示状态和进度，完成后可载入字幕。</p><p class="step-result"><strong>完成标志</strong>出现逐句字幕与时间轴。</p></div></li>
-              <li><div class="step-content"><h3>校对原句与题目</h3><p>播放音频，修正字幕文字和时间点；必要时合并或拆分句子。按对话、独白组织材料，填写题号、题干、选项和答案，并绑定音频区间。标记题前提示与重复朗读区间。</p><p class="step-result"><strong>完成标志</strong>题目、答案与对应句子核对完成。</p></div></li>
-              <li><div class="step-content"><h3>设置挖空</h3><p>进入「设置挖空」，点选要学生重点辨听的英文单词。同一材料的重复朗读区间会同步对应的挖空设置。</p><p class="step-result"><strong>完成标志</strong>目标词以挖空状态显示。</p></div></li>
-              <li><div class="step-content"><h3>保存并交付</h3><p>编辑会自动保存为草稿。确认课程内容后点击「保存」，再选择「导出为精听包」生成 <code>.ilp</code>，或「添加到播放」在本机练习。后续修改后需再次保存，才会显示交付操作。</p><p class="step-result"><strong>完成标志</strong>取得可分享的 <code>.ilp</code> 文件，或在本机课程列表中看到它。</p></div></li>
-            </ol>
-            <figure class="guide-figure"><img src="assets/promo-2-resonance/screens/teacher-review.png" alt="2.0 教师工作台的字幕分题审阅界面" width="1440" height="900" loading="lazy"><figcaption>教师工作台：按原句审阅材料与题目。</figcaption></figure>
-            <figure class="guide-figure"><img src="assets/promo-2-resonance/screens/teacher-cloze.png" alt="2.0 教师工作台的逐词挖空界面" width="1440" height="900" loading="lazy"><figcaption>逐词挖空：在完成审阅前核对目标词。</figcaption></figure>
-          </section>
-
-          <section class="guide-section" id="agent" aria-labelledby="agent-title">
-            <div class="guide-section-head"><span class="guide-section-no">02 智能体制作</span><h2 id="agent-title">让智能体协助整理课程</h2><p>应用负责保存和审阅工程；材料读取与整理由电脑上的智能体完成。教师在应用中决定接管授权和最终交付。</p></div>
-            <ol class="guide-steps">
-              <li><div class="step-content"><h3>进入智能体制作入口</h3><p>在「制作」点击「新建项目」，选择「智能体制作」。选一个必需的音频，可修改课程标题，并按需加入多份试卷、听力原文或答案。材料推荐 DOCX 或文字版 PDF。</p><p class="step-result"><strong>完成标志</strong>页面列出音频、标题和所选材料。</p></div></li>
-              <li><div class="step-content"><h3>连接本机智能体</h3><p>启用 MCP，点击「复制 MCP 配置」，将内容添加到支持 HTTP MCP 的智能体客户端，例如 WorkBuddy。然后点击「复制提示词」，把生成的文本粘贴到智能体对话框并发送。实际模型在客户端中选择。</p><p class="step-result"><strong>完成标志</strong>客户端连接应用并开始读取制作说明。</p></div></li>
-              <li><div class="step-content"><h3>确认首次接管</h3><p>智能体会先检查连接并以自报名称注册，取得专属 MCP URL。首次申请接管时，应用显示名称和 60 秒审批；确认后才开始操作。可以在「设置 → 制作与智能体 → MCP」查看注册与授权，撤销授权或删除注册。</p><p class="step-result"><strong>完成标志</strong>应用显示当前智能体、制作步骤和进度。</p></div></li>
-              <li><div class="step-content"><h3>查看进度并审阅</h3><p>制作过程分为 11 步，涵盖音频与材料、转写、字幕校对、题目编排、重复朗读、挖空、校验与交还。应用显示步骤状态、详情和百分比；转写与资料提取可以并行。智能体交还应用后，打开工程检查每道题与字幕。</p><p class="step-result"><strong>完成标志</strong>工程内容经过人工审阅。</p></div></li>
-              <li><div class="step-content"><h3>保存并导出</h3><p>确认内容后在应用中点击「保存」，再选择「导出为精听包」或「添加到播放」。如继续编辑，完成修改后再次保存。</p><p class="step-result"><strong>完成标志</strong>课程成为可练习的 <code>.ilp</code> 或本机课程。</p></div></li>
-            </ol>
-          </section>
-
-          <section class="guide-section" id="student" aria-labelledby="student-title">
-            <div class="guide-section-head"><span class="guide-section-no">03 逐句精听</span><h2 id="student-title">围绕原句反复练习</h2><p>从教师处取得 <code>.ilp</code> 后即可开始。也可以打开普通音频播放；题目和挖空练习来自精听包。</p></div>
-            <ol class="guide-steps">
-              <li><div class="step-content"><h3>导入课程</h3><p>在播放区域导入教师提供的 <code>.ilp</code>，从本机课程列表打开。Windows 关联文件后还可双击课程包进入应用。</p></div></li>
-              <li><div class="step-content"><h3>按题或按句定位</h3><p>左侧看题干和选项，右侧看跟随播放高亮的逐句时间轴。使用上一句、下一句、上一题、下一题，或点击句子定位；按需显示或隐藏答案。</p></div></li>
-              <li><div class="step-content"><h3>循环、盲听与核对</h3><p>开启单句循环，反复听当前句；隐藏字幕进行盲听，之后点击挖空词槽揭晓拼写，也可以批量显示或隐藏当前材料的挖空。题前提示和重复朗读区间可以展开或折叠。</p></div></li>
-              <li><div class="step-content"><h3>继续上次练习</h3><p>应用保存课程练习进度，再次打开可接着听。可在设置中调整字幕字号和是否跳过题前提示。</p></div></li>
-            </ol>
-            <figure class="guide-figure"><img src="assets/promo-2-resonance/screens/student-loaded.png" alt="2.0 播放页中的题目与逐句时间轴" width="1440" height="900" loading="lazy"><figcaption>播放页：题目与逐句时间轴同屏。</figcaption></figure>
-          </section>
-
-          <section class="guide-section" id="settings" aria-labelledby="settings-title">
-            <div class="guide-section-head"><h2 id="settings-title">字体与扩展按键</h2><p>在设置中调整阅读与播放习惯。</p></div>
-            <div class="prep-grid">
-              <div class="prep-item"><span>外观与字体</span><h3>选择自己读得舒服的字</h3><p>打开「设置 → 外观与字体」，选择系统字体和字重，编辑预览文字即时查看效果；需要时点击「恢复默认」。播放页字幕字号在「播放」分类中调整。</p></div>
-              <div class="prep-item"><span>播放</span><h3>用一个按键控制练习</h3><p>打开「设置 → 播放 → 扩展按键」，给播放／暂停、上一句／下一句、上一题／下一题、重听当前句和字幕显隐录入单键。PageUp、PageDown 适合翻页笔；按键只在应用前台的播放页生效。</p></div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">1</span>同意许可条款</h3>
+              <p>分别勾选用户协议与隐私说明，两项都勾选后「下一步」才可用。</p>
+              <figure class="docs-figure narrow"><img src="assets/guide/first-run-license.png" alt="首次运行：同意许可条款页" width="340" height="295" loading="lazy"><figcaption>两类条款分别勾选，底部箭头进入下一步。</figcaption></figure>
             </div>
-            <figure class="guide-figure"><img src="assets/promo-2-resonance/screens/settings.png" alt="2.0 设置页的分类导航界面" width="1440" height="900" loading="lazy"><figcaption>设置页：按外观、播放、制作等分类查找选项。以上截图由当前 2.0 应用离屏渲染，使用示例课程与模拟音频。</figcaption></figure>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">2</span>基本设置</h3>
+              <p>设置是否关联 <code>.ilp</code> 文件、是否开启 MCP 制作接口、是否跳过题前提示、导入音频时是否自动建立项目，以及是否发送匿名数据。建议保留「关联 .ilp 文件」，之后双击课程包就能直接打开。</p>
+              <figure class="docs-figure"><img src="assets/guide/first-run-basics.png" alt="首次运行：基本设置页的开关列表" width="700" height="670" loading="lazy"><figcaption>每个开关右侧都有说明，拿不准时保持默认。</figcaption></figure>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">3</span>快捷按键</h3>
+              <p>给播放、上一句／下一句、上一题／下一题录制单键，翻页笔的 PageUp / PageDown 也可以。暂时不设置不影响使用。</p>
+              <figure class="docs-figure"><img src="assets/guide/first-run-keys.png" alt="首次运行：快捷按键设置页" width="680" height="485" loading="lazy"><figcaption>按键只在应用前台的播放页生效。</figcaption></figure>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">4</span>外观与云服务</h3>
+              <p>选择浅色／深色主题和字幕字号；云服务页可以直接点「暂时跳过」，登录后才有云端课程与云端转写。</p>
+              <figure class="docs-figure"><img src="assets/guide/first-run-cloud.png" alt="首次运行：云服务页，可以暂时跳过" width="450" height="225" loading="lazy"><figcaption>云服务不是必需项，稍后可以再登录。</figcaption></figure>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">5</span>转写接口与完成</h3>
+              <p>填写阿里云百炼 API Key，或勾选「使用云服务提供的接口」；也可以留空稍后再配。最后一页点「完成设置」，进入播放页。</p>
+              <figure class="docs-figure"><img src="assets/guide/first-run-asr.png" alt="首次运行：转写接口页，API Key 可以留空" width="700" height="315" loading="lazy"><figcaption>留空也可以，开始转写前再配置。</figcaption></figure>
+            </div>
           </section>
 
-          <section class="guide-section guide-help" id="help" aria-labelledby="help-title">
-            <div class="guide-section-head"><h2 id="help-title">常见问题</h2></div>
-            <details><summary>转写提示 API 未配置</summary><p>按<a href="#api-setup">百炼配置步骤</a>核对地址、模型和 Key，保存后重试。已有与音频对应的 SRT 时，可直接导入字幕。</p></details>
-            <details><summary>智能体无法开始制课</summary><p>确认 MCP 已启用，客户端使用应用复制的配置，并已发送制作提示词。首次接管还需要在应用内批准；授权状态可在 MCP 设置中查看。</p></details>
-            <details><summary>macOS 首次打开受到系统拦截</summary><p>当前 DMG 采用 ad-hoc 签名。尝试打开应用后，在「系统设置 → 隐私与安全性」找到「仍要打开」，按系统提示确认。请从本网站或<a href="https://github.com/luyii-code-1/Intensive_Listening/releases/latest" rel="noopener noreferrer">正式版 Release</a>获取安装包；操作路径参见<a href="https://support.apple.com/zh-cn/102445" rel="noopener noreferrer">Apple 官方说明</a>。</p></details>
+          <section class="docs-section" id="api-setup" aria-labelledby="api-setup-title">
+            <h2 id="api-setup-title">配置阿里云百炼转写</h2>
+            <p>教师需要从音频自动生成字幕时，先配置自己的百炼 API Key。已有匹配的 SRT 可直接导入，不必配置。</p>
+
+            <div class="docs-step">
+              <h3><span class="docs-step-no">1</span>打开「设置 → 制作与智能体」</h3>
+              <p>左侧点「设置」，在分类中选择「制作与智能体」，再点开「API 设置」。同一页下方的 MCP 开关留给智能体制作。</p>
+              <figure class="docs-figure"><img src="assets/guide/settings-api.png" alt="设置页的「制作与智能体」分类，包含 API 设置与 MCP" width="1100" height="240" loading="lazy"><figcaption>「API 设置」是转写配置入口，右侧「配置帮助」会打开本页。</figcaption></figure>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">2</span>创建 API Key 并填写</h3>
+              <p>打开<a href="https://bailian.console.aliyun.com/" rel="noopener noreferrer">阿里云百炼控制台</a>，开通服务并创建 Key。回到应用，在「API 设置」里粘贴 Key；使用北京地域时其余参数保持默认。</p>
+              <dl class="docs-keyvalues compact">
+                <div><dt>Endpoint</dt><dd><code>https://dashscope.aliyuncs.com</code></dd></div>
+                <div><dt>Path</dt><dd><code>/api/v1/services/aigc/multimodal-generation/generation</code></dd></div>
+                <div><dt>Name</dt><dd><code>qwen-audio-3.0-asr-flash</code></dd></div>
+                <div><dt>Key</dt><dd>粘贴自己的百炼 API Key</dd></div>
+                <div><dt>分段并发</dt><dd>默认 10，可设置为 1–10</dd></div>
+                <div><dt>单段超时</dt><dd>默认 180 秒</dd></div>
+              </dl>
+              <p>点击「保存 API 配置」。使用其他地域时，先按<a href="https://help.aliyun.com/zh/model-studio/regions" rel="noopener noreferrer">阿里云地域说明</a>核对接入地址与模型。</p>
+              <p class="docs-result"><strong>完成标志</strong>工程里可以点「开始转写」，不再提示 API 未配置。</p>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">3</span>在任务中心查看转写</h3>
+              <p>点左下角「转写任务」打开任务列表。每个任务完成后可以「载入字幕」「导出 SRT」或删除；转写期间可以继续做别的事。</p>
+              <figure class="docs-figure"><img src="assets/guide/queue.png" alt="转写任务列表，每个任务有载入字幕、导出 SRT 和删除按钮" width="885" height="710" loading="lazy"><figcaption>任务按时间排列，完成后显示「载入字幕」。</figcaption></figure>
+              <p class="docs-result"><strong>完成标志</strong>任务显示「已完成」，工程中出现逐句字幕与时间轴。</p>
+            </div>
           </section>
-        </div>
+
+          <section class="docs-section" id="teacher" aria-labelledby="teacher-title">
+            <h2 id="teacher-title">人工制课</h2>
+            <p>在「制作」中点击「新建项目」，选择「人工制作」，按「音频 → 转写 → 审阅 → 完成」推进，底部进度条显示当前阶段。</p>
+
+            <div class="docs-step">
+              <h3><span class="docs-step-no">1</span>新建项目并选择制作方式</h3>
+              <p>点右上角红色「新建项目」，在弹出的对话框里选择「人工制作」，之后可以修改课程标题。</p>
+              <figure class="docs-figure narrow"><img src="assets/guide/authoring-mode.png" alt="新建项目对话框：选择智能体制作或人工制作" width="440" height="242" loading="lazy"><figcaption>对话框把常用方式放在主按钮位置，人工制作在右侧。</figcaption></figure>
+              <p class="docs-result"><strong>完成标志</strong>出现空白工程，进入「音频」步骤。</p>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">2</span>绑定音频</h3>
+              <p>在「音频」步骤点「选择音频」，选中 MP3、M4A 或 WAV。音频会复制到工程目录，之后可以随时退出再继续。已有字幕时可直接点「导入 SRT」。</p>
+              <figure class="docs-figure"><img src="assets/guide/teacher-audio.png" alt="课程项目的音频步骤：选择音频与导入 SRT" width="830" height="280" loading="lazy"><figcaption>红色「选择音频」是主操作；「导入 SRT」会直接进入审阅。</figcaption></figure>
+              <p class="docs-result"><strong>完成标志</strong>工程显示已绑定音频，进度进入「转写」。</p>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">3</span>生成或导入字幕</h3>
+              <p>点「开始转写」把任务加入队列，或用「导入 SRT」载入已有字幕。转写完成后回到工程，点击「载入字幕」。</p>
+              <figure class="docs-figure"><img src="assets/guide/teacher-transcribe.png" alt="课程项目的转写步骤：开始转写、导入 SRT、更换音频" width="830" height="280" loading="lazy"><figcaption>三个按钮分别是云端转写、导入字幕和更换音频。</figcaption></figure>
+              <p class="docs-result"><strong>完成标志</strong>出现逐句字幕与时间轴。</p>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">4</span>校对原句与题目</h3>
+              <p>播放音频，逐句修正文字和时间点，必要时合并或拆分句子。用「选择整段」把句子归入材料，填写题号、题干、选项和答案，并绑定音频区间；「题目总览」可以一次检查所有小题。</p>
+              <figure class="docs-figure"><img src="assets/guide/teacher-review.png" alt="审阅界面：左侧工程列表，中间逐句原文与题目分组，右上角题目总览" width="1090" height="600" loading="lazy"><figcaption>句子左侧的「第 1 题」表示它属于哪道题；右上角可切换题目总览。</figcaption></figure>
+              <p class="docs-result"><strong>完成标志</strong>题目、答案与对应句子核对完成，底部点「保存」。</p>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">5</span>设置挖空</h3>
+              <p>点「下一步：设置挖空」进入挖空编辑。点击英文单词把它设为挖空，标点不参与分词；同一材料的重复朗读区间会同步对应挖空。</p>
+              <figure class="docs-figure"><img src="assets/guide/teacher-cloze.png" alt="设置挖空界面：逐词显示，可点击单词设为挖空" width="1090" height="460" loading="lazy"><figcaption>被点选的词会成为学生听到的挖空词，再点一次可取消。</figcaption></figure>
+              <p class="docs-result"><strong>完成标志</strong>目标词以挖空状态显示。</p>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">6</span>保存并交付</h3>
+              <p>确认内容后点右下角「保存」。保存成功后，底部出现「导出为精听包」与「添加到播放」；继续编辑后需要再次保存，导出按钮才会重新出现。</p>
+              <figure class="docs-figure"><img src="assets/guide/teacher-delivery.png" alt="课程项目底部：保存按钮与完成后出现的交付操作" width="1090" height="830" loading="lazy"><figcaption>先保存，再导出或加入播放列表；左侧工程状态会变成「已完成」。</figcaption></figure>
+              <p class="docs-result"><strong>完成标志</strong>取得可分享的 <code>.ilp</code> 文件，或在本机课程列表中看到它。</p>
+            </div>
+          </section>
+
+          <section class="docs-section" id="agent" aria-labelledby="agent-title">
+            <h2 id="agent-title">智能体制课</h2>
+            <p>应用负责保存和审阅工程；材料读取与整理由电脑上的智能体完成。教师在应用中决定接管授权和最终交付。</p>
+
+            <div class="docs-step">
+              <h3><span class="docs-step-no">1</span>选择「智能体制作」</h3>
+              <p>「新建项目」对话框里选择「智能体制作」，按提示选择音频、填写课程标题，并按需加入多份试卷、听力原文或答案。材料推荐 DOCX 或文字版 PDF。</p>
+              <figure class="docs-figure narrow"><img src="assets/guide/authoring-mode.png" alt="新建项目对话框中的智能体制作选项" width="440" height="242" loading="lazy"><figcaption>智能体制作是对话框的主按钮，人工制作在右侧。</figcaption></figure>
+              <p class="docs-result"><strong>完成标志</strong>页面列出音频、标题和所选材料。</p>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">2</span>打开 MCP 并复制配置</h3>
+              <p>在「设置 → 制作与智能体」打开 MCP，展开后点「复制 MCP 配置」，粘贴到支持 HTTP MCP 的智能体客户端（例如 WorkBuddy）；再点「复制操作提示」发给智能体。实际模型在客户端中选择。</p>
+              <figure class="docs-figure"><img src="assets/guide/mcp-row.png" alt="设置中的 MCP 行：右侧开关用于启用" width="900" height="97" loading="lazy"><figcaption>开关打开后，行内才会出现复制配置与授权相关操作。</figcaption></figure>
+              <p class="docs-result"><strong>完成标志</strong>客户端连接应用并开始读取制作说明。</p>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">3</span>确认接管并查看进度</h3>
+              <p>智能体首次申请接管时，应用显示它的名称和 60 秒审批；确认后才开始操作。应用内显示当前步骤、详情和百分比，转写与资料提取可以并行。随时可以在设置里撤销授权或删除注册。</p>
+              <p class="docs-result"><strong>完成标志</strong>应用显示当前智能体、制作步骤和进度。</p>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">4</span>审阅并保存</h3>
+              <p>智能体交还应用后，打开工程检查每道题与字幕，必要时手动修改。确认后点「保存」，再选择「导出为精听包」或「添加到播放」。</p>
+              <figure class="docs-figure"><img src="assets/guide/teacher-review.png" alt="智能体交还后的工程审阅界面" width="1090" height="600" loading="lazy"><figcaption>智能体交还后仍要在应用里逐题审阅；保存后才出现交付按钮。</figcaption></figure>
+              <p class="docs-result"><strong>完成标志</strong>课程成为可练习的 <code>.ilp</code> 或本机课程。</p>
+            </div>
+          </section>
+
+          <section class="docs-section" id="student" aria-labelledby="student-title">
+            <h2 id="student-title">逐句精听</h2>
+            <p>从教师处取得 <code>.ilp</code> 后即可开始。也可以打开普通音频播放；题目和挖空练习来自精听包。</p>
+
+            <div class="docs-step">
+              <h3><span class="docs-step-no">1</span>导入课程</h3>
+              <p>打开应用，点「导入精听包或音频」选择 <code>.ilp</code>。导过的课程会出现在「最近课程」，下次直接点开。Windows 关联文件后也可以双击课程包。</p>
+              <figure class="docs-figure"><img src="assets/guide/student-open.png" alt="播放页顶部：打开课程、导入精听包或音频、最近课程" width="1110" height="185" loading="lazy"><figcaption>红色「导入精听包或音频」是主要入口，「打开课程」用于本机已有课程。</figcaption></figure>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">2</span>按题或按句定位</h3>
+              <p>左侧是题目和选项，右侧是逐句时间轴。使用「上一题／下一题」跳题，「上一句／下一句」逐句移动，也可以直接点句子；当前句会高亮。</p>
+              <figure class="docs-figure"><img src="assets/guide/student-loaded.png" alt="播放页：右侧逐句字幕，当前句高亮，左侧题目" width="850" height="325" loading="lazy"><figcaption>播放中高亮会自动跟随当前句；点击任意句可定位。</figcaption></figure>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">3</span>循环、盲听与核对</h3>
+              <p>勾选「单句循环」反复听当前句；勾选「隐藏字幕」做盲听。听到不确定的地方可以「重复本句」，或点「显示本段挖空」「显示全部挖空」核对拼写。</p>
+              <figure class="docs-figure"><img src="assets/guide/student-controls.png" alt="播放页底部控件：上一题、上一句、播放、下一句、下一题，单句循环与隐藏字幕" width="500" height="270" loading="lazy"><figcaption>勾选框即时生效；「显示全部挖空」适合做完后自查。</figcaption></figure>
+            </div>
+            <div class="docs-step">
+              <h3><span class="docs-step-no">4</span>接着上次继续</h3>
+              <p>应用会保存每门课程的练习进度，下次打开时从上次位置继续。字幕字号与是否跳过题前提示在「设置 → 播放」里调整。</p>
+            </div>
+          </section>
+
+          <section class="docs-section" id="settings" aria-labelledby="settings-title">
+            <h2 id="settings-title">设置与按键</h2>
+            <p>设置按分类排列：外观与字体、播放、制作与智能体、数据与维护、隐私、更新、组织管理、关于。</p>
+            <dl class="docs-keyvalues">
+              <div><dt>外观与字体</dt><dd>选择系统字体和字重，预览文字即时更新；需要时点「恢复默认」。播放页字幕字号在「播放」分类中调整。</dd></div>
+              <div><dt>扩展按键</dt><dd>在「设置 → 播放 → 扩展按键」给播放／暂停、上一句／下一句、上一题／下一题、重听当前句和字幕显隐录入单键。PageUp、PageDown 适合翻页笔；按键只在应用前台的播放页生效。</dd></div>
+            </dl>
+            <figure class="docs-figure"><img src="assets/guide/settings.png" alt="设置页：左侧分类导航与右侧外观字体设置" width="1100" height="480" loading="lazy"><figcaption>设置页左侧是分类，右侧是当前分类的选项。</figcaption></figure>
+          </section>
+
+          <section class="docs-section" id="help" aria-labelledby="help-title">
+            <h2 id="help-title">常见问题</h2>
+            <details class="docs-details"><summary>转写提示 API 未配置</summary><p>按<a href="#api-setup">百炼配置步骤</a>核对地址、模型和 Key，保存后重试。已有与音频对应的 SRT 时，可直接导入字幕。</p></details>
+            <details class="docs-details"><summary>点了「保存」，还是看不到「导出为精听包」</summary><p>保存成功后底部才会出现导出与「添加到播放」；如果之后又改了字幕或题目，需要再保存一次。工程状态显示「已完成」时才可以交付。</p></details>
+            <details class="docs-details"><summary>智能体无法开始制课</summary><p>确认 MCP 已启用，客户端使用应用复制的配置，并已发送操作提示。首次接管还需要在应用内批准；授权状态可在 MCP 设置中查看。</p></details>
+            <details class="docs-details"><summary>macOS 首次打开受到系统拦截</summary><p>当前 DMG 采用 ad-hoc 签名。尝试打开应用后，在「系统设置 → 隐私与安全性」找到「仍要打开」，按系统提示确认。请从本网站或<a href="https://github.com/luyii-code-1/Intensive_Listening/releases/latest" rel="noopener noreferrer">正式版 Release</a>获取安装包；操作路径参见<a href="https://support.apple.com/zh-cn/102445" rel="noopener noreferrer">Apple 官方说明</a>。</p></details>
+          </section>
+
+          <nav class="docs-pager" aria-label="上一篇与下一篇">
+            <a href="index.html"><span>上一页</span>产品首页</a>
+            <a class="docs-pager-next" href="#quickstart"><span>回到顶部</span>快速上手</a>
+          </nav>
+        </article>
+
+        <aside class="docs-toc" aria-label="本页目录">
+          <p class="docs-toc-label">本页目录</p>
+          <nav class="docs-toc-nav">
+            <a href="#quickstart">快速上手</a>
+            <a href="#prepare">安装与准备</a>
+            <a href="#first-run">首次运行</a>
+            <a href="#api-setup">云端转写配置</a>
+            <a href="#teacher">人工制课</a>
+            <a href="#agent">智能体制课</a>
+            <a href="#student">逐句精听</a>
+            <a href="#settings">设置与按键</a>
+            <a href="#help">常见问题</a>
+          </nav>
+        </aside>
       </div>
-
-      <section class="guide-end">
-        <div class="container guide-end-inner">
-          <h2>开始制作下一节精听课程</h2>
-          <div>
-            <a class="button button-primary" href="index.html#download">获取桌面版</a>
-            <a class="button button-secondary" href="index.html">返回首页</a>
-          </div>
-        </div>
-      </section>
     </main>
+
     <footer class="site-footer">
       <div class="container footer-inner">
         <div class="footer-summary">
@@ -166,5 +317,23 @@
         </div>
       </div>
     </footer>
+
+    <script>
+      (() => {
+        const links = [...document.querySelectorAll('.docs-nav a, .docs-toc-nav a')];
+        const targets = links.map((link) => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+        if (!targets.length) return;
+        const setActive = (id) => links.forEach((link) => {
+          if (link.getAttribute('href') === '#' + id) link.setAttribute('aria-current', 'true');
+          else link.removeAttribute('aria-current');
+        });
+        const observer = new IntersectionObserver((entries) => {
+          const visible = entries.filter((entry) => entry.isIntersecting);
+          if (!visible.length) return;
+          setActive(visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0].target.id);
+        }, { rootMargin: '-96px 0px -70% 0px' });
+        targets.forEach((target) => observer.observe(target));
+      })();
+    </script>
   </body>
 </html>

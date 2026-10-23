@@ -962,7 +962,15 @@ code {
 .docs-figure.narrow { max-width: 460px; }
 .docs-figure figcaption { margin-top: 8px; color: var(--il-slate); font-size: var(--fs-micro); line-height: 1.7; }
 
-.docs-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 4px 0 8px; }
+.download-next { border-top: 1px solid var(--il-rule); margin-top: 12px; padding-top: 18px; font-size: var(--fs-small); }
+.download-next h3 { font-size: 17px; margin: 0 0 10px; }
+.download-next ol { padding-left: 1.3em; margin: 0 0 12px; color: var(--il-slate); }
+.download-next li { margin-bottom: 8px; }
+.download-next a { color: var(--il-brand); font-weight: 600; text-underline-offset: 3px; }
+.download-next p { color: var(--il-slate); margin: 10px 0 0; }
+.docs-section > ol, .docs-step ol { padding-left: 1.4em; color: var(--il-slate); font-size: var(--fs-small); line-height: 1.8; }
+.docs-section > ol li, .docs-step ol li { margin-bottom: 8px; }
+.docs-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 24px; margin: 4px 0 8px; }
 .docs-card { border-top: 1px solid var(--il-ink); padding-top: 12px; display: flex; flex-direction: column; }
 .docs-card-tag { font-size: var(--fs-micro); color: var(--il-slate); letter-spacing: .08em; margin: 0 0 6px !important; }
 .docs-card h3 { font-size: 17px; margin: 0 0 10px; }

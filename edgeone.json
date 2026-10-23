@@ -1,6 +1,6 @@
 {
-  "buildCommand": "node scripts/build.mjs",
-  "installCommand": "node --version",
+  "buildCommand": "npm run site:build",
+  "installCommand": "npm ci --include=dev",
   "outputDirectory": "dist",
   "nodeVersion": "22.11.0"
 }

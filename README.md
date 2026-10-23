@@ -2,11 +2,24 @@
 
 产品官网静态源码。分支根目录即站点根目录，直接交给 Pages 托管即可发布。
 
-- 站点入口 `index.html`，教程 `guide.html`
+- 站点入口 `index.html`，VitePress 文档位于 `/docs/`，内容在 `docs/*.md` 中维护；`guide.html` 保留旧教程链接跳转。
 - 样式 `styles.css`，视觉语言「考卷与红笔」，与 Web 播放器同源
 - `release.js` 按 `downloads/latest.json`（发版 CI 写入）切换下载按钮与版本显示，无需手工改版本
 - 下载按钮默认走境内加速节点（见下），节点不可用时回退 GitHub Release 直链
 - `assets/` 品牌标识、界面标本与教程配图
+
+## 文档与本地开发
+
+使用 Node.js 22，先运行 `npm ci`。
+
+- `npm run docs:dev`：启动 VitePress 文档开发服务。
+- `npm test`：验证下载、发版元数据、版本同步和旧教程链接。
+- `npm run site:build`：构建官网与 VitePress 到 `dist/`，验证文档页面、搜索索引及旧链接跳转。
+- `npm run build`：仅构建官网壳与下载元数据，供现有 Release 元数据工作流使用。
+
+`docs/.vitepress/config.mjs` 维护导航、分组目录和本地搜索，主题沿用 VitePress 默认主题与品牌色。正文使用 Markdown，截图继续引用官网 `assets/guide/`。本地搜索使用中文分词，索引随静态页面一起发布。
+
+EdgeOne 按 `edgeone.json` 执行 `npm ci` 和 `npm run site:build`，输出目录为 `dist`。文档基础路径固定为 `/docs/`。应用内及历史网页的 `guide.html#api-setup` 等链接通过 `guide-redirect.js` 跳转到对应文档。
 
 ## 版本号与发版联动
 
@@ -105,7 +118,7 @@ Web 播放器是**独立于桌面版的版本系列**（桌面版 `2.x.y`，播�
 
 ## EdgeOne 同域下载代理验证
 
-`edgeone.json` 固定构建命令为 `node scripts/build.mjs`、静态输出目录为 `dist`。边缘函数源码位于项目根目录的 `edge-functions/`，交给 EO 构建。构建不需要安装第三方依赖。
+`edgeone.json` 固定构建命令为 `npm run site:build`、静态输出目录为 `dist`。边缘函数源码位于项目根目录的 `edge-functions/`，交给 EO 构建。部署时通过 `npm ci` 安装锁定的 VitePress 依赖。
 
 `edge-functions/downloads/[tag]/[file].js` 提供 `/downloads/v2.x.y/Intensive-Listening-2.x.y-win-x64-Setup.exe` 和对应 `osx-arm64.dmg` 路径。函数从本仓库的 GitHub Release 读取附件，跟随 GitHub 附件重定向，直接流式返回，支持 HEAD 和 Range。部分响应和错误响应使用 `no-store`；完整响应提供一小时缓存指令，实际缓存效果需在 EO 验证。
 

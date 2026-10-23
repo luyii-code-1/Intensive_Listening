@@ -1,0 +1,13 @@
+:root {
+  --vp-c-brand-1: #b80f28;
+  --vp-c-brand-2: #a00d22;
+  --vp-c-brand-3: #8e0b1e;
+  --vp-c-brand-soft: rgba(184, 15, 40, .1);
+  --vp-font-family-base: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.dark {
+  --vp-c-brand-1: #f08391;
+  --vp-c-brand-2: #e85a68;
+  --vp-c-brand-3: #c7384d;
+}
+.vp-doc img { border-radius: 6px; }

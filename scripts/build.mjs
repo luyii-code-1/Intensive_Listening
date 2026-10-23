@@ -11,7 +11,7 @@ await rm(output, { recursive: true, force: true });
 await mkdir(output);
 // downloads/ 必须进 dist：release.js 要按站点根路径取 downloads/latest.json。
 // 注意 edge-functions 的路由是 /downloads/:tag/:file，两段的 latest.json 不会命中它。
-for (const file of ['index.html', 'guide.html', 'styles.css', 'release.js', 'assets', 'downloads']) {
+for (const file of ['index.html', 'guide.html', 'guide-redirect.js', 'styles.css', 'release.js', 'assets', 'downloads']) {
   await cp(join(root, file), join(output, file), { recursive: true });
 }
 

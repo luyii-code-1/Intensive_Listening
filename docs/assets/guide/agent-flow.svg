@@ -45,16 +45,16 @@
   <text x="350" y="86" class="title">启用 MCP</text>
   <text x="328" y="112" class="body">设置 → 制作与智能体</text>
   <text x="328" y="132" class="body">打开 MCP 开关</text>
-  <text x="328" y="152" class="body">复制 MCP 配置</text>
+  <text x="328" y="152" class="body">只需打开一次</text>
 
   <path d="M556 112 L588 112" class="arrow" marker-end="url(#arrowHead)"/>
 
   <!-- Step 3 -->
   <rect x="596" y="56" width="250" height="112" rx="10" class="box box-client"/>
   <text x="616" y="86" class="num">3</text>
-  <text x="638" y="86" class="title">客户端连接</text>
-  <text x="616" y="112" class="body">粘贴 MCP 配置到客户端</text>
-  <text x="616" y="132" class="body">发送「操作提示」开始</text>
+  <text x="638" y="86" class="title">粘贴提示词</text>
+  <text x="616" y="112" class="body">复制提示词并粘贴</text>
+  <text x="616" y="132" class="body">在对话框发送</text>
   <text x="616" y="152" class="body">自报名称并申请接管</text>
 
   <path d="M854 112 L886 112" class="arrow" marker-end="url(#arrowHead)"/>

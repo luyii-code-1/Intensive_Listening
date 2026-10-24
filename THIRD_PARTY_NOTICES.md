@@ -6,6 +6,7 @@ Intensive Listening 以 GNU General Public License v3.0 发布，同时包含或
 
 部分设计和代码借鉴了 ClassIsland 2，包括欢迎引导、应用内通知、设置页面组织、窗口框架及日志查看交互。
 感谢 HelloWRC 及 ClassIsland 贡献者。ClassIsland 使用 GNU GPL v3.0；本项目按自身工作流改写和适配。
+设置布局参考 2.0 分支 GeneralSettingsPage.axaml 的 FluentAvalonia SettingsExpander 组织方式。
 来源：https://github.com/ClassIsland/ClassIsland
 借鉴声明见 `assets/legal/ClassIsland-NOTICE.txt`；开源许可证可在应用“关于”页查看。
 

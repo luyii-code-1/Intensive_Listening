@@ -13,7 +13,7 @@ public interface ICloudTokenStore
 public sealed class CloudAuthClient : IDisposable
 {
     public const string ClientId = "il-desktop";
-    public const string Scope = "cloud.library cloud.projects";
+    public const string Scope = "cloud.library cloud.projects cloud.asr";
     public static Uri Server { get; } = new("https://cloud.il.luyii.cn/");
     private readonly ICloudTokenStore _store;
     private readonly HttpClient _http;
@@ -24,6 +24,8 @@ public sealed class CloudAuthClient : IDisposable
     private bool _loaded;
     public bool HasCredentials { get; private set; }
     public string? DeviceId { get; private set; }
+    public event Action<bool>? ConnectivityChanged;
+    internal void ReportConnectivity(bool connected) => ConnectivityChanged?.Invoke(connected);
 
     public CloudAuthClient(ICloudTokenStore store, HttpClient? http = null)
     {
@@ -81,7 +83,7 @@ public sealed class CloudAuthClient : IDisposable
         {
             await LoadCoreAsync(ct);
             if (_accessToken is not null && DateTimeOffset.UtcNow < _expiresAt - TimeSpan.FromSeconds(30)) return _accessToken;
-            if (_refreshToken is null) throw new CloudAuthenticationException("login_required", "请先登录 IL Cloud。");
+            if (_refreshToken is null) throw new CloudAuthenticationException("login_required", "请先登录 Intensive Listening 云服务。");
             try
             {
                 using var response = await _http.PostAsync(new Uri(Server, "connect/token"), new FormUrlEncodedContent(
@@ -93,11 +95,17 @@ public sealed class CloudAuthClient : IDisposable
             {
                 // The server may have rotated the token even when its response was lost.
                 await ClearCoreAsync();
-                throw new CloudAuthenticationException("login_required", "登录状态更新未完成，请重新授权 IL Cloud。");
+                throw new CloudAuthenticationException("login_required", "登录状态更新未完成，请重新授权 Intensive Listening 云服务。");
             }
             return _accessToken!;
         }
         finally { _gate.Release(); }
+    }
+
+    public async Task RevokeRefreshTokenAsync(string token, CancellationToken ct = default)
+    {
+        using var response = await _http.PostAsync(new Uri(Server, "connect/revoke"), new FormUrlEncodedContent(new Dictionary<string, string> { ["client_id"] = ClientId, ["token"] = token }), ct);
+        if (!response.IsSuccessStatusCode) throw new CloudAuthenticationException("revocation_failed", "云端设备撤销未完成。");
     }
 
     public async Task SignOutAsync(CancellationToken ct = default)
@@ -113,7 +121,7 @@ public sealed class CloudAuthClient : IDisposable
                     using var response = await _http.PostAsync(new Uri(Server, "connect/revoke"), new FormUrlEncodedContent(
                         new Dictionary<string, string> { ["client_id"] = ClientId, ["token"] = _refreshToken }), ct);
                     if (!response.IsSuccessStatusCode)
-                        throw new CloudAuthenticationException("revocation_failed", "已退出本机账号，云端设备撤销未完成，请在 IL Cloud 中检查登录设备。");
+                        throw new CloudAuthenticationException("revocation_failed", "已退出本机账号，云端设备撤销未完成，请在 Intensive Listening 云服务 中检查登录设备。");
                 }
             }
             finally { await ClearCoreAsync(); }
@@ -154,7 +162,7 @@ public sealed class CloudAuthClient : IDisposable
             }
             if (invalid) await ClearCoreAsync();
             throw new CloudAuthenticationException(invalid ? "login_required" : "token_request_failed",
-                invalid ? "登录已失效，请重新授权 IL Cloud。" : "IL Cloud 登录请求失败，请稍后重试。");
+                invalid ? "登录已失效，请重新授权 Intensive Listening 云服务。" : "Intensive Listening 云服务 登录请求失败，请稍后重试。");
         }
         using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(CancellationToken.None));
         var body = json.RootElement;
@@ -164,7 +172,7 @@ public sealed class CloudAuthClient : IDisposable
             || !body.TryGetProperty("refresh_token", out var refresh) || refresh.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(refresh.GetString())
             || !body.TryGetProperty("expires_in", out var expires) || expires.ValueKind != JsonValueKind.Number
             || !expires.TryGetInt32(out var seconds) || seconds is <= 0 or > 86400)
-            throw new CloudAuthenticationException("invalid_token_response", "IL Cloud 返回的登录信息无效。");
+            throw new CloudAuthenticationException("invalid_token_response", "Intensive Listening 云服务 返回的登录信息无效。");
         // Once the server rotates a refresh token, finish saving it even if the user cancels.
         var rotated = refresh.GetString()!;
         _refreshToken = rotated;

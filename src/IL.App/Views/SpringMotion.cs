@@ -14,14 +14,14 @@ public sealed class SpringMotion
     private sealed class Axis(double initial)
     {
         public double Value = initial, Velocity, Target = initial;
-        public bool Step(double seconds, double response)
+        public bool Step(double seconds, double response, double tolerance = .002)
         {
             var omega = 2 * Math.PI / response;
             var offset = Value - Target; var coefficient = Velocity + omega * offset;
             var decay = Math.Exp(-omega * seconds);
             Value = Target + (offset + coefficient * seconds) * decay;
             Velocity = (Velocity - omega * coefficient * seconds) * decay;
-            if (Math.Abs(Value - Target) < .0005 && Math.Abs(Velocity) < .005) { Value = Target; Velocity = 0; return true; }
+            if (Math.Abs(Value - Target) < tolerance && Math.Abs(Velocity) < tolerance * 10) { Value = Target; Velocity = 0; return true; }
             return false;
         }
     }
@@ -50,6 +50,7 @@ public sealed class SpringMotion
     private static void Reset(Axis axis, double value) { axis.Value = axis.Target = value; axis.Velocity = 0; }
     public Task To(double opacity = 1, double x = 0, double y = 0, double scale = 1, double response = .32)
     {
+        if (MotionPreferences.PerformanceMode) { Set(opacity, x, y, scale); return Task.CompletedTask; }
         _completion?.TrySetResult(); _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         _opacity.Target = opacity; _x.Target = x; _y.Target = y; _size.Target = scale;
         var completion = _completion;
@@ -67,13 +68,14 @@ public sealed class SpringMotion
     private void RequestFrame(TopLevel owner, long generation) => owner.RequestAnimationFrame(time =>
     {
         if (!_running || generation != _generation) return;
-        var elapsed = _lastFrame is { } last ? Math.Clamp((time - last).TotalSeconds, 0, 1.0 / 30) : 0;
+        if (MotionPreferences.PerformanceMode) { Set(_opacity.Target, _x.Target, _y.Target, _size.Target); return; }
+        var elapsed = _lastFrame is { } last ? Math.Max(0, (time - last).TotalSeconds) : 0;
         _lastFrame = time;
-        var done = _opacity.Step(elapsed, _response) & _x.Step(elapsed, _response) & _y.Step(elapsed, _response) & _size.Step(elapsed, _response);
+        var done = _opacity.Step(elapsed, _response) & _x.Step(elapsed, _response, .1) & _y.Step(elapsed, _response, .1) & _size.Step(elapsed, _response);
         Apply(); if (done) Stop();
         else RequestFrame(owner, generation);
     });
-    private void Apply() { _control.RenderTransform = _group; _control.Opacity = _opacity.Value; _translation.X = _x.Value; _translation.Y = _y.Value; _scale.ScaleX = _scale.ScaleY = _size.Value; }
+    private void Apply() { if (!ReferenceEquals(_control.RenderTransform, _group)) _control.RenderTransform = _group; _control.Opacity = _opacity.Value; _translation.X = _x.Value; _translation.Y = _y.Value; _scale.ScaleX = _scale.ScaleY = _size.Value; }
     public Task Pulse()
     {
         if (FirstRunWizard.MotionReduced()) _opacity.Velocity -= .65;

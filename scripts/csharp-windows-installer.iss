@@ -4,11 +4,21 @@
 #ifndef OutputDirectory
 #error OutputDirectory must be supplied
 #endif
+#ifndef AppNumericVersion
+#error AppNumericVersion must be supplied
+#endif
+#ifndef AppDisplayVersion
+#error AppDisplayVersion must be supplied
+#endif
+#ifndef ArtifactVersion
+#error ArtifactVersion must be supplied
+#endif
 [Setup]
 AppId=IntensiveListening.Luyii
 AppName=Intensive Listening 2 Resonance
-AppVersion=2.1.2.3
-VersionInfoVersion=2.1.2.3
+AppVersion={#AppNumericVersion}
+AppVerName=Intensive Listening {#AppDisplayVersion}
+VersionInfoVersion={#AppNumericVersion}.0
 VersionInfoDescription=Intensive Listening更新
 AppPublisher=Luyii
 DefaultDirName={autopf}\Intensive Listening
@@ -18,7 +28,7 @@ DefaultGroupName=Intensive Listening
 UninstallDisplayIcon={app}\IL.App.exe
 SetupIconFile=..\assets\installer_icon.ico
 OutputDir={#OutputDirectory}
-OutputBaseFilename=Intensive-Listening-2.1.2.3-win-x64-Setup
+OutputBaseFilename=Intensive-Listening-{#ArtifactVersion}-win-x64-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

@@ -8,7 +8,7 @@ using IL.Core.Infrastructure;
 namespace IL.Core.Management;
 
 /// <summary>Organization transport is independent of the optional Aliyun transport.</summary>
-public sealed class MdnClient : IAsyncDisposable
+public sealed partial class MdnClient : IAsyncDisposable
 {
     private readonly string _root, _version;
     private HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
@@ -29,6 +29,7 @@ public sealed class MdnClient : IAsyncDisposable
     public DateTimeOffset? LastSynchronizedAt { get; private set; }
     public string? LastConnectionError { get; private set; }
     public bool PolicyReceiptConfirmed { get; private set; }
+    public Func<Task>? ApplyPolicyAsync { get; set; }
     public event Action? Changed;
     public string Banner => Configuration is null ? "" : $"当前由{Configuration.OrganizationName}管理 · {DeviceId.Split('-')[^1]}";
     public MdnClient(string root, string version)
@@ -44,7 +45,7 @@ public sealed class MdnClient : IAsyncDisposable
             var saved = Path.Combine(_root, "state.bin");
             if (File.Exists(saved))
             {
-                var state = JsonSerializer.Deserialize<State>(WindowsSecretStore.Load(saved), ManagedPolicy.Json)!;
+                var state = JsonSerializer.Deserialize<State>(ManagedSecretStore.Load(saved), ManagedPolicy.Json)!;
                 if (state.Server == Configuration.Server.AbsoluteUri && state.DeviceId == DeviceId)
                 { state.Policy.Validate(); _token = state.Token; Policy = state.Policy; }
             }
@@ -53,7 +54,7 @@ public sealed class MdnClient : IAsyncDisposable
         { Status = "集控配置或缓存无效，请联系组织管理员"; }
     }
     private sealed record State(string Server, string DeviceId, string Token, ManagedPolicy Policy);
-    private void Save() => WindowsSecretStore.Save(Path.Combine(_root, "state.bin"), JsonSerializer.Serialize(new State(Configuration!.Server.AbsoluteUri, DeviceId, _token!, Policy), ManagedPolicy.Json));
+    private void Save() => ManagedSecretStore.Save(Path.Combine(_root, "state.bin"), JsonSerializer.Serialize(new State(Configuration!.Server.AbsoluteUri, DeviceId, _token!, Policy), ManagedPolicy.Json));
     public void Start()
     {
         if (Configuration is null || _loop is not null) return;
@@ -102,6 +103,7 @@ public sealed class MdnClient : IAsyncDisposable
         {
             if (_token is null) throw new InvalidOperationException("设备尚未注册，请先连接服务器。");
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/leave"));
+            request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
             using var response = await _http.SendAsync(request, ct);
             if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
@@ -113,7 +115,7 @@ public sealed class MdnClient : IAsyncDisposable
         if (_loop is not null) await _loop;
         if (_realtime is not null) await _realtime;
         File.Delete(Path.Combine(Path.GetDirectoryName(_root)!, "il_mdn_config.yaml"));
-        foreach (var file in new[] { "state.bin", "events.bin" }) File.Delete(Path.Combine(_root, file));
+        foreach (var file in new[] { "state.bin", "events.bin", "cloud.bin" }) File.Delete(Path.Combine(_root, file));
         while (_events.Reader.TryRead(out _)) { }
         _stop.Dispose(); _stop = new(); _loop = null; _realtime = null; _token = null; Configuration = null;
         Policy = new(); LastSynchronizedAt = null; LastConnectionError = null; PolicyReceiptConfirmed = false; LatencyMs = null; Status = "未加入管理"; Changed?.Invoke();
@@ -124,7 +126,7 @@ public sealed class MdnClient : IAsyncDisposable
     }
     private async Task LoopAsync()
     {
-        Report("startup", new { platform = "Windows", architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString() });
+        Report("startup", new { platform = OperatingSystem.IsMacOS() ? "macOS" : "Windows", architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString() });
         while (!_stop.IsCancellationRequested)
         {
             try
@@ -133,7 +135,7 @@ public sealed class MdnClient : IAsyncDisposable
                 else
                 {
                     await _request.WaitAsync(_stop.Token);
-                    try { await FlushEventsAsync(_stop.Token); await FlushCrashesAsync(_stop.Token); await FlushUpdateReceiptsAsync(_stop.Token); }
+                    try { await FlushEventsAsync(_stop.Token); await FlushCrashesAsync(_stop.Token); await FlushUpdateReceiptsAsync(_stop.Token); await FlushCloudAsync(_stop.Token); }
                     finally { _request.Release(); }
                 }
             }
@@ -159,6 +161,7 @@ public sealed class MdnClient : IAsyncDisposable
                 using var socket = new ClientWebSocket();
                 using var transport = new HttpMessageInvoker(MdnConfiguration.CreateHttpHandler(config.ServerCertificateSha256));
                 _socket = socket;
+                socket.Options.SetRequestHeader("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
                 socket.Options.SetRequestHeader("Authorization", "Bearer " + _token);
                 var endpoint = new UriBuilder(new Uri(config.Server, "api/connect")) { Scheme = config.DisableSsl ? "ws" : "wss" }.Uri;
                 using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token))
@@ -193,8 +196,11 @@ public sealed class MdnClient : IAsyncDisposable
                             var latency = (int)Math.Clamp(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - stamp, 0, 60000);
                             if (json.RootElement.TryGetProperty("revision", out var revision) && revision.TryGetInt64(out var latest) && latest > Policy.Revision)
                             { AppLog.Operation("mdn", $"心跳发现待同步策略 revision={latest}"); await SynchronizeAsync(session.Token); }
+                            if (json.RootElement.TryGetProperty("cloudCommandId", out var cloudCommand) && cloudCommand.ValueKind == JsonValueKind.String && cloudCommand.GetString() is { Length: > 0 } pendingCommand && !Policy.CloudCommands.Any(c => c.Id == pendingCommand))
+                                await SynchronizeAsync(session.Token);
                             LatencyMs = latency; Changed?.Invoke();
                             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(config.Server, "api/connection"));
+                            request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
                             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
                             request.Content = JsonContent.Create(new { latency });
                             using var response = await _http.SendAsync(request, session.Token);
@@ -235,14 +241,16 @@ public sealed class MdnClient : IAsyncDisposable
                 _token = json.RootElement.GetProperty("deviceToken").GetString() ?? throw new FormatException(); Save();
             }
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(Configuration.Server, "api/policy"));
+            request.Headers.Add("X-IL-Capabilities", "transcriptBlurIntensity,lessonDistribution,clientRoleV1,asrModeV1,cloudServiceV1");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-            request.Headers.Add("X-IL-Capabilities", "transcriptBlurIntensity,lessonDistribution");
             using var response = await _http.SendAsync(request, ct); response.EnsureSuccessStatusCode();
             var policy = await response.Content.ReadFromJsonAsync<ManagedPolicy>(ManagedPolicy.Json, ct) ?? throw new FormatException(); policy.Validate();
             var different = JsonSerializer.Serialize(Policy, ManagedPolicy.Json) != JsonSerializer.Serialize(policy, ManagedPolicy.Json);
-            Policy = policy; Save(); LastSynchronizedAt = DateTimeOffset.Now; LastConnectionError = null; PolicyReceiptConfirmed = false; Status = _socket?.State == WebSocketState.Open ? "已实时连接集控服务器" : "已连接集控服务器（轮询）"; if (different) Changed?.Invoke();
+            Policy = policy; Save(); LastSynchronizedAt = DateTimeOffset.Now; LastConnectionError = null; PolicyReceiptConfirmed = false; Status = _socket?.State == WebSocketState.Open ? "已实时连接集控服务器" : "已连接集控服务器（轮询）";
+            if (ApplyPolicyAsync is not null) await ApplyPolicyAsync();
+            if (different) Changed?.Invoke();
             AppLog.Operation("mdn", $"策略同步完成 revision={policy.Revision} trigger={(polling ? "poll" : "push/manual")}");
-            // Acknowledge only validated, persisted policy, independently from update execution.
+            // Acknowledge validated, persisted and applied policy, independently from update execution.
             try
             {
                 using var receipt = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/policy/receipt"));
@@ -256,7 +264,7 @@ public sealed class MdnClient : IAsyncDisposable
             Report("online", new { });
             await FlushEventsAsync(ct);
             await FlushCrashesAsync(ct); Changed?.Invoke();
-            await FlushUpdateReceiptsAsync(ct);
+            await FlushUpdateReceiptsAsync(ct); await FlushCloudAsync(ct);
         }
         catch (Exception error)
         {
@@ -272,6 +280,7 @@ public sealed class MdnClient : IAsyncDisposable
         {
             if (Configuration is null || _token is null) return false;
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/lessons/" + Guid.Parse(id).ToString("D") + "/receipt"));
+            request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
             request.Content = JsonContent.Create(new { status, message }, options: ManagedPolicy.Json);
             using var response = await _http.SendAsync(request, ct); return response.IsSuccessStatusCode;
@@ -286,9 +295,9 @@ public sealed class MdnClient : IAsyncDisposable
         try
         {
             Directory.CreateDirectory(_root);
-            var pending = File.Exists(FeedbackPath) ? JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(WindowsSecretStore.Load(FeedbackPath)) ?? new() : new Dictionary<string, JsonElement>();
+            var pending = File.Exists(FeedbackPath) ? JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(ManagedSecretStore.Load(FeedbackPath)) ?? new() : new Dictionary<string, JsonElement>();
             pending[Guid.Parse(id).ToString("D")] = JsonSerializer.SerializeToElement(new { status, message, progress });
-            WindowsSecretStore.Save(FeedbackPath, JsonSerializer.Serialize(pending));
+            ManagedSecretStore.Save(FeedbackPath, JsonSerializer.Serialize(pending));
         }
         finally { _feedbackGate.Release(); }
         try { using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)); await FlushUpdateReceiptsAsync(timeout.Token); }
@@ -301,15 +310,16 @@ public sealed class MdnClient : IAsyncDisposable
         try
         {
             if (!File.Exists(FeedbackPath)) return;
-            var pending = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(WindowsSecretStore.Load(FeedbackPath)) ?? new();
+            var pending = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(ManagedSecretStore.Load(FeedbackPath)) ?? new();
             foreach (var pair in pending.ToArray())
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration.Server, "api/updates/" + pair.Key + "/receipt"));
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+                request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
                 request.Content = JsonContent.Create(pair.Value);
                 using var response = await _http.SendAsync(request, ct);
                 if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound) break;
-                pending.Remove(pair.Key); WindowsSecretStore.Save(FeedbackPath, JsonSerializer.Serialize(pending));
+                pending.Remove(pair.Key); ManagedSecretStore.Save(FeedbackPath, JsonSerializer.Serialize(pending));
             }
         }
         finally { _feedbackGate.Release(); }
@@ -317,7 +327,8 @@ public sealed class MdnClient : IAsyncDisposable
     private async Task<bool> SendEventAsync(object payload, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(Configuration!.Server, "api/telemetry"));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+        request.Headers.TryAddWithoutValidation("X-IL-Capabilities", "clientRoleV1,asrModeV1,cloudServiceV1");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
         request.Content = JsonContent.Create(payload, options: ManagedPolicy.Json);
         using var response = await _http.SendAsync(request, ct); return response.IsSuccessStatusCode;
     }
@@ -326,14 +337,22 @@ public sealed class MdnClient : IAsyncDisposable
         // Keep an undelivered batch encrypted across restarts, with a bounded queue.
         var path = Path.Combine(_root, "events.bin");
         var pending = new List<JsonElement>();
-        if (File.Exists(path)) pending.AddRange(JsonSerializer.Deserialize<List<JsonElement>>(WindowsSecretStore.Load(path)) ?? []);
+        if (File.Exists(path))
+        {
+            try { pending.AddRange(JsonSerializer.Deserialize<List<JsonElement>>(ManagedSecretStore.Load(path)) ?? []); }
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception { NativeErrorCode: 13 or 87 } or System.Security.Cryptography.CryptographicException or JsonException)
+            {
+                File.Move(path, path + ".unreadable-" + Guid.NewGuid().ToString("N"));
+                AppLog.Warning("集控事件缓存无法读取，已保留备份并重建队列", error);
+            }
+        }
         while (_events.Reader.TryRead(out var item)) pending.Add(JsonSerializer.SerializeToElement(item, ManagedPolicy.Json));
         pending = pending.TakeLast(128).ToList();
-        WindowsSecretStore.Save(path, JsonSerializer.Serialize(pending));
+        ManagedSecretStore.Save(path, JsonSerializer.Serialize(pending));
         while (_token is not null && pending.Count > 0)
         {
             if (!await SendEventAsync(pending[0], ct)) break;
-            pending.RemoveAt(0); WindowsSecretStore.Save(path, JsonSerializer.Serialize(pending));
+            pending.RemoveAt(0); ManagedSecretStore.Save(path, JsonSerializer.Serialize(pending));
         }
     }
     private async Task FlushCrashesAsync(CancellationToken ct)

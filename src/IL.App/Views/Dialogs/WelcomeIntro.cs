@@ -44,6 +44,12 @@ internal sealed class WelcomeIntro : Grid
     internal async Task PlayAsync(CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
+        if (MotionPreferences.PerformanceMode || MotionPreferences.DisableAnimationWaiting)
+        {
+            foreach (var pulse in _pulses) pulse.Opacity = 0;
+            foreach (var letter in _letters) { letter.Opacity = 1; letter.RenderTransform = null; }
+            return;
+        }
         var animations = new List<Task>();
         animations.Add(new Animation
         {

@@ -34,12 +34,18 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from starlette.middleware.sessions import SessionMiddleware
 from lesson_distribution import LessonDistribution
+from desktop_version import valid_version
 from update_state import initialize_updates, assign_update, effective_update, stop_updates, active_ids, update_dashboard
+from cloud_management import CLOUD_DEFAULT, CloudManagement, CloudStatus, CloudCommandReceipt, cloud_policy, validate_cloud_policy
 
 ASSETS = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
 FEATURES = ["playback", "importAudio", "importIlp", "authoring", "asr", "mcp", "export", "importProject", "dataMaintenance", "apiConfiguration", "updates"]
 SCHEMA = json.loads((ASSETS / "settings-schema.json").read_text(encoding="utf-8"))
 DEFAULT_POLICY = {"settings": {}, "lockedSettings": [], "disabledFeatures": [], "lockAllSettings": False, "lockManagement": False, "hideAsrConfiguration": False, "automaticOobe": False, "update": None}
+DEFAULT_POLICY["clientRole"] = "default"
+DEFAULT_POLICY["asrMode"] = "followLocal"
+DEFAULT_POLICY["cloudService"] = CLOUD_DEFAULT
+STUDENT_FEATURES = ["authoring", "asr", "mcp", "export", "importProject", "apiConfiguration"]
 MDN_LOOP = "asyncio:SelectorEventLoop"
 
 
@@ -165,6 +171,12 @@ def apply_transport(config, public, disable_ssl=False):
 def validate_policy(policy: dict):
     if not isinstance(policy, dict) or set(policy) - set(DEFAULT_POLICY):
         raise ValueError("策略包含未知字段。")
+    if "clientRole" in policy and policy["clientRole"] not in ("default", "student"):
+        raise ValueError("clientRole 必须为 default 或 student。")
+    if "asrMode" in policy and policy["asrMode"] not in ("followLocal", "forceApi", "forceCloud"):
+        raise ValueError("asrMode 必须为 followLocal、forceApi 或 forceCloud。")
+    if "cloudService" in policy:
+        validate_cloud_policy(policy["cloudService"])
     for key in ("lockAllSettings", "lockManagement", "hideAsrConfiguration", "automaticOobe"):
         if key in policy and type(policy[key]) is not bool:
             raise ValueError(key + " 必须是布尔值。")
@@ -223,6 +235,16 @@ def sanitize_metrics(event: Telemetry):
     return event.metrics
 
 
+async def request_object(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(422, "请求须包含有效的 JSON 对象") from None
+    if not isinstance(body, dict):
+        raise HTTPException(422, "请求须包含 JSON 对象")
+    return body
+
+
 def create_app(root: Path, config: dict, store: SecretStore | None = None, diagnostics: bool = False) -> FastAPI:
     root.mkdir(parents=True, exist_ok=True)
     store = store or SecretStore()
@@ -250,7 +272,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
             conn.execute("ALTER TABLE devices ADD COLUMN leave_allowed INTEGER NOT NULL DEFAULT 0")
         if "realtime" not in {r[1] for r in conn.execute("PRAGMA table_info(devices)")}:
             conn.execute("ALTER TABLE devices ADD COLUMN realtime INTEGER NOT NULL DEFAULT 0")
-        for column, declaration in [("alias", "TEXT NOT NULL DEFAULT ''"), ("latency", "INTEGER"), ("last_poll", "REAL"), ("policy_revision", "INTEGER NOT NULL DEFAULT 0"), ("policy_received", "REAL")]:
+        for column, declaration in [("alias", "TEXT NOT NULL DEFAULT ''"), ("latency", "INTEGER"), ("last_poll", "REAL"), ("policy_revision", "INTEGER NOT NULL DEFAULT 0"), ("policy_received", "REAL"), ("capabilities", "TEXT NOT NULL DEFAULT ''")]:
             if column not in {r[1] for r in conn.execute("PRAGMA table_info(devices)")}:
                 conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {declaration}")
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='update_assignments'").fetchone():
@@ -259,7 +281,8 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                 if update:
                     conn.execute("INSERT OR IGNORE INTO update_tasks VALUES(?,?,?,?,?,?)", (update["id"], row["scope"], update["version"], update["mode"], row["revision"] / 1000000, store.encode(update)))
         initialize_updates(conn, store)
-    app = FastAPI(title="Intensive Listening MDN", version="2.1.2.3", docs_url=None, redoc_url=None, openapi_url=None)
+    cloud_management = CloudManagement(db, store)
+    app = FastAPI(title="Intensive Listening MDN", version="2.2.0", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=not config.get("disable_ssl", False), same_site="strict", max_age=3600)
     template_directory = expand_web(root)
     templates = Jinja2Templates(directory=str(template_directory))
@@ -342,29 +365,34 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         await socket.accept()
         connections.peers.setdefault(identifier, set()).add(socket)
         connections.locks[socket] = asyncio.Lock()
-        with db() as conn:
-            conn.execute("UPDATE devices SET realtime=1 WHERE id=?", (identifier,))
         try:
+            with db() as conn:
+                conn.execute("UPDATE devices SET realtime=1 WHERE id=?", (identifier,))
             await connections.send(socket, {"type": "ready"})
             while True:
                 text = await asyncio.wait_for(socket.receive_text(), 75)
-                if len(text) > 1024 or json.loads(text).get("type") != "heartbeat":
+                message = json.loads(text) if len(text) <= 1024 else None
+                if not isinstance(message, dict) or message.get("type") != "heartbeat":
                     await socket.close(code=4400)
                     break
                 device(socket)
                 with db() as conn:
                     revision = conn.execute("SELECT max(revision) FROM policies WHERE scope IN ('all',?)", (identifier,)).fetchone()[0]
-                await connections.send(socket, {"type": "heartbeat", "sentAt": json.loads(text).get("sentAt"), "revision": revision})
+                    pending = cloud_management.pending(conn, identifier)
+                await connections.send(socket, {"type": "heartbeat", "sentAt": message.get("sentAt"), "revision": revision,
+                                                 "cloudCommandId": pending[0]["id"] if pending else None})
         except HTTPException:
             await socket.close(code=4403)
         except (WebSocketDisconnect, RuntimeError, OSError):
             pass
-        except (TimeoutError, ValueError, AttributeError):
+        except (TimeoutError, ValueError, AttributeError, KeyError):
             await socket.close(code=4400)
         finally:
-            connections.peers[identifier].discard(socket)
-            if not connections.peers[identifier]:
-                del connections.peers[identifier]
+            peers = connections.peers.get(identifier)
+            if peers is not None:
+                peers.discard(socket)
+                if not peers:
+                    connections.peers.pop(identifier, None)
             connections.locks.pop(socket, None)
 
     @app.post("/api/register")
@@ -398,6 +426,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
             stop_updates(conn, identifier)
             conn.execute("DELETE FROM update_assignments WHERE device_id=?", (identifier,))
             conn.execute("DELETE FROM policies WHERE scope=?", (identifier,))
+            cloud_management.clear(conn, identifier)
             conn.execute("INSERT INTO audit VALUES(?,?,?)", (time.time(), "leave", identifier))
         await connections.revoke(identifier)
         return {"accepted": True}
@@ -405,28 +434,43 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
     def policy_for(identifier):
         with db() as conn:
             global_row = conn.execute("SELECT * FROM policies WHERE scope='all'").fetchone()
-            result = store.decode(global_row["payload"])
+            result = DEFAULT_POLICY | store.decode(global_row["payload"])
+            result["cloudService"] = cloud_policy(result)
             own = conn.execute("SELECT * FROM policies WHERE scope=?", (identifier,)).fetchone()
             revision = global_row["revision"]
             if own:
                 override = store.decode(own["payload"])
                 result["settings"].update(override.get("settings", {}))
                 for key, value in override.items():
-                    if key != "settings":
+                    if key == "cloudService":
+                        result[key] = cloud_policy(result, override)
+                    elif key != "settings":
                         result[key] = value
                 revision = max(revision, own["revision"])
             result["revision"] = revision
+            if result["clientRole"] == "student":
+                result["disabledFeatures"] = list(dict.fromkeys(result["disabledFeatures"] + STUDENT_FEATURES))
             result["update"] = effective_update(conn, identifier, store)
             result["lessons"] = lesson_distribution.available(identifier)
+            result["cloudCommands"] = cloud_management.pending(conn, identifier)
             return result
 
     @app.get("/api/policy")
     def policy(request: Request):
         identifier = device(request)
+        capabilities = {name.strip() for name in request.headers.get("x-il-capabilities", "").split(",")}
+        supported = ",".join(sorted(capabilities & {"transcriptBlurIntensity", "lessonDistribution", "clientRoleV1", "asrModeV1", "cloudServiceV1"}))
         with db() as conn:
-            conn.execute("UPDATE devices SET last_poll=?, realtime=? WHERE id=?", (time.time(), int(bool(connections.peers.get(identifier))), identifier))
+            conn.execute("UPDATE devices SET last_poll=?, realtime=?, capabilities=? WHERE id=?", (time.time(), int(bool(connections.peers.get(identifier))), supported, identifier))
         result = policy_for(identifier)
-        if "transcriptBlurIntensity" not in request.headers.get("x-il-capabilities", "").split(","):
+        if "clientRoleV1" not in capabilities:
+            result.pop("clientRole", None)
+        if "asrModeV1" not in capabilities:
+            result.pop("asrMode", None)
+        if "cloudServiceV1" not in capabilities:
+            result.pop("cloudService", None)
+            result.pop("cloudCommands", None)
+        if "transcriptBlurIntensity" not in capabilities:
             result["settings"].pop("transcriptBlurIntensity", None)
             result["lockedSettings"] = [name for name in result.get("lockedSettings", []) if name != "transcriptBlurIntensity"]
         return result
@@ -434,7 +478,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
     @app.post("/api/policy/receipt")
     async def policy_receipt(request: Request):
         identifier = device(request)
-        body = await request.json()
+        body = await request_object(request)
         revision = body.get("revision")
         expected = policy_for(identifier)["revision"]
         if type(revision) is not int or not 0 <= revision <= expected:
@@ -446,18 +490,39 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
     @app.post("/api/connection")
     async def connection_state(request: Request):
         identifier = device(request)
-        body = await request.json()
+        body = await request_object(request)
         latency = body.get("latency")
-        if not isinstance(latency, int) or not 0 <= latency <= 60000:
+        if type(latency) is not int or not 0 <= latency <= 60000:
             raise HTTPException(422, "延迟无效")
         with db() as conn:
             conn.execute("UPDATE devices SET latency=? WHERE id=?", (latency, identifier))
         return {"accepted": True}
 
+    @app.post("/api/cloud/status")
+    def cloud_status(request: Request, payload: CloudStatus):
+        identifier = device(request)
+        cloud_management.require_capability(request)
+        if payload.policyRevision > policy_for(identifier)["revision"]:
+            raise HTTPException(422, "策略版本无效。")
+        return cloud_management.report(identifier, payload)
+
+    @app.post("/api/cloud/commands/{command_id}/receipt")
+    def cloud_command_receipt(command_id: uuid.UUID, request: Request, payload: CloudCommandReceipt):
+        identifier = device(request)
+        cloud_management.require_capability(request)
+        return cloud_management.receipt(identifier, str(command_id), payload)
+
+    @app.post("/admin/cloud/logout")
+    async def cloud_logout(request: Request, device_id: str = Form(...), command_id: uuid.UUID = Form(...), form_token: str = Form(...)):
+        csrf(request, form_token)
+        command = cloud_management.enqueue_logout(device_id, str(command_id))
+        await connections.notify(device_id)
+        return {"accepted": True, "command": command, "nextCommandId": str(uuid.uuid4())}
+
     @app.post("/api/updates/{task_id}/receipt")
     async def update_receipt(task_id: str, request: Request):
         identifier = device(request)
-        body = await request.json()
+        body = await request_object(request)
         status = body.get("status")
         progress = body.get("progress", 0)
         if status not in ("received", "downloading", "ready", "deferred", "installing", "success", "failed", "skipped") or type(progress) is not int or not 0 <= progress <= 100:
@@ -563,7 +628,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         admin(request)
         database_started = time.perf_counter()
         with db() as conn:
-            clients = [dict(r) for r in conn.execute("SELECT d.*,MAX(g.revision,COALESCE(p.revision,0)) AS expected_revision FROM devices d JOIN policies g ON g.scope='all' LEFT JOIN policies p ON p.scope=d.id ORDER BY d.last_seen DESC")]
+            clients = [dict(r) for r in conn.execute("SELECT d.*,g.payload AS global_payload,p.payload AS own_payload,MAX(g.revision,COALESCE(p.revision,0)) AS expected_revision FROM devices d JOIN policies g ON g.scope='all' LEFT JOIN policies p ON p.scope=d.id ORDER BY d.last_seen DESC")]
             row = conn.execute("SELECT * FROM policies WHERE scope=?", (scope,)).fetchone()
             filters = []; parameters = []
             if q:
@@ -620,19 +685,33 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         client["online"] = is_online(client)
         client["seen_text"] = datetime.fromtimestamp(client["last_seen"]).astimezone().strftime("%Y-%m-%d %H:%M:%S")
         client["connection_text"] = connection_text(client)
+        global_policy = store.decode(client.pop("global_payload"))
+        own_payload = client.pop("own_payload")
+        own_policy = store.decode(own_payload) if own_payload else {}
+        client["client_role"] = own_policy.get("clientRole", global_policy.get("clientRole", "default"))
+        client["role_label"] = "学生端" if client["client_role"] == "student" else "默认"
+        client["role_supported"] = "clientRoleV1" in client["capabilities"].split(",")
+        client["role_warning"] = "需升级客户端以完整锁定制作设置" if client["client_role"] == "student" and not client["role_supported"] else ""
+        client["asr_mode"] = own_policy.get("asrMode", global_policy.get("asrMode", "followLocal"))
+        client["asr_label"] = {"followLocal": "ASR 跟随本机", "forceApi": "强制传统 API", "forceCloud": "强制云服务"}[client["asr_mode"]]
+        client["asr_supported"] = "asrModeV1" in client["capabilities"].split(",")
+        client["asr_warning"] = "需升级客户端以执行 ASR 强制模式" if client["asr_mode"] != "followLocal" and not client["asr_supported"] else ""
+        client["cloud"] = cloud_management.dashboard(client["id"], client["capabilities"], cloud_policy(global_policy, own_policy), client["online"])
         received = client["policy_revision"]
         expected = client["expected_revision"]
         client["policy_state"] = "策略已接收" if received >= expected else "等待接收新策略" if received else "等待策略回执"
         client["policy_detail"] = "最近接收：" + datetime.fromtimestamp(client["policy_received"]).astimezone().strftime("%m-%d %H:%M:%S") if client["policy_received"] else "旧版客户端可能不支持策略回执"
         client["policy_current"] = received >= expected
+        client["logout_request_id"] = str(uuid.uuid4())
+        client["cloud"]["canLogout"] = client["cloud"]["canLogout"] and bool(client["enabled"])
         return client
 
     @app.get("/admin/status")
     def online_status(request: Request, scope: str = "all", updates: bool = False):
         admin(request)
         with db() as conn:
-            clients = [describe_device(row) for row in conn.execute("SELECT d.*,MAX(g.revision,COALESCE(p.revision,0)) AS expected_revision FROM devices d JOIN policies g ON g.scope='all' LEFT JOIN policies p ON p.scope=d.id ORDER BY d.last_seen DESC")]
-            result = {"devices": [{"id": row["id"], "name": row["name"], "original_name": row["original_name"], "online": row["online"], "enabled": bool(row["enabled"]), "connection": row["connection_text"], "version": row["version"], "seen_text": row["seen_text"], "policy_state": row["policy_state"], "policy_detail": row["policy_detail"], "policy_current": row["policy_current"]} for row in clients]}
+            clients = [describe_device(row) for row in conn.execute("SELECT d.*,g.payload AS global_payload,p.payload AS own_payload,MAX(g.revision,COALESCE(p.revision,0)) AS expected_revision FROM devices d JOIN policies g ON g.scope='all' LEFT JOIN policies p ON p.scope=d.id ORDER BY d.last_seen DESC")]
+            result = {"devices": [{"id": row["id"], "name": row["name"], "original_name": row["original_name"], "online": row["online"], "enabled": bool(row["enabled"]), "connection": row["connection_text"], "version": row["version"], "seen_text": row["seen_text"], "policy_state": row["policy_state"], "policy_detail": row["policy_detail"], "policy_current": row["policy_current"], "client_role": row["client_role"], "role_label": row["role_label"], "role_supported": row["role_supported"], "role_warning": row["role_warning"], "asr_mode": row["asr_mode"], "asr_label": row["asr_label"], "asr_supported": row["asr_supported"], "asr_warning": row["asr_warning"], "cloud": row["cloud"]} for row in clients]}
             result["device_rows_html"] = templates.get_template("device-rows.html").render(request=request, clients=clients, csrf=request.session["csrf"])
             if updates:
                 scope_exists(conn, scope)
@@ -667,6 +746,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                     raise ValueError("隐藏配置需要提供或继承 cloudApiKey。")
                 if scope == "all":
                     payload = DEFAULT_POLICY | payload
+                    payload["cloudService"] = cloud_policy(payload)
                 if old.get("update"):
                     payload["update"] = old["update"]
                 write_policy(conn, scope, payload)
@@ -685,6 +765,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                 conn.execute("UPDATE devices SET enabled=? WHERE id=?", (int(action == "enable"), device_id))
             elif action == "reset":
                 stop_updates(conn, device_id)
+                cloud_management.clear(conn, device_id)
                 conn.execute("DELETE FROM update_assignments WHERE device_id=?", (device_id,))
                 conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
             elif action in ("allow_leave", "cancel_leave"):
@@ -721,7 +802,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         import re
         try:
             valid_url(url, allow_http=True)
-            if mode not in ("ota", "cold") or not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", version) or not re.fullmatch(r"[a-fA-F0-9]{64}", sha256) or not 0 < size <= 2 * 1024**3:
+            if mode not in ("ota", "cold") or not valid_version(version) or not re.fullmatch(r"[a-fA-F0-9]{64}", sha256) or not 0 < size <= 2 * 1024**3:
                 raise ValueError("更新字段无效。")
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
@@ -748,7 +829,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         csrf(request, request.headers.get("x-csrf-token", ""))
         trace(request, "upload authenticated", started=upload_started)
         import re
-        if mode not in ("ota", "cold") or not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", version) or not filename.lower().endswith(".exe"):
+        if mode not in ("ota", "cold") or not valid_version(version) or not filename.lower().endswith(".exe"):
             raise HTTPException(422, "请选择 EXE 安装包并填写有效版本与更新方式。")
         with db() as conn:
             scope_exists(conn, scope)
@@ -858,7 +939,15 @@ def initialize(root: Path, organization: str, url: str, password: str, store: Se
     shutil.copytree(ASSETS / "templates", root / "web" / "templates", dirs_exist_ok=True)
     (root / "settings-schema.json").write_bytes((ASSETS / "settings-schema.json").read_bytes())
     (root / "server.json").write_text(json.dumps({"public_url": config["public_url"], "host": "0.0.0.0", "port": config["port"], "disable_ssl": disable_ssl}, ensure_ascii=False, indent=2), encoding="utf-8")
-    config_path.write_bytes(store.encode(config))
+    temporary = config_path.with_name("config." + uuid.uuid4().hex + ".tmp")
+    try:
+        with temporary.open("xb") as output:
+            output.write(store.encode(config))
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.replace(config_path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return config
 
 
@@ -872,7 +961,7 @@ def main():
     args.data = args.data.resolve()
     path = args.data / "config.bin"
     store = SecretStore()
-    print("Intensive Listening MDN 2.1.2.3")
+    print("Intensive Listening MDN 2.2.0")
     print("数据目录：" + str(args.data))
     if args.init and path.exists():
         raise ValueError("已有配置，初始化不会覆盖。")

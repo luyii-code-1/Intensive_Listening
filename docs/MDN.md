@@ -30,7 +30,7 @@
 
 `--data D:\MDN\data` 可指定数据目录；`--init` 只执行首次初始化。服务默认监听 `0.0.0.0`，可用任务计划程序以原账号、原工作目录开机启动。备份整个 data，并保留运行账号的 Windows 密钥；初始化不会覆盖已有配置。
 
-开发电脑打包命令：`powershell -NoProfile -ExecutionPolicy Bypass -File mdn_server\build-windows.ps1`，生成 `mdn_server/dist/MDN.Server.exe`。
+开发电脑打包命令：`powershell -NoProfile -ExecutionPolicy Bypass -File mdn_server\build-windows.ps1`，默认生成工作区根目录下的 `dist/MDN.Server.exe`，可通过 `-OutputDirectory` 指定其他位置。
 
 ## YAML 文件格式
 
@@ -62,6 +62,12 @@ YAML 含共享注册凭证，分发给组织的安装环境。注册时生成独
 OOBE 顶部显示组织名。主窗口顶部显示组织名和设备 UUID 最后一节。服务不可达时继续应用本地缓存的策略，并自动重试。
 
 ## 管理策略
+
+后台“配置与策略 → 客户端模式”可分配默认或学生端。学生端保留播放与课程导入，锁定制作、ASR、工程导入导出、MCP 及 API 配置；单机可继承全局或显式恢复默认。设备列表显示有效角色和旧版兼容提示。协议、离线及撤销规则见[客户端角色契约](mdn-client-role-contract.md)。
+
+“ASR 模式”支持跟随本机、强制传统 API 和强制云服务。强制模式由支持该能力的客户端锁定本机切换，撤销后恢复个人选择；设备列表显示模式及旧版升级提示。云服务费用由 Cloud 服务端结算。
+
+“云服务管理”支持启用或关闭云连接、要求登录、锁定当前账号。设备列表显示终端报告的账号和连接状态，并提供绑定当前登录会话的幂等远程退出命令；登录由终端用户在浏览器授权。账号快照加密保存，离线显示最后报告值。字段、状态与回执见[云服务管理契约](mdn-cloud-service-contract.md)。新云 ASR 代理按原音频整单 `ceil(时长分钟) × 0.5` 积分计费，由 Cloud 服务端结算。
 
 后台支持“全部客户端”和单机范围。下发 `settings` 的字段会自动锁定；`lockedSettings` 可只锁定字段，保留其个人值。`lockAllSettings` 锁定全部可受管的设置。首次协议同意与阿里云遥测同意由用户控制，组织遥测独立运行。
 
@@ -163,3 +169,10 @@ python -m unittest discover -s mdn_server -p test_server.py -v
 ```
 
 测试覆盖注册鉴权与撤销、全局和单机策略继承、秘密保留与 DPAPI、更新签名、遥测字段范围与去重、安装后注册信息、管理员授权退出和旧数据库迁移。预发布另进行了真实 EXE 与 C# 客户端的 HTTPS 联调和中断 TLS 连接测试。安装器运行、UAC、完整 OTA 与界面交互需另外验收。
+
+
+## Desktop 渠道版本与事件缓存恢复
+
+目标版本支持 `2.2.0 Insider Preview 1023 1`、`2.2.0-insider.20261023.1`、`2.2.0 Beta 1023`、`2.2.0-beta.20261023`，带 `v` 前缀同样接受，也兼容既有三段/四段数字版本。显示名中的 MMDD 按北京时间当前年解释；跨年任务建议使用包含 YYYYMMDD 的信息版本。更新签名保留原始版本字符串。客户端比较基础版本、渠道（Insider、Beta、正式版）、日期与同日序号，并以完整构建标识确认更新结果。旧客户端需要先手动安装支持该格式的新版本；数字基础版本降低仍受既有防降级规则限制。
+
+Windows 的事件上报缓存 `mdn/events.bin` 解密或 JSON 读取失败时，客户端将原文件保留为 `events.bin.unreadable-*`，重建队列并继续同步；备份中的未上报事件暂不可用。该恢复不重置设备身份凭据。

@@ -247,9 +247,9 @@ Windows 运行包写入 `artifacts/build/`，两个平台安装包均写入 `art
 
 ### 分支与 CI
 
-`main` 为发布与默认分支，`2.0-dev` 用于日常开发，日常功能 PR 目标选择 `2.0-dev`。发布同步通过以 `main` 为目标的 PR 完成：以现有 `main` 和 `2.0-dev` 为两个父提交，将开发分支的完整文件树写入同步分支，并验证源文件树一致。`main` 要求必需的 `build` 检查通过后才能合入；合入后核对文件树与历史关系，再将 `2.0-dev` 快进至发布后的 `main`。
+`2.0-dev` 用于日常开发，功能与修复 PR 合入该分支。`main` 保存正式 Release 对应的代码；发布同步使用正式 Release 标签指向的固定提交，经过 PR 和必需的 `build` 检查合入。后续开发提交保留在 `2.0-dev`。
 
-专用 **Publish 2.0-dev snapshot to main** 工作流自动完成快照、创建或更新同步 PR、等待检查、合入及文件树核对。鉴权与使用步骤见 [开发分支同步 CI](docs/CI_SYNC.md)。
+**Publish Release source to main** 在正式 Release 构建成功后执行，也支持指定已发布的正式标签手动恢复。鉴权、触发与恢复说明见 [开发与发布分支](docs/CI_SYNC.md)。云服务登录、课程下载、云 ASR 和客户端管理说明见 [Intensive Listening 云服务客户端](docs/il-cloud-client.md)。
 
 **C# Windows build** 在开发与发布分支提交、PR、手动触发及 `v2.*` Release 发布时运行，完成现有测试、自包含构建、Windows 原生运行、独立播放器、单实例与 Inno Setup 安装包验证。手动触发与正式版 Release 还会在 Apple Silicon macOS runner 上构建、验证并打包 DMG。发布时两个安装包均附加到 Release，校验后通过专用 SSH 身份传到 `il.luyii.cn` 分发。
 
@@ -282,3 +282,7 @@ docs/            迁移、兼容与诊断说明
 欢迎通过 [Issues](https://github.com/luyii-code-1/Intensive_Listening/issues) 提交反馈。问题报告请提供应用版本、操作系统、复现步骤、预期和实际表现，以及日志、报告 ID 或截图。代码贡献请说明使用场景并运行现有测试。
 
 Copyright © 2026 Luyii。源码使用 [GPL-3.0-only](LICENSE)，第三方字体、FFmpeg 和其他组件适用各自许可证，见 [第三方许可说明](THIRD_PARTY_NOTICES.md)。
+
+### Desktop 版本与云服务
+
+当前基础版本为 `2.2.0`，正式版、Insider Preview 和 Beta 规则见 [版本与发布说明](docs/DESKTOP_VERSIONING.md)。完整 OOBE 支持可跳过的云服务登录；“使用云服务提供的接口”采用整单 ASR 代理，供应商密钥保留在服务器。云连接与账号可由 MDN 管理，见 [云服务客户端](docs/il-cloud-client.md)。

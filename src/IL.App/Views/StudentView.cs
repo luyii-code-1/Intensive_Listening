@@ -34,6 +34,10 @@ public sealed class StudentView : UserControl
     private readonly StackPanel _lessons = new() { Spacing = 4 };
     private readonly SpringListCollection<Control> _lessonMotion;
     private Grid? _homeContent;
+    private readonly Control? _cloudLessons;
+    private TextBlock? _localEmpty;
+    private Control? _gettingStarted;
+    private readonly Func<Task>? _startAuthoring;
     private readonly StackPanel _index = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly Dictionary<int, List<(Control Control, LessonTextPart Part)>> _words = [];
     private readonly Dictionary<int, Border> _cueRows = [];
@@ -62,9 +66,9 @@ public sealed class StudentView : UserControl
     private string? _openingLessonId, _deletingLessonId;
     private DateTimeOffset _lastInteraction = DateTimeOffset.UtcNow;
 
-    public StudentView(StudentViewModel vm)
+    public StudentView(StudentViewModel vm, Control? cloudLessons = null, Func<Task>? startAuthoring = null)
     {
-        _vm = vm; DataContext = vm;
+        _vm = vm; DataContext = vm; _cloudLessons = cloudLessons; _startAuthoring = startAuthoring;
         _transcriptBlur = new() { Radius = vm.TranscriptBlurIntensity };
         _lessonMotion = new(_lessons, _lessons.Children, frame => frame, _lessons.Children.Move);
         _materialCloze = WorkspaceUi.Button("显示本段挖空", () => { vm.ToggleMaterialCloze(); return Task.CompletedTask; });
@@ -76,8 +80,8 @@ public sealed class StudentView : UserControl
         var playbackGlyph = new PlaybackGlyph();
         playbackGlyph.Bind(PlaybackGlyph.IsPlayingProperty, new Binding(nameof(vm.IsPlaying)));
         _play.Content = playbackGlyph;
+        UpdatePlaybackAvailability();
         _hideSubtitles.IsCheckedChanged += (_, _) => _vm.ShowSubtitles = _hideSubtitles.IsChecked != true;
-        _play.Bind(IsEnabledProperty, new Binding(nameof(vm.CanPlay)));
         _transcript.Content = _transcriptContent;
         _transcript.ScrollChanged += (_, _) => ScheduleRealization();
         _transcript.SizeChanged += (_, _) => ScheduleRealization();
@@ -125,11 +129,13 @@ public sealed class StudentView : UserControl
         ShowPage();
     }
 
-    public void ApplyManagement() { _play.IsEnabled = _vm.CanPlay && IL.Core.Management.ManagedRuntime.Allows("playback"); _play.Opacity=_play.IsEnabled?1:.45; UpdatePresentation(); }
+    private void UpdatePlaybackAvailability() => _play.IsEnabled = _vm.CanPlay && IL.Core.Management.ManagedRuntime.Allows("playback");
+    public void ApplyManagement() { UpdatePlaybackAvailability(); UpdatePresentation(); }
     private static Button Command(string text, System.Windows.Input.ICommand command) => new() { Content = text, Command = command, Padding = new Thickness(8, 6) };
-    private static StackPanel Row(params Control[] children)
+    private static WrapPanel Row(params Control[] children)
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        var row = new WrapPanel { Orientation = Orientation.Horizontal, ItemSpacing = 8, LineSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var child in children) child.VerticalAlignment = VerticalAlignment.Center;
         foreach (var child in children) row.Children.Add(child);
         return row;
     }
@@ -191,11 +197,10 @@ public sealed class StudentView : UserControl
         {
             var title = new TextBlock { FontSize = 18, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
             title.Bind(TextBlock.TextProperty, new Binding(nameof(_vm.Title))); ToolTip.SetTip(title, _vm.Title);
-            var leading = new Grid { ColumnDefinitions = new ColumnDefinitions("auto,auto,auto") };
+            var leading = new Grid { ColumnDefinitions = new ColumnDefinitions("auto,*,auto") };
             var back = WorkspaceUi.IconButton("back", "返回主页", _vm.ReturnHomeAsync); back.Margin = new Thickness(-12, 0, 8, 0);
             leading.Children.Add(back); Grid.SetColumn(title, 1); title.Margin = new Thickness(0, 0, 12, 0); leading.Children.Add(title);
             var info = WorkspaceUi.Button("文件信息", ShowFileInfoAsync); Grid.SetColumn(info, 2); leading.Children.Add(info);
-            header.SizeChanged += (_, e) => title.MaxWidth = Math.Max(0, e.NewSize.Width - 136);
             header.Children.Add(leading);
         }
         else
@@ -205,26 +210,63 @@ public sealed class StudentView : UserControl
             var commands = Row(openLesson, ManagedUi.Wrap(import,()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp"))); commands.HorizontalAlignment = HorizontalAlignment.Left; header.Children.Add(commands);
         }
         _header.Content = header;
+        var help = WorkspaceUi.Button("使用指南", ShowGettingStartedAsync);
+        Grid.SetColumn(help, 1); help.Margin = new Thickness(12, 0, 0, 0);
+        help.VerticalAlignment = VerticalAlignment.Top; header.Children.Add(help);
+    }
+    private static Task OpenGuideAsync(string section)
+    {
+        Process.Start(new ProcessStartInfo("https://il.luyii.cn/guide.html#" + section) { UseShellExecute = true });
+        return Task.CompletedTask;
+    }
+    private Control GettingStartedContent(Func<Func<Task>, Task>? runAction = null)
+    {
+        Task Run(Func<Task> action) => runAction is null ? action() : runAction(action);
+        var content = new StackPanel { Spacing = 16 };
+        content.Children.Add(Text("先选一件你想做的事", 17, true));
+        content.Children.Add(WorkspaceUi.Stack(Text("老师发给我一个课程文件", 14, true),
+            Text("选择以 .ilp 结尾的文件，导入后点击播放，用“上一句 / 下一句”和“单句循环”练习。", 13),
+            ManagedUi.Feature(WorkspaceUi.Button("选择精听包文件", () => Run(() => ImportAsync(["ilp"])), true), "importIlp")));
+        content.Children.Add(WorkspaceUi.Stack(Text("我想播放自己的录音", 14, true),
+            Text("选择电脑上的听力录音即可播放。如果需要逐句字幕，可以到“制作”中自动生成，或导入已有字幕。", 13),
+            ManagedUi.Feature(WorkspaceUi.Button("选择音频文件", () => Run(() => ImportAsync(["mp3", "m4a", "wav", "flac", "ogg"]))), "importAudio")));
+        if (_startAuthoring is not null)
+            content.Children.Add(ManagedUi.Feature(WorkspaceUi.Stack(Text("我想给音频制作字幕和题目", 14, true),
+                Text("进入“制作”，点“新建项目 → 人工制作”，选择音频，再转写或导入已有字幕。", 13),
+                WorkspaceUi.Button("进入课程制作", () => Run(_startAuthoring))), "authoring"));
+        content.Children.Add(WorkspaceUi.Row(WorkspaceUi.Button("查看图文教程", () => OpenGuideAsync("quickstart")),
+            WorkspaceUi.Button("先体验示例课程", () => OpenGuideAsync("web-player"))));
+        return content;
+    }
+    private async Task ShowGettingStartedAsync()
+    {
+        FAContentDialog? dialog = null;
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        dialog = AppDialogs.Create(WorkspaceUi.Owner(this), "开始使用", new ScrollViewer
+        {
+            Content = GettingStartedContent(async action => { dialog?.Hide(); await closed.Task; await action(); }), MaxHeight = 400, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        }, 600);
+        dialog.Closed += (_, _) => closed.TrySetResult();
+        dialog.CloseButtonText = "返回";
+        await dialog.ShowAsync(WorkspaceUi.Owner(this));
     }
     private void BuildHome()
     {
         BuildHeader();
-        if (_vm.Lessons.Count == 0)
-        {
-            var actions = Row(ManagedUi.Wrap(WorkspaceUi.Button("导入精听包或音频", ImportAsync, true),()=>!IL.Core.Management.ManagedRuntime.Allows("importAudio")&&!IL.Core.Management.ManagedRuntime.Allows("importIlp"))); actions.HorizontalAlignment = HorizontalAlignment.Center;
-            var empty = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 360 };
-            var icon = WorkspaceUi.Icon("open_file", 40); icon.HorizontalAlignment = HorizontalAlignment.Center; icon.Margin = new Thickness(0, 0, 0, 18);
-            empty.Children.Add(icon); empty.Children.Add(new TextBlock { Text = "打开音频或精听包", FontSize = 17, FontWeight = FontWeight.Bold, TextAlignment = TextAlignment.Center });
-            empty.Children.Add(new TextBlock { Text = "直接播放常见音频，或导入带有题目与挖空练习的 .ilp 精听包。", TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 8, 0, 18) }); empty.Children.Add(actions);
-            _lessonMotion.Update([]); PresentBody(empty, "home:empty"); return;
-        }
         _lessonMotion.Update(_vm.Lessons.OrderByDescending(item => _vm.ProgressFor(item.Id)?.LastOpenedAt ?? DateTimeOffset.MinValue).Select(lesson => (lesson.Id, LessonRow(lesson))));
         if (_homeContent == null)
         {
-            _homeContent = new Grid { RowDefinitions = new RowDefinitions("auto,*"), MaxWidth = 1200, HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(24, 4, 24, 24) };
-            var title = Text("最近课程", 17, true); title.Margin = new Thickness(0, 0, 0, 12); _homeContent.Children.Add(title);
-            _homeContent.Children.Add(new ScrollViewer { Content = _lessons, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, [Grid.RowProperty] = 1 });
+            var list = new StackPanel { Spacing = 12 };
+            list.Children.Add(Text("最近课程", 17, true));
+            _localEmpty = Text("还没有课程，可以从下面选择文件开始。", 13); list.Children.Add(_localEmpty);
+            _gettingStarted = GettingStartedContent(); list.Children.Add(_gettingStarted);
+            list.Children.Add(_lessons);
+            if (_cloudLessons is not null) list.Children.Add(_cloudLessons);
+            _homeContent = new Grid { MaxWidth = 1200, HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(24, 4, 24, 24) };
+            _homeContent.Children.Add(new ScrollViewer { Content = list, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         }
+        _localEmpty!.IsVisible = _vm.Lessons.Count == 0;
+        _gettingStarted!.IsVisible = _vm.Lessons.Count == 0;
         PresentBody(_homeContent, "home:list");
     }
     private Control LessonRow(LessonListItem lesson)
@@ -245,11 +287,15 @@ public sealed class StudentView : UserControl
         open.Classes.Add("student-lesson-open");
         open.IsEnabled = _openingLessonId is null && _deletingLessonId is null;
         open.Click += async (_, _) => await OpenLessonFromHomeAsync(lesson);
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,auto,auto"), Height = 58 };
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,auto,auto,auto"), MinHeight = 58 };
+        var export = WorkspaceUi.IconButton("download", "导出精听包", () => ExportLessonAsync(lesson));
+        export.IsEnabled = _openingLessonId is null && _deletingLessonId is null;
+        export.Margin = new Thickness(8, 0);
+        var exportControl = ManagedUi.Feature(export, "export"); Grid.SetColumn(exportControl, 2); row.Children.Add(exportControl);
         row.Children.Add(open); row.Children.Add(new Border { Width = 1, Height = 40, Background = Brush.Parse("#22000000"), [Grid.ColumnProperty] = 1 });
         var remove = WorkspaceUi.IconButton("delete", "移除课程", () => RemoveAsync(lesson)); remove.IsEnabled = _openingLessonId is null && _deletingLessonId is null;
-        if (_deletingLessonId == lesson.Id) remove.Content = new FAProgressRing { IsActive = true, Width = 14, Height = 14 }; remove.Margin = new Thickness(8, 0); Grid.SetColumn(remove, 2); row.Children.Add(remove);
-        var card = Card(row, new Thickness(0)); card.Height = 60; card.ClipToBounds = true;
+        if (_deletingLessonId == lesson.Id) remove.Content = new FAProgressRing { IsActive = true, Width = 14, Height = 14 }; remove.Margin = new Thickness(8, 0); Grid.SetColumn(remove, 3); row.Children.Add(remove);
+        var card = Card(row, new Thickness(0)); card.MinHeight = 60;
         card.PointerEntered += (_, _) => { card.Background = Brush.Parse("#0BE81123"); card.BoxShadow = new BoxShadows(new BoxShadow { Color = Color.Parse("#14000000"), Blur = 10, OffsetY = 3 }); };
         card.PointerExited += (_, _) => { card.Bind(Border.BackgroundProperty, new DynamicResourceExtension("CardBackgroundFillColorDefaultBrush")); card.BoxShadow = default; };
         return card;
@@ -266,8 +312,7 @@ public sealed class StudentView : UserControl
         grid.Children.Add(questionSpace); Grid.SetRow(controls, 1); grid.Children.Add(controls);
         grid.SizeChanged += (_, e) =>
         {
-            var controlsHeight = Math.Min(Math.Clamp(e.NewSize.Height / 2.68, 244, 320), e.NewSize.Height);
-            controls.Height = controlsHeight;
+            controls.MaxHeight = Math.Max(0, e.NewSize.Height * .6);
         };
         var player = new Border { Padding = new Thickness(20, 8, 20, 16), Child = grid, ClipToBounds = true };
         UpdateQuestions(); BuildQuestionIndex(); return player;
@@ -283,14 +328,14 @@ public sealed class StudentView : UserControl
         var position = Text("", 12); position.Bind(TextBlock.TextProperty, new Binding(nameof(_vm.PositionLabel))); times.Children.Add(position);
         var duration = Text("", 12); duration.Bind(TextBlock.TextProperty, new Binding(nameof(_vm.DurationLabel))); Grid.SetColumn(duration, 1); times.Children.Add(duration);
         var transport = Row(Command("上一题", _vm.PreviousQuestionCommand), Command("上一句", _vm.PreviousCueCommand), _play, Command("下一句", _vm.NextCueCommand), Command("下一题", _vm.NextQuestionCommand));
-        transport.HorizontalAlignment = HorizontalAlignment.Center;
+        transport.HorizontalAlignment = HorizontalAlignment.Stretch; transport.ItemsAlignment = WrapPanelItemsAlignment.Center;
         transport.Children[0].IsEnabled = transport.Children[4].IsEnabled = _vm.CurrentLesson?.Manifest.Exercises.Questions.Count > 0;
         transport.Children[1].IsEnabled = transport.Children[3].IsEnabled = _vm.HasTranscript;
         var stack = new StackPanel { Spacing = 0, VerticalAlignment = VerticalAlignment.Center };
-        stack.Children.Add(seek); stack.Children.Add(times); stack.Children.Add(new Viewbox { Child = transport, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 12, 0, 0) });
+        transport.Margin = new Thickness(0, 12, 0, 0); stack.Children.Add(seek); stack.Children.Add(times); stack.Children.Add(transport);
         if (_vm.HasTranscript)
         {
-            var toggles = Row(Toggle("单句循环", nameof(_vm.SingleSentenceLoop)), _hideSubtitles); toggles.Spacing = 18; toggles.HorizontalAlignment = HorizontalAlignment.Center; toggles.Margin = new Thickness(0, 12, 0, 0); stack.Children.Add(toggles);
+            var toggles = Row(Toggle("单句循环", nameof(_vm.SingleSentenceLoop)), _hideSubtitles); toggles.ItemSpacing = 18; toggles.ItemsAlignment = WrapPanelItemsAlignment.Center; toggles.Margin = new Thickness(0, 12, 0, 0); stack.Children.Add(toggles);
             var cloze = new StudentCenteredWrapPanel(Command("重复本句", _vm.RepeatSentenceCommand), _materialCloze, _allCloze); cloze.Margin = new Thickness(0, 8, 0, 0); stack.Children.Add(cloze);
             if (_vm.CurrentLesson?.Manifest.Exercises.EffectiveMaterials.Any(m => m.QuestionIds.Count > 0) == true)
             {
@@ -659,6 +704,7 @@ public sealed class StudentView : UserControl
     }
     private void VmChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(_vm.CanPlay)) UpdatePlaybackAvailability();
         if (e.PropertyName is nameof(_vm.HasMedia) or nameof(_vm.HasTranscript)) ShowPage();
         if (e.PropertyName == nameof(_vm.ActiveCue)) UpdateActiveCue();
         if (e.PropertyName == nameof(_vm.TranscriptFontSize)) UpdatePresentation();
@@ -684,7 +730,7 @@ public sealed class StudentView : UserControl
         var manifest = _vm.CurrentLesson?.Manifest;
         var path = _vm.AudioPath;
         if (path is null) return;
-        var details = new List<string> { $"名称：{_vm.Title}", $"类型：{(manifest is null ? "普通音频" : "ILP 精听包")}", $"时长：{_vm.DurationLabel}" };
+        var details = new List<string> { $"名称：{_vm.Title}", $"类型：{(manifest is null ? "听力录音" : "精听课程包")}", $"时长：{_vm.DurationLabel}" };
         if (manifest is not null) details.AddRange([manifest.CreatorDescription, $"精听包版本：{manifest.PackageVersion}", $"格式版本：{manifest.FormatVersion}", $"包 UUID：{manifest.PackageUuid}", $"字幕：{_vm.Cues.Count} 句"]);
         if (File.Exists(path)) details.Add($"音频大小：{new FileInfo(path).Length / (1024.0 * 1024):F2} MB");
         details.Add($"文件位置：{path}");
@@ -718,6 +764,17 @@ public sealed class StudentView : UserControl
         }
         finally { _deletingLessonId = null; _handlingOperationStatus = false; if (!_vm.HasMedia) BuildHome(); }
     }
+    private async Task ExportLessonAsync(LessonListItem lesson)
+    {
+        try
+        {
+            var filename = string.Concat(lesson.Title.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+            if (await WorkspaceUi.Save(this, "导出精听包", filename + ".ilp", "ilp") is not { } output) return;
+            await _vm.ExportLessonAsync(lesson.Id, output);
+            ShowNotice("精听包已导出", lesson.Title);
+        }
+        catch (Exception error) { ShowNotice("导出失败", error.Message, true); }
+    }
     private void ShowNotice(string title, string message, bool error = false) =>
         WorkspaceToast.Show(this, title, message, error);
     private async Task<bool> ImportLessonAsync(string file, bool replace = false, string? title = null, string noticeTitle = "导入完成", string noticeMessage = "课程已保存到主页。")
@@ -727,12 +784,15 @@ public sealed class StudentView : UserControl
         { await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "无法导入", _vm.Status, "完成"); return false; }
         ShowNotice(noticeTitle, noticeMessage + "\n" + _vm.CurrentLesson?.Manifest.CreatorDescription); return true;
     }
-    private async Task ImportAsync()
+    private Task ImportAsync() => ImportAsync(null);
+    private async Task ImportAsync(string[]? requestedExtensions)
     {
         if (_importing) return;
         var extensions = (IL.Core.Management.ManagedRuntime.IsManaged ? IL.Core.Management.ManagedRuntime.Policy : new IL.Core.Management.ManagedPolicy()).AllowedImportExtensions();
+        if (requestedExtensions is not null) extensions = extensions.Intersect(requestedExtensions, StringComparer.OrdinalIgnoreCase).ToArray();
         if (extensions.Length == 0) { ShowNotice("组织管理限制", "音频和精听包导入均已由您的组织禁用。", true); return; }
-        if (await WorkspaceUi.Pick(this, "导入精听包或音频", extensions) is not { } file) return;
+        var title = requestedExtensions is null ? "导入精听包或音频" : requestedExtensions.Contains("ilp") ? "选择老师发来的精听包（.ilp）" : "选择要播放的音频";
+        if (await WorkspaceUi.Pick(this, title, extensions) is not { } file) return;
         if (Path.GetExtension(file).Equals(".ilp", StringComparison.OrdinalIgnoreCase)) await ImportFileAsync(file);
         else
         {

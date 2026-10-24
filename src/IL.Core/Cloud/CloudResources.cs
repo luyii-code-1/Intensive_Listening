@@ -8,11 +8,14 @@ namespace IL.Core.Cloud;
 
 public sealed record CloudUser(string Id, string Email, string Name, int Slots, bool EmailVerified);
 public sealed record CloudStorage(long UsedBytes, long LimitBytes, int UsedSlots, int Slots);
-public sealed record CloudWallet(decimal Balance, decimal Held, decimal Available);
+public sealed record CloudPrices(decimal Delivery);
+public sealed record CloudWallet(decimal Balance, decimal Held, decimal Available, CloudPrices? Prices = null);
 public sealed record CloudFile(string Id, string Title, string Kind, long Bytes, long QuotaBytes, long Created);
 public sealed record CloudCourse(string Id, string Title, int Revision, long Updated);
 public sealed record CloudJob(string Id, string? CourseId, string Kind, string State, string? Step, string? Error, long Created, string? CreditNotice);
 public sealed record CloudSnapshot(CloudUser User, CloudStorage Storage, CloudWallet Wallet, CloudFile[] Files, CloudCourse[] Courses, CloudJob[] Jobs);
+public sealed record CloudPlayableItem(string Id, string Source, string SourceId, string Title, int Revision, string Version, string Sha256, long Bytes, long Updated, string DownloadPath);
+public sealed record CloudPlayableList(CloudPlayableItem[] Items, decimal DownloadCredits);
 public sealed record CloudTransferProgress(long Bytes, long? Total);
 public sealed class CloudApiException(string code, string message) : Exception(message) { public string Code { get; } = code; }
 
@@ -28,6 +31,17 @@ public sealed class CloudResources : IDisposable
 
     public CloudResources(CloudAuthClient authentication, string dataDirectory, HttpClient? http = null)
     { _authentication = authentication; _api = new(authentication, http); _directory = Path.Combine(dataDirectory, "cloud-transfers"); }
+
+    public string? UserId => _user;
+    public async Task<CloudPlayableList> PlayableAsync(CancellationToken ct = default)
+    {
+        await EnsureUserAsync(ct);
+        return await GetAsync<CloudPlayableList>("api/v1/library/playable", ct);
+    }
+    public Task<CloudWallet> WalletAsync(CancellationToken ct = default) => GetAsync<CloudWallet>("api/v1/wallet", ct);
+    public Task<string> DownloadAsync(CloudPlayableItem item, IProgress<CloudTransferProgress>? progress, CancellationToken ct = default) =>
+        DownloadAsync(item.SourceId, item.Source, "ilp", progress, ct, item);
+    public Task CompleteDownloadAsync(CloudPlayableItem item, CancellationToken ct = default) => CompleteDownloadAsync(item.SourceId, item.Source, "ilp", ct, item.Version);
 
     public async Task<CloudSnapshot> SnapshotAsync(CancellationToken ct = default)
     {
@@ -45,6 +59,7 @@ public sealed class CloudResources : IDisposable
     public async Task<CloudFile> UploadAsync(string source, IProgress<CloudTransferProgress>? progress, CancellationToken ct = default)
     {
         await _transfer.WaitAsync(ct);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(TimeSpan.FromMinutes(10)); ct = deadline.Token;
         try
         {
             await EnsureUserAsync(ct);
@@ -69,22 +84,29 @@ public sealed class CloudResources : IDisposable
     }
 
     public async Task<string> DownloadAsync(string resourceId, string kind, string format, IProgress<CloudTransferProgress>? progress,
-        CancellationToken ct = default)
+        CancellationToken ct = default, CloudPlayableItem? expected = null)
     {
         if (kind is not ("file" or "course") || format is not ("ilp" or "project")) throw new ArgumentException("云端文件类型无效。");
         await _transfer.WaitAsync(ct);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(TimeSpan.FromMinutes(10)); ct = deadline.Token;
         TransferOperation? operation = null;
         string? file = null;
         try
         {
             await EnsureUserAsync(ct);
-            operation = await LoadOperationAsync(DownloadKey(resourceId, kind, format), ct);
+            operation = await LoadOperationAsync(DownloadKey(resourceId, kind, format, expected?.Version), ct);
             file = operation.Path + "." + (format == "ilp" ? "ilp" : "zip");
             if (operation.Complete && File.Exists(file)) return file;
             if (operation.Id is null)
             {
                 var endpoint = kind == "file" ? $"api/v1/library/{Uri.EscapeDataString(resourceId)}/downloads"
                     : $"api/v1/courses/{Uri.EscapeDataString(resourceId)}/downloads?format={format}";
+                if (expected is not null)
+                {
+                    var canonical = kind == "file" ? $"/library/{Uri.EscapeDataString(resourceId)}/downloads" : $"/courses/{Uri.EscapeDataString(resourceId)}/downloads?format=ilp&revision={expected.Revision}";
+                    if (expected.DownloadPath.TrimStart('/') != canonical.TrimStart('/')) throw new CloudApiException("invalid_response", "云端下载地址与课程不匹配。");
+                    endpoint = "api/v1" + canonical;
+                }
                 var offer = await PostAsync<DownloadOffer>(endpoint, operation.Key, ct);
                 operation.Id = offer.Id;
                 await SaveOperationAsync(operation, ct);
@@ -94,9 +116,12 @@ public sealed class CloudResources : IDisposable
             var delivery = await PostAsync<DownloadStart>(start, null, ct);
             if (delivery.Bytes is <= 0 or > MaximumFileBytes || delivery.Sha256 is not { Length: 64 }
                 || !delivery.Sha256.All(Uri.IsHexDigit)) throw new CloudApiException("invalid_response", "云端文件大小或完整性信息无效。");
+            if (expected is not null && (delivery.Bytes != expected.Bytes || !string.Equals(delivery.Sha256, expected.Sha256, StringComparison.OrdinalIgnoreCase)))
+                throw new CloudApiException("revision", "云端课程已更新，请刷新列表后重试。");
             var target = new Uri(CloudAuthClient.Server, delivery.Url);
             var partial = file + ".part";
             var offset = File.Exists(partial) ? new FileInfo(partial).Length : 0;
+            if (offset > delivery.Bytes) { File.Delete(partial); offset = 0; }
             using var request = new HttpRequestMessage(HttpMethod.Get, target);
             if (offset > 0) request.Headers.Range = new RangeHeaderValue(offset, null);
             using var response = await _api.SendAsync(request, ct);
@@ -127,6 +152,7 @@ public sealed class CloudResources : IDisposable
                     var read = await stream.ReadAsync(buffer, ct);
                     if (read == 0) break;
                     received += read;
+                    if (received > total) throw new CloudApiException("invalid_length", "云端返回的文件超过授权大小，下载片段已重置，请重试。");
                     if (received > MaximumFileBytes) throw new CloudApiException("file_too_large", "云端文件超过 200 MiB，已停止下载。");
                     await output.WriteAsync(buffer.AsMemory(0, read), ct);
                     progress?.Report(new(received, total));
@@ -145,21 +171,26 @@ public sealed class CloudResources : IDisposable
             await SaveOperationAsync(operation, ct);
             return file;
         }
+        catch (CloudApiException error) when (error.Code == "invalid_length")
+        {
+            if (file is not null) File.Delete(file + ".part");
+            throw;
+        }
         catch (CloudApiException error) when (error.Code is "download" or "delivery")
         {
             if (operation is not null) File.Delete(operation.Path);
             if (file is not null) { File.Delete(file); File.Delete(file + ".part"); }
-            throw new CloudApiException("authorization_expired", "下载授权已失效。再次点击将重新申请授权，可能扣除 0.2 积分。");
+            throw new CloudApiException("authorization_expired", "下载授权已失效。再次点击将重新申请授权，将按服务端当时报价收费。");
         }
         finally { _transfer.Release(); }
     }
 
-    public async Task CompleteDownloadAsync(string resourceId, string kind, string format, CancellationToken ct = default)
+    public async Task CompleteDownloadAsync(string resourceId, string kind, string format, CancellationToken ct = default, string? version = null)
     {
         await _transfer.WaitAsync(ct);
         try
         {
-            var path = OperationPath(DownloadKey(resourceId, kind, format));
+            var path = OperationPath(DownloadKey(resourceId, kind, format, version));
             File.Delete(path + "." + (format == "ilp" ? "ilp" : "zip"));
             File.Delete(path);
         }
@@ -167,10 +198,10 @@ public sealed class CloudResources : IDisposable
     }
 
     private async Task EnsureUserAsync(CancellationToken ct) => _user = (await GetAsync<CloudUser>("api/v1/auth/me", ct)).Id;
-    private static string DownloadKey(string id, string kind, string format) => $"download:{kind}:{format}:{id}";
+    private static string DownloadKey(string id, string kind, string format, string? version = null) => $"download:{kind}:{format}:{id}" + (version is null ? "" : ":" + version);
     private string OperationPath(string logicalKey)
     {
-        if (_user is null) throw new CloudAuthenticationException("login_required", "请先登录 IL Cloud。");
+        if (_user is null) throw new CloudAuthenticationException("login_required", "请先登录 Intensive Listening 云服务。");
         var device = logicalKey.StartsWith("download:", StringComparison.Ordinal) ? _authentication.DeviceId : "";
         var key = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(_user + ":" + device + ":" + logicalKey)));
         Directory.CreateDirectory(_directory);
@@ -200,11 +231,12 @@ public sealed class CloudResources : IDisposable
     }
     private async Task<T> PostAsync<T>(string endpoint, string? key, CancellationToken ct)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(TimeSpan.FromSeconds(30));
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(CloudAuthClient.Server, endpoint));
         if (key is not null) request.Headers.Add("Idempotency-Key", key);
-        using var response = await _api.SendAsync(request, ct);
-        await RequireSuccessAsync(response, ct);
-        return await ReadAsync<T>(response, ct);
+        using var response = await _api.SendAsync(request, deadline.Token);
+        await RequireSuccessAsync(response, deadline.Token);
+        return await ReadAsync<T>(response, deadline.Token);
     }
     private static async Task<T> ReadAsync<T>(HttpResponseMessage response, CancellationToken ct) =>
         await response.Content.ReadFromJsonAsync<T>(Json, ct) ?? throw new CloudApiException("invalid_response", "云服务返回的数据无效。");

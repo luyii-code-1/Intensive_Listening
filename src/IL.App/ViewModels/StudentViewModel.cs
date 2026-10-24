@@ -127,10 +127,16 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
                     resume = PlaybackNavigation.CueNavigationPosition(Cues[_preroll.Value].Cue);
                 }
                 UpdatePosition(resume);
+                await EnsurePlayerLoadedAsync();
                 Status = $"{Cues.Count} 条字幕 · v{lesson.Manifest.PackageVersion}";
                 await SaveProgressAsync();
                 OnPropertyChanged(nameof(HasMedia)); OnPropertyChanged(nameof(HasTranscript));
                 PresentationChanged?.Invoke();
+            }
+            catch
+            {
+                await CloseMediaAsync();
+                throw;
             }
             finally { _switching = false; OnPropertyChanged(nameof(CanPlay)); }
         });
@@ -153,6 +159,13 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         catch (Exception ex) { Status = $"读取课库失败：{ex.Message}"; }
     }
     public Task<IlpManifest> ReadManifestAsync(string file) => _importer.ReadManifestAsync(file);
+    public async Task ExportLessonAsync(string id, string output)
+    {
+        IL.Core.Management.ManagedRuntime.Require("export");
+        using var measurement = InteractionPerformance.Measure("library.export");
+        var lesson = await _library.LoadByIdAsync(id) ?? throw new IOException("课程文件缺失或完整性校验失败");
+        await new IlpLibraryExporter().ExportAsync(lesson, output);
+    }
     public async Task ImportAsync(string file, bool replace = false, string? title = null)
     {
         try
@@ -454,8 +467,9 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         }
         finally { _switching = false; }
     }
-    private async Task RunAsync(Func<Task> operation)
+    private async Task RunAsync(Func<Task> operation, [System.Runtime.CompilerServices.CallerMemberName] string operationName = "")
     {
+        using var measurement = InteractionPerformance.Measure("player." + operationName);
         await _operations.WaitAsync();
         try { if (!_disposed) { IsBusy = true; await operation(); } }
         catch (Exception ex) { Status = ex.Message; }

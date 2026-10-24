@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Platform.Storage;
+using FluentAvalonia.UI.Controls;
 
 namespace IL.App.Views.Dialogs;
 
@@ -30,20 +31,47 @@ internal static class WorkspaceUi
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Margin = new Thickness(24, 22, 24, 20), MinHeight = 36 };
         if (back is not null) { var button = IconButton("back", "返回", back); button.Classes.Add("subtle"); button.Margin = new Thickness(-12, 0, 8, 0); grid.Children.Add(button); }
         var text = Text(title, 22, true); text.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(text, 1); grid.Children.Add(text);
-        if (commands is not null) { Grid.SetColumn(commands, 2); commands.VerticalAlignment = VerticalAlignment.Center; grid.Children.Add(commands); }
+        if (commands is not null)
+        {
+            commands.VerticalAlignment = VerticalAlignment.Center;
+            var margin = grid.Margin; grid.Margin = default;
+            return new ResponsivePair(grid, commands) { Margin = margin, MinimumContentWidth = 180 };
+        }
         return grid;
     }
-    public static Control SettingsRow(string icon, string title, string description, Control trailing, bool compact = false)
-        => SettingsRow(icon, title, Text(description, 12), trailing, compact);
+    // Use the same Fluent settings control for individual rows and expandable groups.
+    public static FAIconSource SettingsIcon(string icon) => new FAFontIconSource
+    {
+        Glyph = char.ConvertFromUtf32(DartIcons.Glyphs.TryGetValue(icon, out var code) ? code : DartIcons.Glyphs["info"]),
+        FontFamily = IconFont, FontSize = 20
+    };
+    public static Control SettingsRow(string icon, string title, string description, Control trailing, bool compact = false) =>
+        SettingsGroup(icon, title, description, null, trailing);
     public static Control SettingsRow(string icon, string title, Control description, Control trailing, bool compact = false)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), MinHeight = compact ? 36 : 44 };
-        var glyph = Icon(icon, 22); glyph.Margin = new Thickness(0, 0, 18, 0); grid.Children.Add(glyph);
-        var labels = new StackPanel { Spacing = compact ? 2 : 3, VerticalAlignment = VerticalAlignment.Center };
-        labels.Children.Add(Text(title, 14, true)); labels.Children.Add(description); Grid.SetColumn(labels, 1); grid.Children.Add(labels);
-        trailing.Margin = new Thickness(16, 0, 0, 0); trailing.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(trailing, 2); grid.Children.Add(trailing);
-        var border = Surface(grid, new Thickness(20, compact ? 10 : 16)); border.CornerRadius = new CornerRadius(4);
-        border.BorderThickness = new Thickness(1); border.Bind(Border.BorderBrushProperty, new DynamicResourceExtension("WorkspaceCardBorderBrush")); return border;
+        var row = SettingsGroup(icon, title, "", null);
+        row.Header = new ResponsivePair(new StackPanel { Spacing = 2, Children = { Text(title), description } }, trailing);
+        return row;
+    }
+    public static FASettingsExpander SettingsGroup(string icon, string title, string description, Control? content, Control? action = null, bool expanded = false)
+    {
+        var row = new FASettingsExpander
+        {
+            IconSource = SettingsIcon(icon), Header = title, Description = description,
+            IsExpanded = expanded, HorizontalAlignment = HorizontalAlignment.Stretch,
+            Margin = new Thickness(0), MinHeight = 64
+        };
+        if (action is not null)
+        {
+            action.VerticalAlignment = VerticalAlignment.Center;
+            var labels = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+            labels.Children.Add(Text(title));
+            if (!string.IsNullOrWhiteSpace(description)) labels.Children.Add(Text(description, 12));
+            row.Header = new ResponsivePair(labels, action);
+            row.Description = null;
+        }
+        if (content is not null) row.Items.Add(content);
+        return row;
     }
     public static TextBlock Text(string text, double size = 14, bool strong = false)
     {
@@ -57,7 +85,7 @@ internal static class WorkspaceUi
         label.Inlines = new InlineCollection { new Run(prefix), new Run(organization) { FontWeight = FontWeight.Bold }, new Run(suffix) };
     }
     public static StackPanel Stack(params Control[] controls) { var panel = new StackPanel { Spacing = 8 }; foreach (var c in controls) panel.Children.Add(c); return panel; }
-    public static WrapPanel Row(params Control[] controls) { var panel = new WrapPanel { Orientation = Orientation.Horizontal }; foreach (var c in controls) { c.Margin = new Thickness(0, 0, 8, 6); panel.Children.Add(c); } return panel; }
+    public static WrapPanel Row(params Control[] controls) { var panel = new WrapPanel { Orientation = Orientation.Horizontal, ItemSpacing = 8, LineSpacing = 6, VerticalAlignment = VerticalAlignment.Center }; foreach (var c in controls) { c.VerticalAlignment = VerticalAlignment.Center; panel.Children.Add(c); } return panel; }
     public static Button Button(string title, Func<Task> action, bool primary = false)
     {
         var button = new Button { Content = title };

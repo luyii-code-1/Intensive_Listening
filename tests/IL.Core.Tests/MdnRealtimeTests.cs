@@ -14,6 +14,28 @@ namespace IL.Core.Tests;
 public sealed class MdnRealtimeTests
 {
     [Fact]
+    public async Task UnreadableEventCacheIsPreservedAndPolicySyncContinues()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "il-mdn-cache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "mdn"));
+        await using var server = new Peer();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "il_mdn_config.yaml"), $"schema_version: 1\norganization_name: Test\nserver_url: {server.Url}\nenrollment_token: test-token\ndisable_ssl: true\npoll_seconds: 15\n");
+            var bytes = new byte[] { 1, 2, 3, 4 };
+            await File.WriteAllBytesAsync(Path.Combine(root, "mdn", "events.bin"), bytes);
+            await using var client = new MdnClient(root, "2.1.2");
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await client.SynchronizeAsync(deadline.Token);
+            Assert.Null(client.LastConnectionError);
+            var backup = Assert.Single(Directory.GetFiles(Path.Combine(root, "mdn"), "events.bin.unreadable-*"));
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(backup));
+            Assert.Equal("[]", ManagedSecretStore.Load(Path.Combine(root, "mdn", "events.bin")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    [Fact]
     public async Task LiveConnectionStopsPolicyPollingHandlesPushAndFallsBackAfterDisconnect()
     {
         if (!OperatingSystem.IsWindows()) return;

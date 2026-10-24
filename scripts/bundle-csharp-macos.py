@@ -2,8 +2,10 @@
 """Bundle locally installed FFmpeg and official VLC with relocatable Mach-O dependencies."""
 import hashlib, json, os, pathlib, plistlib, re, shutil, subprocess, sys, zipfile, uuid
 
+build = json.loads(pathlib.Path("artifacts/version/build.json").read_text(encoding="utf-8"))
 app, vlc, ffmpeg = map(pathlib.Path, sys.argv[1:4])
 mac = app / 'Contents/MacOS'
+(mac / 'build-info.json').write_text(json.dumps(build), encoding='utf-8')
 (mac / 'installation-id.txt').write_text(str(uuid.uuid4()))
 resources = app / 'Contents/Resources'
 resources.mkdir(parents=True, exist_ok=True)
@@ -116,7 +118,8 @@ plist = {
     'CFBundleName': 'Intensive Listening', 'CFBundleDisplayName': 'Intensive Listening 2 Resonance',
     'CFBundleExecutable': 'IL.App', 'CFBundleIdentifier': 'com.luyii.intensivelistening.preview',
     'CFBundlePackageType': 'APPL', 'CFBundleInfoDictionaryVersion': '6.0',
-    'CFBundleShortVersionString': '2.1.2', 'CFBundleVersion': '2.1.2.3',
+    'CFBundleShortVersionString': build['baseVersion'], 'CFBundleVersion': build['baseVersion'],
+    'ILDisplayVersion': build['displayVersion'],
     'CFBundleIconFile': 'AppIcon.icns', 'NSHighResolutionCapable': True,
     'NSPrincipalClass': 'NSApplication', 'LSApplicationCategoryType': 'public.app-category.education',
     'LSMinimumSystemVersion': '.'.join(map(str, minimum)),

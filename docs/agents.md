@@ -1,39 +1,44 @@
-# 智能体制课
+# 使用智能体协助制作
 
-应用负责保存和审阅工程；材料读取与整理由电脑上的智能体完成。教师在应用中决定接管授权和最终交付。
+应用负责保存和审阅，材料读取与整理由电脑上的智能体完成。授权和最终交付始终由你决定。
 
 ## 选择「智能体制作」
 
-「新建项目」对话框里选择「智能体制作」，按提示选择音频、填写课程标题，并按需加入多份试卷、听力原文或答案。材料推荐 DOCX 或文字版 PDF。
+**👉️ 在「新建项目」对话框里选择「智能体制作」**，按提示选择音频、填写课程标题，并按需加入试卷或听力原文。
 
-![新建项目对话框中的智能体制作选项](https://il.luyii.cn/assets/guide/authoring-mode.png)
-
-智能体制作是对话框的主按钮，人工制作在右侧。
-
-**完成标志：** 页面列出音频、标题和所选材料。
+<figure class="shot shot--dialog">
+  <img src="./assets/guide/authoring-mode.png" alt="新建项目对话框中的智能体制作选项" loading="lazy">
+  <span class="shot-pin" style="--x:32%;--y:71%"><span class="shot-pin-label">智能体制作</span></span>
+  <figcaption>材料推荐 DOCX 或文字版 PDF，数量不限。</figcaption>
+</figure>
 
 ## 打开 MCP 并复制配置
 
-在「设置 → 制作与智能体」打开 MCP，展开后点「复制 MCP 配置」，粘贴到支持 HTTP MCP 的智能体客户端（例如 WorkBuddy）；再点「复制操作提示」发给智能体。实际模型在客户端中选择。
+1. **👉️ 到「设置 → 制作与智能体」，打开 MCP。**
+2. **👉️ 点「复制 MCP 配置」，粘贴到支持 HTTP MCP 的客户端（例如 WorkBuddy）。**
+3. **👉️ 点「复制操作提示」，发给智能体。**
 
-![设置中的 MCP 行：右侧开关用于启用](https://il.luyii.cn/assets/guide/mcp-row.png)
+<figure class="shot">
+  <img src="./assets/guide/mcp-row.png" alt="设置中的 MCP 行：右侧开关用于启用" loading="lazy">
+  <span class="shot-pin flip" style="--x:91%;--y:45%"><span class="shot-pin-label">打开 MCP</span></span>
+  <figcaption>开关打开后，行内才会出现复制配置与授权相关操作。</figcaption>
+</figure>
 
-开关打开后，行内才会出现复制配置与授权相关操作。
+## 确认接管
 
-**完成标志：** 客户端连接应用并开始读取制作说明。
+智能体首次申请接管时，应用会显示它的名称和 60 秒倒计时。**👉️ 在应用内点「允许」。**
 
-## 确认接管并查看进度
-
-智能体首次申请接管时，应用显示它的名称和 60 秒审批；确认后才开始操作。应用内显示当前步骤、详情和百分比，转写与资料提取可以并行。随时可以在设置里撤销授权或删除注册。
-
-**完成标志：** 应用显示当前智能体、制作步骤和进度。
+::: warning 看清楚再允许
+接管期间应用会锁定编辑，并显示当前步骤和进度。不认识的智能体或客户端名称不要允许，可以随时在 MCP 设置里撤销授权。
+:::
 
 ## 审阅并保存
 
-智能体交还应用后，打开工程检查每道题与字幕，必要时手动修改。确认后点「保存」，再选择「导出为精听包」或「添加到播放」。
+**👉️ 智能体交还应用后，逐题检查字幕和题目，再点「保存」。**
 
-![智能体交还后的工程审阅界面](https://il.luyii.cn/assets/guide/teacher-review.png)
+<figure class="shot">
+  <img src="./assets/guide/teacher-review.png" alt="智能体交还后的工程审阅界面" loading="lazy">
+  <figcaption>智能体的结果只是初稿，字幕文字和题目答案仍要人工确认。</figcaption>
+</figure>
 
-智能体交还后仍要在应用里逐题审阅；保存后才出现交付按钮。
-
-**完成标志：** 课程成为可练习的 `.ilp` 或本机课程。
+**🎉 完成标志：** 保存后按「[保存并交付](./authoring#保存并交付)」导出 `.ilp`。

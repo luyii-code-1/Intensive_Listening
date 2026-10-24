@@ -22,7 +22,7 @@ internal sealed class SpringContentDialog : FAContentDialog
         Opened += (_, _) => { if (_surface != null) _ = _surface.To(); };
         Closing += async (_, args) =>
         {
-            if (_surface == null || args.Cancel) return;
+            if (_surface == null || args.Cancel || MotionPreferences.PerformanceMode || MotionPreferences.DisableAnimationWaiting) return;
             var deferral = args.GetDeferral();
             try { await _surface.To(0, y: 12, scale: .98, response: .22); }
             finally { deferral.Complete(); }

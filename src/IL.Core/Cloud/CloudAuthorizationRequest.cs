@@ -45,7 +45,7 @@ public sealed class CloudAuthorizationRequest
             throw new CloudAuthenticationException("invalid_state", "登录回调校验失败，请重新登录。");
         if (values.TryGetValue("error", out var error))
             throw new CloudAuthenticationException(error == "access_denied" ? error : "authorization_failed",
-                error == "access_denied" ? "已取消 IL Cloud 授权。" : "IL Cloud 授权失败，请重试。");
+                error == "access_denied" ? "已取消 Intensive Listening 云服务 授权。" : "Intensive Listening 云服务 授权失败，请重试。");
         if (!values.TryGetValue("code", out var code) || string.IsNullOrWhiteSpace(code) || code.Length > 4096)
             throw new CloudAuthenticationException("invalid_code", "登录回调缺少有效授权码。");
         return code;

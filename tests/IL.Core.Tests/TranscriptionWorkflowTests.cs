@@ -22,6 +22,14 @@ public sealed class TranscriptionWorkflowTests : IDisposable
         Assert.Contains("inner marker",failed.ErrorDetails);Assert.Contains("AsrException",failed.ErrorDetails);
         await queue.FlushAsync();var restored=Assert.Single(await Store.LoadAsync());Assert.Equal(failed.ErrorDetails,restored.ErrorDetails);
     }
+    [Fact] public async Task InterruptedCloudJobPersistsConnectionFailureDetails()
+    {
+        await using var queue=Queue((_,_,_,_)=>throw new IL.Core.Cloud.CloudAsrWaitingInterruptedException("连接中断，原任务保留。",new HttpRequestException("connection reset marker")));
+        queue.Enqueue("interrupted fixture",await Audio("interrupted.wav"));await queue.WaitForIdleAsync();
+        var job=Assert.Single(queue.Jobs);Assert.Equal(TranscriptionJobStatus.Interrupted,job.Status);
+        Assert.Contains("connection reset marker",job.ErrorDetails);
+        await queue.FlushAsync();var restored=Assert.Single(await Store.LoadAsync());Assert.Equal(job.ErrorDetails,restored.ErrorDetails);
+    }
     [Fact] public async Task RunsFifoCachesAndConsumesCompletedTranscript()
     {
         var calls=new List<string>();var releases=new Queue<TaskCompletionSource<string>>();

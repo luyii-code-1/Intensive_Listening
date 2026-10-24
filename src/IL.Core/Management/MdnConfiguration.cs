@@ -30,7 +30,7 @@ public sealed class MdnConfiguration
     public static MdnConfiguration? Load(string root)
     {
         var path = Path.Combine(root, "il_mdn_config.yaml");
-        if (!File.Exists(path) || !OperatingSystem.IsWindows()) return null;
+        if (!File.Exists(path) || !(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())) return null;
         return LoadFile(path);
     }
     public static MdnConfiguration LoadFile(string path)

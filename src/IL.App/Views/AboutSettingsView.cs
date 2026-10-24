@@ -52,12 +52,12 @@ internal sealed class AboutSettingsView : StackPanel
         foreach (var content in contents) body.Children.Add(content);
         return new Expander { Header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Children = { WorkspaceUi.Icon(icon, 20), WorkspaceUi.Text(title, 16, true) } }, Content = body, IsExpanded = true, HorizontalAlignment = HorizontalAlignment.Stretch };
     }
-    private static Grid Info(string title, string value, Control? action = null)
+    private static Control Info(string title, string value, Control? action = null)
     {
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 12 };
-        row.Children.Add(WorkspaceUi.Stack(WorkspaceUi.Text(title, 12, true), new SelectableTextBlock { Text = value, TextWrapping = TextWrapping.Wrap }));
-        if (action is not null) { action.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(action, 1); row.Children.Add(action); }
-        return row;
+        var content = WorkspaceUi.Stack(WorkspaceUi.Text(title, 12, true), new SelectableTextBlock { Text = value, TextWrapping = TextWrapping.Wrap });
+        if (action is null) return content;
+        action.VerticalAlignment = VerticalAlignment.Center;
+        return new ResponsivePair(content, action);
     }
     private static Button Link(string title, string url)
     {

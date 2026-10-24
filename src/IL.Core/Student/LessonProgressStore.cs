@@ -59,6 +59,6 @@ public sealed class LessonProgressStore(string? path = null)
             await File.WriteAllTextAsync(temporary, json, ct);
             File.Move(temporary, file, overwrite: true);
         }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); _writes.Release(); }
+        finally { try { if (File.Exists(temporary)) File.Delete(temporary); } finally { _writes.Release(); } }
     }
 }

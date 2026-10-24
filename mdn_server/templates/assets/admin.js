@@ -26,7 +26,17 @@ async function refreshOnline(force=false){
    row.dataset.status=state;const badge=row.querySelector(".badge");badge.classList.toggle("online",state==="online");badge.textContent=state==="disabled"?"已禁用":state==="online"?"在线":"离线";
    const policy=row.querySelector(".policy-state");if(policy){policy.textContent=device.policy_state;policy.title=device.policy_detail;policy.className="policy-state "+(device.policy_current?"confirmed":"pending");}
    const connection=row.querySelector(".connection-state");if(connection)connection.textContent=device.connection;
-   const version=row.querySelector("td:nth-child(2)");if(version)version.textContent=device.version||"版本未知";
+   const role=row.querySelector(".role-state");if(role)role.textContent=device.role_label;
+   const warning=row.querySelector(".role-warning");if(warning){warning.textContent=device.role_warning;warning.hidden=!device.role_warning;}
+   const asr=row.querySelector(".asr-state");if(asr)asr.textContent=device.asr_label;
+   const asrWarning=row.querySelector(".asr-warning");if(asrWarning){asrWarning.textContent=device.asr_warning;asrWarning.hidden=!device.asr_warning;}
+   if(device.cloud){
+    const cloud=device.cloud,put=(selector,value)=>{const element=row.querySelector(selector);if(element){element.textContent=value;element.hidden=!value;}};
+    put(".cloud-status",cloud.statusText);put(".cloud-account",cloud.accountText);put(".cloud-warning",cloud.warning);put(".cloud-command",cloud.commandText);
+    put(".cloud-reported",cloud.reportedText?"最近上报："+cloud.reportedText+(cloud.stale?" · 终端离线":""):"");
+    const form=row.querySelector('form[action="/admin/cloud/logout"]');if(form&&!form.dataset.busy)form.querySelector("button").disabled=!cloud.canLogout;
+   }
+   const version=row.querySelector(".device-version");if(version)version.textContent=device.version||"版本未知";
    const seen=row.querySelector("td:nth-child(3)>small");if(seen)seen.textContent=device.seen_text;
    const name=row.querySelector("td:first-child>a"),original=row.querySelector("td:first-child>small");if(name)name.textContent=device.name;if(original)original.textContent=device.original_name;
    row.dataset.device=device.name+" "+device.original_name+" "+device.id;
@@ -86,7 +96,7 @@ document.addEventListener("submit", async event=>{
  if(form.matches("form[data-update-publish]")){if(!confirm(deploymentPrompt(form))){event.preventDefault();return;}}
  else if(form.matches("form[data-confirm]")&&!confirm(form.dataset.confirm)){event.preventDefault();return;}
  const action=new URL(form.action).pathname;
- if(!["/admin/policy","/admin/device/alias","/admin/updates/retry","/admin/update/cancel","/admin/updates/clear"].includes(action))return;
+ if(!["/admin/policy","/admin/device/alias","/admin/updates/retry","/admin/update/cancel","/admin/updates/clear","/admin/cloud/logout"].includes(action))return;
  event.preventDefault();if(form.dataset.busy)return;form.dataset.busy="true";
  const feedback=document.getElementById("action-feedback"),buttons=Array.from(form.querySelectorAll("button"));
  const body=new FormData(form);buttons.forEach(button=>button.disabled=true);
@@ -96,14 +106,18 @@ document.addEventListener("submit", async event=>{
   const response=await fetch(form.action,{method:"POST",body,signal:deadline.signal});
   if(response.redirected&&new URL(response.url).pathname!=="/admin"){location.assign(response.url);return;}
   if(!response.ok){let message="操作失败（HTTP "+response.status+"）";try{const data=await response.json();if(typeof data.detail==="string")message=data.detail;else if(data.detail)message=JSON.stringify(data.detail);}catch{}throw Error(message);}
+  if(action==="/admin/cloud/logout"){const result=await response.json();form.elements.command_id.value=result.nextCommandId;}
   feedback.className="action-feedback confirmed";
-  feedback.textContent=action==="/admin/policy"?"策略已保存并通知客户端。设备列表可查看策略接收回执。":action==="/admin/updates/retry"?"新任务已下发，等待客户端接收。":"操作已完成。";
-  await refreshOnline(true);
+  feedback.textContent=action==="/admin/cloud/logout"?"退出命令已保存，等待终端执行。可在设备列表查看结果。":action==="/admin/policy"?"策略已保存并通知客户端。设备列表可查看策略接收回执。":action==="/admin/updates/retry"?"新任务已下发，等待客户端接收。":"操作已完成。";
+  if(action!=="/admin/cloud/logout")await refreshOnline(true);
  }catch(error){feedback.className="action-feedback failed";feedback.textContent=error.name==="AbortError"?"等待响应超时，操作可能已保存；请先刷新状态再决定是否重试。":error.message;}
- finally{clearTimeout(timer);delete form.dataset.busy;buttons.forEach(button=>button.disabled=false);}
+ finally{clearTimeout(timer);delete form.dataset.busy;buttons.forEach(button=>button.disabled=action==="/admin/cloud/logout");if(action==="/admin/cloud/logout")refreshOnline(true);}
 });
 function select(options){const s=document.createElement("select");for(const[value,label]of options){const o=document.createElement("option");o.value=value;o.textContent=label;s.append(o);}return s;}
 document.querySelectorAll("[data-option]").forEach(s=>s.value=Object.hasOwn(payload,s.dataset.option)?String(payload[s.dataset.option]):"inherit");
+document.querySelectorAll("[data-cloud-option]").forEach(input=>{const key=input.dataset.cloudOption;input.value=Object.hasOwn(payload.cloudService||{},key)?String(payload.cloudService[key]):"inherit";});
+const clientRole=document.getElementById("client-role");clientRole.value=payload.clientRole||"inherit";
+const asrMode=document.getElementById("asr-mode");asrMode.value=payload.asrMode||"inherit";
 const featureMode=document.getElementById("features-mode");featureMode.value=Object.hasOwn(payload,"disabledFeatures")?"override":"inherit";
 for(const key of features){const label=document.createElement("label"),input=document.createElement("input");input.type="checkbox";input.dataset.feature=key;input.checked=!(payload.disabledFeatures||[]).includes(key);label.append(input,document.createTextNode(featureLabels[key]||key));document.getElementById("feature-fields").append(label);}
 function featureState(){document.querySelectorAll("[data-feature]").forEach(c=>c.disabled=featureMode.value==="inherit");}featureMode.addEventListener("change",featureState);featureState();
@@ -125,7 +139,8 @@ for(const[key,type]of Object.entries(schema)){
 document.getElementById("setting-search").addEventListener("input",e=>document.querySelectorAll(".setting-row").forEach(r=>r.hidden=!r.dataset.search.includes(e.target.value.toLowerCase())));
 document.getElementById("policy-form").addEventListener("submit",e=>{
  try{
-  const result={settings:{},lockedSettings:[]};document.querySelectorAll("[data-option]").forEach(s=>{if(s.value!=="inherit")result[s.dataset.option]=s.value==="true";});
+  const result={settings:{},lockedSettings:[]};if(clientRole.value!=="inherit")result.clientRole=clientRole.value;if(asrMode.value!=="inherit")result.asrMode=asrMode.value;document.querySelectorAll("[data-option]").forEach(s=>{if(s.value!=="inherit")result[s.dataset.option]=s.value==="true";});
+  const cloud={};document.querySelectorAll("[data-cloud-option]").forEach(input=>{if(input.value!=="inherit")cloud[input.dataset.cloudOption]=input.dataset.cloudOption==="mode"?input.value:input.value==="true";});if(Object.keys(cloud).length)result.cloudService=cloud;
   if(featureMode.value!=="inherit")result.disabledFeatures=Array.from(document.querySelectorAll("[data-feature]")).filter(c=>!c.checked).map(c=>c.dataset.feature);
   for(const{key,type,mode,input,saved}of fields){
    if(mode.value==="lock")result.lockedSettings.push(key);if(mode.value!=="enforce")continue;let value=input.value;

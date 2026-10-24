@@ -8,7 +8,7 @@ public sealed class ManagedUpdateDownloader(string root, string publicKey, strin
 {
     public void Validate(ManagedUpdate update)
     {
-        if (update.Mode is not ("ota" or "cold") || !Guid.TryParse(update.Id, out _) || !Version.TryParse(update.Version, out _) || update.Size is <= 0 or > 2L * 1024 * 1024 * 1024 || !Regex.IsMatch(update.Sha256, "^[a-fA-F0-9]{64}$") || !Uri.TryCreate(update.Url, UriKind.Absolute, out var url) || url.Scheme is not ("http" or "https") || url.UserInfo.Length != 0)
+        if (update.Mode is not ("ota" or "cold") || !Guid.TryParse(update.Id, out _) || !ManagedVersion.TryParse(update.Version, out _) || update.Size is <= 0 or > 2L * 1024 * 1024 * 1024 || !Regex.IsMatch(update.Sha256, "^[a-fA-F0-9]{64}$") || !Uri.TryCreate(update.Url, UriKind.Absolute, out var url) || url.Scheme is not ("http" or "https") || url.UserInfo.Length != 0)
             throw new InvalidOperationException("更新描述无效。");
         using var rsa = RSA.Create(); rsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(publicKey), out _);
         if (!rsa.VerifyData(Encoding.UTF8.GetBytes(update.SignedContent), Convert.FromBase64String(update.Signature), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)) throw new InvalidOperationException("更新签名校验失败。");

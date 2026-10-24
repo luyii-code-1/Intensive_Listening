@@ -110,6 +110,7 @@ internal sealed class SpringListCollection<T>(Control owner, IList<T> items, Fun
     private Task RemoveAsync(Row row)
     {
         var version = ++row.ExitVersion;
+        if (MotionPreferences.DisableAnimationWaiting) return RemoveAfterAsync(row, Task.CompletedTask, version);
         return RemoveAfterAsync(row, row.Motion.To(0, y: -8, scale: .985, response: .24), version);
     }
     private async Task RemoveAfterAsync(Row row, Task settling, int version)

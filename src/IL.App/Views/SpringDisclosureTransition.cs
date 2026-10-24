@@ -22,6 +22,11 @@ public sealed class SpringDisclosureTransition : IPageTransition
         var state = _states.GetValue(control, c => new(c)); var generation = ++state.Generation;
         control.ClipToBounds = true; control.IsVisible = true;
         var opening = to != null; var target = 0d;
+        if (MotionPreferences.PerformanceMode || !opening && MotionPreferences.DisableAnimationWaiting)
+        {
+            state.Motion.Set(); state.Height.Stop(); control.IsVisible = opening;
+            control.ClearValue(Control.HeightProperty); return;
+        }
         if (opening)
         {
             control.ClearValue(Control.HeightProperty);

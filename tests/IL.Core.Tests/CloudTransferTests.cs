@@ -10,6 +10,31 @@ namespace IL.Core.Tests;
 public sealed class CloudTransferTests
 {
     [Fact]
+    public async Task OversizedStreamResetsThePartialFileAndReusesAuthorization()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il-overlong-transfer-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            byte[] payload = [1, 2, 3]; var offers = 0; var reads = 0;
+            using var http = new HttpClient(new Handler(request => request.RequestUri!.AbsolutePath switch
+            {
+                "/connect/token" => Json(new { access_token = "access", refresh_token = "refresh", token_type = "Bearer", expires_in = 900 }),
+                "/api/v1/auth/me" => Json(new { id = "user" }),
+                "/api/v1/library/item/downloads" => Offer(),
+                "/api/v1/library/downloads/grant/start" => Json(new { url = "/content", sha256 = Convert.ToHexString(SHA256.HashData(payload)), bytes = payload.Length, fileName = "test.ilp", expires = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds() }),
+                "/content" => new(HttpStatusCode.OK) { Content = ++reads == 1 ? new StreamContent(new NonSeekableBytes([1, 2, 3, 4])) : new ByteArrayContent(payload) },
+                _ => throw new InvalidOperationException(request.RequestUri.AbsolutePath)
+            }));
+            HttpResponseMessage Offer() { offers++; return Json(new { id = "grant", expires = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds() }); }
+            using var auth = new CloudAuthClient(new Tokens(), http); using var cloud = new CloudResources(auth, root, http);
+            Assert.Equal("invalid_length", (await Assert.ThrowsAsync<CloudApiException>(() => cloud.DownloadAsync("item", "file", "ilp", null))).Code);
+            var result = await cloud.DownloadAsync("item", "file", "ilp", null);
+            Assert.Equal(payload, await File.ReadAllBytesAsync(result)); Assert.Equal(1, offers);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    private sealed class NonSeekableBytes(byte[] bytes) : MemoryStream(bytes) { public override bool CanSeek => false; }
+    [Fact]
     public async Task BearerTransportRejectsForeignOriginsBeforeReadingCredentials()
     {
         var store = new Tokens();
@@ -72,6 +97,34 @@ public sealed class CloudTransferTests
             Assert.Equal(2, reads);
             await second.CompleteDownloadAsync("item", "file", "ilp");
             Assert.False(File.Exists(file));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task DifferentPlayableVersionsUseSeparateAuthorizationsAndFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il-playable-test-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            var payload = new byte[] { 1, 2, 3 }; var hash = Convert.ToHexString(SHA256.HashData(payload));
+            var keys = new HashSet<string>(); var offers = 0;
+            using var http = new HttpClient(new Handler(request => request.RequestUri!.AbsolutePath switch
+            {
+                "/connect/token" => Json(new { access_token = "access", refresh_token = "rotated", token_type = "Bearer", expires_in = 900 }),
+                "/api/v1/auth/me" => Json(new { id = "user" }),
+                "/api/v1/library/item/downloads" => Offer(request),
+                "/api/v1/library/downloads/grant/start" => Json(new { url = "/api/v1/content", sha256 = hash, bytes = payload.Length, fileName = "lesson.ilp", expires = 1 }),
+                "/api/v1/content" => new(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) },
+                _ => throw new InvalidOperationException("Unexpected endpoint")
+            }));
+            HttpResponseMessage Offer(HttpRequestMessage request) { offers++; Assert.True(keys.Add(request.Headers.GetValues("Idempotency-Key").Single())); return Json(new { id = "grant", expires = 1 }); }
+            using var auth = new CloudAuthClient(new Tokens(), http); using var resources = new CloudResources(auth, root, http);
+            var first = new CloudPlayableItem("file:item", "file", "item", "Lesson", 1, "version1", hash, payload.Length, 1, "/library/item/downloads");
+            var file1 = await resources.DownloadAsync(first, null);
+            var file2 = await resources.DownloadAsync(first with { Version = "version2" }, null);
+            Assert.NotEqual(file1, file2); Assert.Equal(2, offers);
+            Assert.Equal(payload, await File.ReadAllBytesAsync(file1)); Assert.Equal(payload, await File.ReadAllBytesAsync(file2));
         }
         finally { Directory.Delete(root, true); }
     }

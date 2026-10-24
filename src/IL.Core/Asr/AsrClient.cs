@@ -15,8 +15,8 @@ public sealed record AsrConfig(string BaseUrl,string Endpoint,string Model,strin
     public bool IsComplete=>new[]{BaseUrl,Endpoint,Model,ApiKey}.All(s=>!string.IsNullOrWhiteSpace(s));
     public static AsrConfig FromEnvironment()=>new(Environment.GetEnvironmentVariable("ILP_ASR_BASE_URL")??DefaultBaseUrl,Environment.GetEnvironmentVariable("ILP_ASR_ENDPOINT")??DefaultEndpoint,Environment.GetEnvironmentVariable("ILP_ASR_MODEL")??DefaultModel,Environment.GetEnvironmentVariable("ILP_ASR_API_KEY")??"");
 }
-public enum AsrStage { Decoding,Slicing,Uploading,Recognizing,Formatting,Merging }
-public sealed record AsrProgress(AsrStage Stage,double? StageFraction=null,long BytesDone=0,long BytesTotal=0,int? SegmentIndex=null,int? SegmentTotal=null);
+public enum AsrStage { Decoding,Slicing,Uploading,Recognizing,Formatting,Merging,Queued }
+public sealed record AsrProgress(AsrStage Stage,double? StageFraction=null,long BytesDone=0,long BytesTotal=0,int? SegmentIndex=null,int? SegmentTotal=null,string? Detail=null);
 public sealed class AsrException(string message,Exception? inner=null):Exception(message,inner);
 public sealed class AsrClient(HttpClient? httpClient=null,TimeSpan? timeout=null)
 {
@@ -41,6 +41,7 @@ public sealed class AsrClient(HttpClient? httpClient=null,TimeSpan? timeout=null
         try
         {
             var audio=await File.ReadAllBytesAsync(audioFile,deadline.Token);progress?.Report(new(AsrStage.Uploading,0,BytesTotal:audio.Length));
+            if (audio.Length == 0) { progress?.Report(new(AsrStage.Formatting)); return ""; }
             using var request=new HttpRequestMessage(HttpMethod.Post,endpoint);
             request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",config.ApiKey.Trim());
             var payload=new{model=config.Model.Trim(),input=new{messages=new[]{new{role="user",content=new[]{new{audio="data:audio/wav;base64,"+Convert.ToBase64String(audio)}}}}},parameters=new{format="wav",language=config.Language}};
@@ -90,7 +91,26 @@ public sealed class AsrClient(HttpClient? httpClient=null,TimeSpan? timeout=null
             }
         }
     }
-    private static bool IsNoWords(string body){try{using var d=JsonDocument.Parse(body);return Text(d.RootElement,"code")=="ASR_RESPONSE_HAVE_NO_WORDS"||Text(d.RootElement,"message")=="ASR_RESPONSE_HAVE_NO_WORDS";}catch(JsonException){return false;}}
+    private static bool IsNoWords(string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            return Check(document.RootElement);
+        }
+        catch (JsonException) { return false; }
+        static bool Check(JsonElement value)
+        {
+            if (value.ValueKind != JsonValueKind.Object) return false;
+            var code = Text(value, "code"); var message = Text(value, "message")?.Trim();
+            if (code == "ASR_RESPONSE_HAVE_NO_WORDS" || message == "ASR_RESPONSE_HAVE_NO_WORDS") return true;
+            // Only the explicit no-speech response is recoverable; other 400s remain failures.
+            if ((code is null or "InvalidParameter" or "InvalidParameterValue") &&
+                (message is "No speech detected" or "No speech detected." or "Audio contains no speech")) return true;
+            return value.TryGetProperty("error", out var error) && Check(error)
+                || value.TryGetProperty("output", out var output) && Check(output);
+        }
+    }
     private static string ServerError(int status,string body){try{using var d=JsonDocument.Parse(body);var message=Text(d.RootElement,"message")??Text(d.RootElement,"code");if(!string.IsNullOrWhiteSpace(message))return $"ASR 请求失败（{status}）：{message.Trim()}";}catch(JsonException){}return $"ASR 请求失败，状态码 {status}。";}
     internal static string? Text(JsonElement e,string key)=>e.ValueKind==JsonValueKind.Object&&e.TryGetProperty(key,out var v)&&v.ValueKind==JsonValueKind.String?v.GetString():null;
 }

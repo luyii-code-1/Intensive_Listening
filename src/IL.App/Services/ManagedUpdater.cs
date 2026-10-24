@@ -28,6 +28,7 @@ public sealed class ManagedUpdater : IDisposable
     private string Root => Path.Combine(_data, "updates");
     public string Status { get; private set; } = "尚无组织更新任务";
     public bool IsBusy => _busy || _automaticPending;
+    public bool Enabled { get; set; } = true;
     public bool HasUpdate => _offered is not null && _offered == EligibleUpdate();
     public bool CanUpdate => HasUpdate && !IsBusy && !_journal.Attempted(_offered!.Id);
     public bool CanInstall => CanUpdate && _ready == _offered && _file is not null;
@@ -41,7 +42,7 @@ public sealed class ManagedUpdater : IDisposable
     public string? UpdateMode => _offered?.Mode;
     public string? UpdateId => _offered?.Id;
     public bool CanInstallDeferred => DeferredUntilClose && _ready is not null && _ready == EligibleUpdate();
-    public ManagedUpdater(MdnClient client, string data) : this(() => client.Policy, () => client.Configuration, client.DownloadCredential, data, AppBuildInfo.Version) { _client = client; }
+    public ManagedUpdater(MdnClient client, string data) : this(() => client.Policy, () => client.Configuration, client.DownloadCredential, data, AppBuildInfo.UpdateVersion) { _client = client; }
     public void DeferUntilClose() { DeferredUntilClose = true; ReopenAfterUpdate = false; _ = FeedbackAsync("deferred", "用户选择关闭窗口后更新"); }
     private Task FeedbackAsync(string status, string message = "", int progress = 0) => _offered is {} update ? FeedbackAsync(update, status, message, progress) : Task.CompletedTask;
     private async Task FeedbackAsync(ManagedUpdate update, string status, string message = "", int progress = 0)
@@ -63,7 +64,7 @@ public sealed class ManagedUpdater : IDisposable
     private ManagedUpdate? EligibleUpdate()
     {
         var update = _policy().Update;
-        return update is not null && Guid.TryParse(update.Id, out _) && _configuration() is not null &&
+        return Enabled && update is not null && Guid.TryParse(update.Id, out _) && _configuration() is not null &&
             !_policy().DisabledFeatures.Contains("updates") && ManagedUpdateJournal.AllowsVersion(_version, update.Version) && !_journal.Completed(update.Id) ? update : null;
     }
     private ManagedUpdateDownloader Downloader(ManagedUpdate update)
@@ -221,9 +222,9 @@ public sealed class ManagedUpdater : IDisposable
             var result = JsonSerializer.Deserialize<JsonElement>(await File.ReadAllTextAsync(Path.Combine(data, "updates", "result.json")));
             var id = result.GetProperty("id").GetString()!;
             var version = result.TryGetProperty("version", out var value) ? value.GetString() : null;
-            var success = result.GetProperty("success").GetBoolean() && ManagedUpdateJournal.IsSameVersion(AppBuildInfo.Version, version);
+            var success = result.GetProperty("success").GetBoolean() && ManagedUpdateJournal.IsSameVersion(AppBuildInfo.UpdateVersion, version);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            await using var client = new MdnClient(data, AppBuildInfo.Version);
+            await using var client = new MdnClient(data, AppBuildInfo.UpdateVersion);
             try { await client.SynchronizeAsync(timeout.Token); } catch (Exception e) when (e is not OutOfMemoryException) { }
             await client.ReportUpdateAsync(id, success ? "success" : "failed", success ? "已成功更新到 " + version : "安装未完成或用户取消 UAC", success ? 100 : 0);
             if (success) new ManagedUpdateJournal(Path.Combine(data, "updates")).MarkCompleted(id, version!);

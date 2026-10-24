@@ -18,7 +18,7 @@ public sealed class CrashReportWindow : Window
         var root = Directory.GetParent(Path.GetDirectoryName(path)!)!.FullName;
         var store = new CrashReportStore(root);
         Icon = AppBrand.WindowIcon();
-        Title = "Intensive Listening · 崩溃报告"; Width = 720; Height = 540; MinWidth = 540; MinHeight = 400;
+        Title = submit ? "Intensive Listening · 崩溃报告" : "Intensive Listening · 历史错误记录"; Width = 720; Height = 540; MinWidth = 540; MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var status = WorkspaceUi.Text(report.UploadAllowed ? "报告已保存在本机，正在尝试提交遥测。" : "报告已保存在本机。遥测已关闭。", 13);
         var details = new SelectableTextBlock { Text = report.Summary, TextWrapping = TextWrapping.Wrap, FontSize = 13 };
@@ -36,12 +36,12 @@ public sealed class CrashReportWindow : Window
                     else status.Text = "启动失败，请从安装目录重新打开应用。";
                 }
                 catch (Exception error) { AppLog.Error("重启应用失败", error); status.Text = error.Message; }
-            }, true),
-            WorkspaceUi.Button("关闭", () => { Close(); return Task.CompletedTask; }));
+            }, submit),
+            WorkspaceUi.Button(submit ? "关闭" : "关闭记录，继续使用", () => { Close(); return Task.CompletedTask; }, !submit));
         buttons.HorizontalAlignment = HorizontalAlignment.Right;
         var body = new Grid { Margin = new Thickness(24), RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*,Auto") };
-        body.Children.Add(WorkspaceUi.Text(report.Fatal ? "程序意外退出" : "后台任务意外退出", 23, true));
-        var message = WorkspaceUi.Text(report.Message, 14); message.Margin = new Thickness(0, 10, 0, 12); Grid.SetRow(message, 1); body.Children.Add(message);
+        body.Children.Add(WorkspaceUi.Text(!submit ? "上次运行的错误记录" : report.Fatal ? "程序意外退出" : "后台任务意外退出", 23, true));
+        var message = WorkspaceUi.Text(submit ? report.Message : $"这份记录发生于 {report.OccurredAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}。当前应用已启动，关闭记录后可以继续使用。\n\n{report.Message}", 14); message.Margin = new Thickness(0, 10, 0, 12); Grid.SetRow(message, 1); body.Children.Add(message);
         status.Margin = new Thickness(0, 0, 0, 14); Grid.SetRow(status, 2); body.Children.Add(status);
         var scroll = new ScrollViewer { Content = details, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
         Grid.SetRow(scroll, 3); body.Children.Add(scroll); buttons.Margin = new Thickness(0, 18, 0, 0); Grid.SetRow(buttons, 4); body.Children.Add(buttons);

@@ -3,9 +3,8 @@ namespace IL.Core.Updates;
 public sealed class ManagedUpdateJournal(string root)
 {
     public static bool AllowsVersion(string current, string offered) =>
-        Version.TryParse(current, out var installed) && Version.TryParse(offered, out var next) && Normalize(next) >= Normalize(installed);
-    private static Version Normalize(Version version) => new(version.Major, version.Minor, Math.Max(0, version.Build), Math.Max(0, version.Revision));
-    public static bool IsSameVersion(string current, string? offered) => Version.TryParse(current, out var installed) && Version.TryParse(offered, out var next) && Normalize(installed) == Normalize(next);
+        ManagedVersion.TryParse(current, out var installed) && ManagedVersion.TryParse(offered, out var next) && next.CompareTo(installed) >= 0;
+    public static bool IsSameVersion(string current, string? offered) => ManagedVersion.TryParse(current, out var installed) && ManagedVersion.TryParse(offered, out var next) && installed.CompareTo(next) == 0;
     private string PathFor(string id, string suffix) => Path.Combine(root, Guid.Parse(id).ToString("D") + suffix);
     public bool Completed(string id) => File.Exists(PathFor(id, ".completed"));
     public bool Attempted(string id) => File.Exists(PathFor(id, ".attempt"));

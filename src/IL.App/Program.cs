@@ -31,6 +31,7 @@ internal static class Program
         if (instanceVerification >= 0) return InstanceVerification.Run(args[instanceVerification + 1]);
         var instanceProbe = Array.IndexOf(args, "--instance-probe");
         if (instanceProbe >= 0) return InstanceVerification.Probe(args[instanceProbe + 1], args[instanceProbe + 2]);
+        if (args.Length == 2 && args[0] == "--verify-xaml") return XamlVerification.Run(args[1]);
         var verification=Array.IndexOf(args,"--verify-runtime");
         if(verification>=0)return RuntimeVerification.RunAsync(verification+1<args.Length?args[verification+1]:"verification.json").GetAwaiter().GetResult();
         var crashVerification = Array.IndexOf(args, "--verify-crash");

@@ -2,13 +2,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { echo 'Build on an Apple Silicon Mac.'; exit 1; }
+python3 scripts/build_version.py ${IL_BUILD_VERSION_PREPARED:+--reuse}
 ffmpeg="${ILP_FFMPEG_BUILD_PATH:-$(command -v ffmpeg)}"
 archive=artifacts/native/vlc-3.0.23-arm64.dmg
 mount="$PWD/artifacts/native/vlc-build-arm64"
 output="${1:-artifacts/build/macos-arm64/Intensive Listening 2.0.app}"
 package_format="${2:-dmg}"
+distribution="${IL_DISTRIBUTION_DIR:-$PWD/../dist}"
 case "$package_format" in dmg|zip) ;; *) echo 'Package format must be dmg or zip.'; exit 1 ;; esac
-mkdir -p artifacts/native artifacts/verification artifacts/build artifacts/installer
+mkdir -p artifacts/native artifacts/verification artifacts/build artifacts/installer "$distribution"
 if [[ ! -f "$archive" ]]; then
   curl -fL --retry 2 https://get.videolan.org/vlc/3.0.23/macosx/vlc-3.0.23-arm64.dmg -o "$archive"
 fi
@@ -33,7 +35,8 @@ if [[ "$package_format" == dmg ]]; then
   stage="$(mktemp -d "$PWD/artifacts/installer/macos-stage.XXXXXX")"
   ditto "$output" "$stage/$(basename "$output")"
   ln -s /Applications "$stage/Applications"
-  package=artifacts/installer/Intensive-Listening-2.1.2.3-osx-arm64.dmg
+  artifact_version="$(python3 -c 'import json; print(json.load(open("artifacts/version/build.json"))["artifactVersion"])')"
+  package="$distribution/Intensive-Listening-${artifact_version}-osx-arm64.dmg"
   hdiutil create -volname 'Intensive Listening 2 Resonance' -srcfolder "$stage" -format UDZO -fs HFS+ -ov "$package"
 else
   package=artifacts/build/IL2-osx-arm64.zip

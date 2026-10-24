@@ -61,8 +61,10 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
         Closed += (_, _) => _paneMotion.Stop();
         var standalone=Program.Arguments.Contains("--standalone");
         _services=new(action=>Dispatcher.UIThread.Post(action),standalone);
+        InteractionPerformance.Telemetry = _services.Telemetry;
+        InteractionPerformance.Install(this);
         AgentProgressHost.Content = new AgentProgressView(_services.Server.WorkflowProgress);
-        _student=new(_services.Student);
+        _student=new(_services.Student, standalone ? null : new CloudLessonsView(_services), standalone ? null : ShowTeacherAsync);
         AddHandler(KeyDownEvent, OnPlayerKeyDown, RoutingStrategies.Tunnel);
         AddHandler(KeyUpEvent, OnPlayerKeyUp, RoutingStrategies.Tunnel);
         Deactivated += (_, _) => _heldPlayerKeys.Clear();
@@ -83,7 +85,15 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
                 throw new IOException(_services.Student.Status);
         };
         _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(_services.Server.IsRunning);},_services.Server,
-            standalone ? null : new CloudSettingsView(_services, _teacher.FlushDraftAsync, async () => { await _services.Student.RefreshAsync(preservePlayback: true); await _teacher.RefreshAsync(); }));
+            standalone ? null : new CloudSettingsView(_services, () => _settings?.Populate(_services.Settings)), standalone ? null : _services.CloudAsr, standalone ? null : _services.CloudAccount);
+        _teacher.CloudTransfers = async () =>
+        {
+            ManagedRuntime.Require("authoring");
+            if (!_services.CloudAccount.Enabled) { ShowSettings(); _settings.ShowCloud(); return; }
+            var cloud = new CloudAuthoringView(_services, _teacher.FlushDraftAsync, async () => { await _services.Student.RefreshAsync(preservePlayback: true); await _teacher.RefreshAsync(); });
+            var dialog = AppDialogs.Create(this, "Intensive Listening 云服务", new ScrollViewer { Content = cloud, MaxHeight = Math.Max(240, ClientSize.Height - 200) }, Math.Min(1000, ClientSize.Width - 60));
+            dialog.CloseButtonText = "关闭"; await dialog.ShowAsync(this);
+        };
         _settings.ConfigureUpdates(_services.Updates, _services.ManagedUpdates, InstallManagedUpdateAsync);
         _settings.ConfigureManagedLessons(_services.ManagedLessons);
         _services.ManagedLessons.IsInUse = uuid => OnUiAsync(() => Task.FromResult(_services.Student.CurrentLesson?.Id.Equals(uuid, StringComparison.OrdinalIgnoreCase) == true || _teacher.HasOpenProject));
@@ -94,7 +104,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
             WorkspaceToast.Show(this, "组织精听包已导入", $"{manifest?.Title ?? lesson.Title} · 版本 {lesson.PackageVersion}\n{manifest?.CreatorDescription}");
         });
         RefreshManagedBanner();
-        _services.ManagedUpdates.AutomaticInstall=()=>OnUiAsync(async()=>{await AutomaticManagedUpdateAsync();return true;});
+        if (OperatingSystem.IsWindows()) _services.ManagedUpdates.AutomaticInstall=()=>OnUiAsync(async()=>{await AutomaticManagedUpdateAsync();return true;});
         _services.ManagedUpdates.NotificationRequested += update => Dispatcher.UIThread.Post(async () =>
         {
             var title = "组织更新已下载";
@@ -107,17 +117,14 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
             _pendingColdUpdate = update;
             await ShowPendingColdUpdateAsync();
         });
+        _services.Mdn.ApplyPolicyAsync = () => OnUiAsync(async () => { await ApplyManagedPolicyAsync(); return true; });
         _services.Mdn.Changed+=()=>Dispatcher.UIThread.Post(async()=>
         {
             RefreshManagedBanner();
             if(!await _servicesReady.Task)return;
             _ = _services.ManagedLessons.RefreshAsync();
             if(_managedRevision==_services.Mdn.Policy.Revision){_ = _services.ManagedUpdates.RefreshAsync();return;}
-            _managedRevision=_services.Mdn.Policy.Revision;
-            var settings=await _services.SettingsStore.LoadAsync();await _services.ApplySettingsAsync(settings);ApplyTheme(settings);_settings.Populate(settings);
-            _residence?.UpdateMcpState(_services.Server.IsRunning);
-            if(!ManagedRuntime.Allows("playback"))await _services.Student.PauseAsync();
-            _teacher.ApplyManagement();_student.ApplyManagement();
+            await ApplyManagedPolicyAsync();
             _ = _services.ManagedUpdates.RefreshAsync();
         });
         _services.ConfirmForcedCuts=()=>OnUiAsync(()=>{RestoreWorkspace();return AppDialogs.ConfirmForcedCutsAsync(this);});
@@ -126,7 +133,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
         Closed += (_, _) => _updateNotification?.Dispose();
         _services.Server.AgentStateChanged+=active=>Dispatcher.UIThread.Post(async()=>{AgentTakeoverText.Text=$"当前 {_services.Server.ActiveAgentName ?? "未命名智能体"} 正在接管本应用";AgentOverlay.IsVisible=active;ShellGrid.IsEnabled=!active;ShellGrid.Effect=active?new BlurEffect{Radius=12}:null;_teacher.SetAgentMode(active);if(active)Navigate(1);else await _teacher.FinishAgentSessionAsync();});
         _services.Api.ProjectChanged=()=>Dispatcher.UIThread.Post(async()=>await _teacher.RefreshAsync());
-        _services.Api.OpenProject=id=>Dispatcher.UIThread.Post(async()=>{RestoreWorkspace();await _teacher.OpenProjectAsync(id);Navigate(1);});
+        _services.Api.OpenProject=id=>Dispatcher.UIThread.Post(async()=>{if(!ManagedRuntime.Allows("authoring"))return;RestoreWorkspace();await _teacher.OpenProjectAsync(id);Navigate(1);});
         _services.Api.LibraryChanged=()=>Dispatcher.UIThread.Post(async()=>await _services.Student.RefreshAsync());
         _teacher.StandaloneExporter=async project=>{if(await WorkspaceUi.Save(this,"导出独立播放器",project.Title+".exe","exe") is {} file)return await _services.ExportStandaloneAsync(project,file);return null;};
         StudentButton.Click+=(_,_)=>Navigate(0);
@@ -170,6 +177,16 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
         }
         else
             Closing+=async(_,e)=>{if(_closing)return;e.Cancel=true;await ExitAsync();};
+    }
+    private async Task ApplyManagedPolicyAsync()
+    {
+        var settings = await _services.SettingsStore.LoadAsync();
+        await _services.ApplySettingsAsync(settings); ApplyTheme(settings); _settings.Populate(settings);
+        _residence?.UpdateMcpState(_services.Server.IsRunning);
+        if (!ManagedRuntime.Allows("playback")) await _services.Student.PauseAsync();
+        _teacher.ApplyManagement(); _student.ApplyManagement(); UpdatePane();
+        if (!ManagedRuntime.Allows("authoring") && _destination == 1) { await _teacher.FlushDraftAsync(); Navigate(0); }
+        _managedRevision = _services.Mdn.Policy.Revision;
     }
     private void ToggleMaximize() => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
     private void RefreshManagedBanner()
@@ -313,6 +330,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
     private void ShowSettings(){if(_destination==2)return;if(_destination!=2)_settingsBack=_destination;_settings.Populate(_services.Settings);Navigate(2);}
     private void Navigate(int destination)
     {
+        if (destination == 1 && !ManagedRuntime.Allows("authoring")) destination = 0;
         AppLog.Operation("navigation", $"切换页面 from={_destination} to={destination}");
         _heldPlayerKeys.Clear();
         _destination=destination;PageHost.Content=destination switch{1=>_teacher,2=>_settings,_=>_student};
@@ -355,7 +373,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
     }
     private async Task ShowTeacherAsync()
     {
-        if (_openingTeacher || _destination == 1) return;
+        if (!ManagedRuntime.Allows("authoring") || _openingTeacher || _destination == 1) return;
         var fromStudent = _destination == 0;
         _openingTeacher = true; NavigationBusy.IsVisible = true; _teacher.IsHitTestVisible = false;
         var source = _destination;
@@ -377,6 +395,8 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
         var paneWidth = expanded ? 320 : 48;
         if (IsVisible) _ = _paneMotion.To(paneWidth, FirstRunWizard.MotionReduced() ? .2 : .32);
         else _paneMotion.Set(paneWidth);
+        TeacherButton.IsEnabled = ManagedRuntime.Allows("authoring"); TeacherButton.Opacity = TeacherButton.IsEnabled ? 1 : .45;
+        QueueButton.IsEnabled = ManagedRuntime.Allows("asr"); QueueButton.Opacity = QueueButton.IsEnabled ? 1 : .45;
         NavigationContent(StudentButton,"play","播放",expanded,_destination==0);
         NavigationContent(TeacherButton,"education","制作",expanded,_destination==1);
         NavigationContent(SettingsButton,"settings","设置",expanded,_destination==2);
@@ -398,7 +418,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
     }
     private async Task ShowTasksAsync()
     {
-        if(_taskDialog is not null)return;
+        if(!ManagedRuntime.Allows("asr") || _taskDialog is not null)return;
         AppLog.Operation("queue", "打开转写队列");
         var queue=new QueueView(_services.Queue,async job=>{_taskDialog?.Hide();await _teacher.LoadJobTranscriptAsync(job);Navigate(1);},async match=>{if(match.LessonId is {} id){_taskDialog?.Hide();Navigate(0);_services.Student.SelectedLesson=_services.Student.Lessons.FirstOrDefault(l=>l.Id==id);await _services.Student.CurrentLoad;}},()=>PickAudioForQueueAsync());
         var width=Math.Min(ClientSize.Width-32,Math.Clamp(ClientSize.Width*.618,640,980));
@@ -415,6 +435,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
     }
     private static void ApplyTheme(AppSettings settings)
     {
+        MotionPreferences.Apply(settings);
         if (Application.Current is not { } app) return;
         app.RequestedThemeVariant = settings.ThemeMode switch { "dark" => ThemeVariant.Dark, "light" => ThemeVariant.Light, _ => ThemeVariant.Default };
         ApplicationTypography.Apply(settings);
@@ -430,10 +451,10 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
             {
                 var result=JsonNode.Parse(await File.ReadAllTextAsync(updateResult));
                 _services.ManagedUpdates.RecordResult(result?["id"]?.ToString() ?? "", result?["version"]?.ToString(), result?["success"]?.GetValue<bool>() == true);
-                if (result?["success"]?.GetValue<bool>() == true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.Version, result?["version"]?.ToString())) AppBuildInfo.SuccessfulUpdateVersion = AppBuildInfo.DisplayVersion;
+                if (result?["success"]?.GetValue<bool>() == true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.UpdateVersion, result?["version"]?.ToString())) AppBuildInfo.SuccessfulUpdateVersion = AppBuildInfo.DisplayVersion;
                 if (Guid.TryParse(result?["id"]?.ToString(), out var resultId))
-                    await _services.Mdn.ReportUpdateAsync(resultId.ToString(), result?["success"]?.GetValue<bool>() == true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.Version, result?["version"]?.ToString()) ? "success" : "failed", result?["success"]?.GetValue<bool>() == true ? "更新安装完成" : "安装未完成或用户取消 UAC");
-                if(result?["success"]?.GetValue<bool>()==true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.Version, result?["version"]?.ToString()) && result?["automaticOobe"]?.GetValue<bool>()==true && _services.Settings.EulaAcceptedVersion.Length>0 && ManagedRuntime.IsManaged)
+                    await _services.Mdn.ReportUpdateAsync(resultId.ToString(), result?["success"]?.GetValue<bool>() == true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.UpdateVersion, result?["version"]?.ToString()) ? "success" : "failed", result?["success"]?.GetValue<bool>() == true ? "更新安装完成" : "安装未完成或用户取消 UAC");
+                if(result?["success"]?.GetValue<bool>()==true && IL.Core.Updates.ManagedUpdateJournal.IsSameVersion(AppBuildInfo.UpdateVersion, result?["version"]?.ToString()) && result?["automaticOobe"]?.GetValue<bool>()==true && _services.Settings.EulaAcceptedVersion.Length>0 && ManagedRuntime.IsManaged)
                 { var completed=_services.Settings with{CompletedInstallationId=installationId};await _services.SettingsStore.SaveAsync(completed);await _services.ApplySettingsAsync(completed); }
                 if (result?["success"]?.GetValue<bool>() != true) File.Delete(updateResult);
             }
@@ -451,12 +472,12 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
             if(!_services.Standalone&&_services.Settings.NeedsOnboarding(installationId))
             {
                 var legal=Path.Combine(AppContext.BaseDirectory,"assets","legal");
-                var settings=await AppDialogs.FirstRunAsync(this,_services.Settings,await File.ReadAllTextAsync(Path.Combine(legal,"eula_zh_cn.txt")),await File.ReadAllTextAsync(Path.Combine(legal,"privacy_zh_cn.txt")),InstallationOnboarding.WelcomeOnly(_services.DataDirectory));
+                var settings=await AppDialogs.FirstRunAsync(this,_services.Settings,await File.ReadAllTextAsync(Path.Combine(legal,"eula_zh_cn.txt")),await File.ReadAllTextAsync(Path.Combine(legal,"privacy_zh_cn.txt")),InstallationOnboarding.WelcomeOnly(_services.DataDirectory), _services.CloudAccount);
                 if(settings is null){await ExitAsync();return;}settings=settings with { CompletedInstallationId=installationId };await _services.SettingsStore.SaveAsync(settings);_settings.Populate(settings);ApplyTheme(settings);await _services.ApplySettingsAsync(settings);
             }
             else await _services.ApplySettingsAsync(_services.Settings);
             if (File.Exists(updateResult)) File.Delete(updateResult);
-            if (!_services.Standalone) _ = _services.Updates.CheckAsync(AppBuildInfo.Version);
+            if (!_services.Standalone) _ = _services.Updates.CheckAsync(AppBuildInfo.UpdateVersion);
             if (_services.PreconfigurationError is {} presetError) WorkspaceToast.Show(this, "预设配置", presetError, true);
             _residence?.UpdateMcpState(_services.Server.IsRunning);
             for(var i=0;i<Program.Arguments.Length;i++)
@@ -469,7 +490,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
             if(_services.Queue.InterruptedCount>0&&await AppDialogs.ConfirmAsync(this,"恢复转写任务",$"发现 {_services.Queue.InterruptedCount} 个未完成的任务，继续处理？","恢复"))_services.Queue.ResumeInterrupted();
             _servicesReady.TrySetResult(true);
             _initialized.TrySetResult(true);
-            _teacher.ApplyManagement();_student.ApplyManagement();
+            _teacher.ApplyManagement();_student.ApplyManagement();UpdatePane();if(!ManagedRuntime.Allows("authoring")&&_destination==1){await _teacher.FlushDraftAsync();Navigate(0);}
             if(!_services.Standalone){_services.Mdn.Start();_ = _services.ManagedUpdates.RefreshAsync();_ = _services.ManagedLessons.RefreshAsync();}
         }
         catch(Exception ex){AppLog.Warning("初始化失败",ex);_services.Student.Status=$"初始化失败：{ex.Message}";}

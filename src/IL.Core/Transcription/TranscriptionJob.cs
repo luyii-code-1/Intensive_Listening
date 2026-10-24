@@ -15,7 +15,7 @@ public delegate Task<string> AsrRunner(string audioPath,IProgress<AsrProgress>? 
 public sealed record TranscriptionJob(string Id,string Title,string AudioPath,TranscriptionJobStatus Status,TranscriptionStage Stage,string Message,DateTimeOffset EnqueuedAt,
     string? ProjectId=null,double? Fraction=null,bool FractionIsEstimated=false,long BytesDone=0,long BytesTotal=0,int? SegmentIndex=null,int? SegmentTotal=null,
     string? Sha256=null,string? AudioMd5=null,string? CacheProfile=null,DuplicateMatch? Duplicate=null,bool DuplicateApproved=false,TimeSpan? AudioDuration=null,
-    DateTimeOffset? StartedAt=null,DateTimeOffset? FinishedAt=null,string? Srt=null,bool SrtConsumed=false,string? ErrorDetails=null)
+    DateTimeOffset? StartedAt=null,DateTimeOffset? FinishedAt=null,string? Srt=null,bool SrtConsumed=false,string? ErrorDetails=null, decimal? ChargedCredits=null)
 {
     public bool IsTerminal=>Status is TranscriptionJobStatus.Completed or TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled;
     public bool IsActive=>Status is TranscriptionJobStatus.Queued or TranscriptionJobStatus.Running or TranscriptionJobStatus.AwaitingDecision;

@@ -14,6 +14,7 @@ internal sealed class SpringScalar(Control owner, double initial, Action<double>
     public void Set(double value) { Stop(); _value = _target = value; _velocity = 0; apply(value); }
     public Task To(double target, double response = .32)
     {
+        if (MotionPreferences.PerformanceMode) { Set(target); return Task.CompletedTask; }
         _completion?.TrySetResult(); _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         _target = target; _response = response;
         var completion = _completion;
@@ -28,7 +29,8 @@ internal sealed class SpringScalar(Control owner, double initial, Action<double>
     private void RequestFrame(TopLevel topLevel, long generation) => topLevel.RequestAnimationFrame(time =>
     {
         if (!_running || generation != _generation) return;
-        var dt = _lastFrame is { } last ? Math.Clamp((time - last).TotalSeconds, 0, 1.0 / 30) : 0;
+        if (MotionPreferences.PerformanceMode) { Set(_target); return; }
+        var dt = _lastFrame is { } last ? Math.Max(0, (time - last).TotalSeconds) : 0;
         _lastFrame = time;
         var omega = 2 * Math.PI / _response; var offset = _value - _target; var coefficient = _velocity + omega * offset; var decay = Math.Exp(-omega * dt);
         _value = _target + (offset + coefficient * dt) * decay; _velocity = (_velocity - omega * coefficient * dt) * decay;

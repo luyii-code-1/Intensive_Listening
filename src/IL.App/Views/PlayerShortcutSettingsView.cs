@@ -24,16 +24,15 @@ internal sealed class PlayerShortcutSettingsView : StackPanel
         Children.Add(WorkspaceUi.Text("点击按键按钮，再按翻页笔或键盘上的单键；Esc 取消录入。", 12));
         foreach (var choice in PlayerShortcuts.Actions)
         {
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,160,Auto"), ColumnSpacing = 8 };
-            var title = WorkspaceUi.Text(choice.Title); title.VerticalAlignment = VerticalAlignment.Center; row.Children.Add(title);
-            var button = new Button { Content = "未绑定", HorizontalAlignment = HorizontalAlignment.Stretch };
+            var title = WorkspaceUi.Text(choice.Title); title.VerticalAlignment = VerticalAlignment.Center;
+            var button = new Button { Content = "未绑定", MinWidth = 120, MaxWidth = 200, HorizontalAlignment = HorizontalAlignment.Stretch };
             button.Click += (_, _) =>
             {
                 CancelRecording(); button.Focus(); _recording = choice.Action;
                 _status.Text = "请按一个单键，Esc 取消"; UpdateButtons();
             };
             button.LostFocus += (_, _) => { if (_recording == choice.Action) CancelRecording(); };
-            _buttons[choice.Action] = button; Grid.SetColumn(button, 1); row.Children.Add(button);
+            _buttons[choice.Action] = button;
             var clear = WorkspaceUi.IconButton("cancel", "清除绑定", async () =>
             {
                 CancelRecording();
@@ -41,7 +40,7 @@ internal sealed class PlayerShortcutSettingsView : StackPanel
                 if (!next.Remove(choice.Action)) return;
                 await SaveAsync(next);
             });
-            Grid.SetColumn(clear, 2); row.Children.Add(clear); Children.Add(row);
+            Children.Add(new ResponsivePair(title, WorkspaceUi.Row(button, clear)) { MinimumContentWidth = 140, Gap = 8 });
         }
         Children.Add(_status);
         AddHandler(KeyDownEvent, OnCaptureKey, RoutingStrategies.Tunnel);

@@ -1,0 +1,11 @@
+<td class="cloud-state">
+ <span class="cloud-status">{{ device.cloud.statusText }}</span>
+ <small class="cloud-account" {{ 'hidden' if not device.cloud.accountText }}>{{ device.cloud.accountText }}</small>
+ <small class="cloud-reported" {{ 'hidden' if not device.cloud.reportedText }}>最近上报：{{ device.cloud.reportedText }}{{ ' · 终端离线' if device.cloud.stale }}</small>
+ <small class="cloud-warning warning" {{ 'hidden' if not device.cloud.warning }}>{{ device.cloud.warning }}</small>
+ <small class="cloud-command" {{ 'hidden' if not device.cloud.commandText }}>{{ device.cloud.commandText }}</small>
+ <form action="/admin/cloud/logout" method="post" data-confirm="退出 {{ device.name }} 当前报告的云账号？本地课程会保留。">
+  <input type="hidden" name="form_token" value="{{ csrf }}"><input type="hidden" name="device_id" value="{{ device.id }}"><input type="hidden" name="command_id" value="{{ device.logout_request_id }}">
+  <button class="secondary" {{ 'disabled' if not device.cloud.canLogout }}>远程退出云账号</button>
+ </form>
+</td>

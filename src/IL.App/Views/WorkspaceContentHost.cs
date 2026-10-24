@@ -38,7 +38,7 @@ public sealed class WorkspaceContentHost : Grid
         if (!Children.Contains(incoming.Presenter)) Children.Add(incoming.Presenter);
         incoming.Presenter.IsHitTestVisible = true;
         if (previous == incoming) return;
-        if (VisualRoot is null || !AnimateChanges)
+        if (VisualRoot is null || !AnimateChanges || MotionPreferences.PerformanceMode)
         {
             incoming.Motion.Set();
             if (previous != null) { previous.Motion.Stop(); Children.Remove(previous.Presenter); }

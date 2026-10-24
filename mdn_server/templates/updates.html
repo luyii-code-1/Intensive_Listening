@@ -8,14 +8,14 @@
   <p class="muted">新下发自动替换所选设备的旧任务。发布前会提示受影响设备数量，旧任务反馈继续保留。</p>
   <form id="upload-form" class="update-publish-form">
     <input type="hidden" name="form_token" value="{{ csrf }}"><input type="hidden" name="scope" value="{{ scope }}">
-    <div class="form-grid"><label>目标版本<input name="version" placeholder="2.1.2.3" pattern="[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?" required></label><label>安装方式<select name="mode"><option value="cold">冷更新 · 下载后由用户安装</option><option value="ota">OTA · 自动安装</option></select></label><label class="wide">Windows 安装包<input name="package" type="file" accept=".exe" required></label></div>
+    <div class="form-grid"><label>目标版本<input name="version" placeholder="2.2.0 Insider Preview 1023 1" maxlength="100" required></label><label>安装方式<select name="mode"><option value="cold">冷更新 · 下载后由用户安装</option><option value="ota">OTA · 自动安装</option></select></label><label class="wide">Windows 安装包<input name="package" type="file" accept=".exe" required></label></div>
     <p class="muted">OTA 在后台静默执行；窗口打开时显示应用内倒计时。冷更新下载完成后由用户点击安装。提权由 Windows 显示 UAC。</p>
     <progress id="upload-progress" max="1" value="0" hidden></progress><p id="upload-status" role="status"></p><button>上传并下发</button>
   </form>
   <details class="update-url"><summary>使用已有安装包下载地址</summary>
     <form method="post" action="/admin/update" data-update-publish="true" class="update-publish-form">
       <input type="hidden" name="form_token" value="{{ csrf }}"><input type="hidden" name="scope" value="{{ scope }}">
-      <div class="form-grid"><label>目标版本<input name="version" placeholder="2.1.2.3" pattern="[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?" required></label><label>安装方式<select name="mode"><option value="cold">冷更新 · 手动安装</option><option value="ota">OTA · 自动安装</option></select></label><label class="wide">安装包直链<input name="url" type="url" required></label><label class="wide">SHA-256<input name="sha256" minlength="64" maxlength="64" pattern="[a-fA-F0-9]{64}" required></label><label>安装包字节数<input name="size" type="number" min="1" max="2147483648" required></label></div><button class="secondary">签名并下发</button>
+      <div class="form-grid"><label>目标版本<input name="version" placeholder="2.2.0 Insider Preview 1023 1" maxlength="100" required></label><label>安装方式<select name="mode"><option value="cold">冷更新 · 手动安装</option><option value="ota">OTA · 自动安装</option></select></label><label class="wide">安装包直链<input name="url" type="url" required></label><label class="wide">SHA-256<input name="sha256" minlength="64" maxlength="64" pattern="[a-fA-F0-9]{64}" required></label><label>安装包字节数<input name="size" type="number" min="1" max="2147483648" required></label></div><button class="secondary">签名并下发</button>
     </form>
   </details>
 </section>

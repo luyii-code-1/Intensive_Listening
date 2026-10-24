@@ -1,4 +1,5 @@
 // Intensive Listening Web Player - Service Worker
+// Version: 1.0.0 (Offline PWA)
 
 const CACHE_NAME = 'il-pwa-1.5.0+18';
 
@@ -34,6 +35,7 @@ self.addEventListener('install', (event) => {
       .then(() => self.skipWaiting())
       .catch((err) => {
         console.warn('[PWA SW] Pre-cache failed:', err);
+        throw err;
       })
   );
 });
@@ -44,17 +46,23 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
-          .filter((name) => name !== CACHE_NAME)
+          .filter((name) => name.startsWith('il-pwa-') && name !== CACHE_NAME)
           .map((name) => caches.delete(name))
       );
     }).then(() => self.clients.claim())
   );
 });
 
+function matchCached(request) {
+  return caches.open(CACHE_NAME).then(cache => cache.match(request)).catch(() => undefined);
+}
+
 // Fetch: Cache-first for app shell, offline fallback for navigation
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
+
+  if (url.origin !== self.location.origin) return;
 
   // Non-GET requests (e.g. telemetry POST/beacon) pass through or fail quietly if offline
   if (request.method !== 'GET') {
@@ -69,34 +77,34 @@ self.addEventListener('fetch', (event) => {
   // 2. Navigation requests (HTML documents)
   if (request.mode === 'navigate') {
     event.respondWith(
-      caches.match(request)
+      matchCached(request)
         .then((cachedResponse) => {
           if (cachedResponse) {
             // Fetch in background to update cache (stale-while-revalidate for HTML)
-            fetch(request).then((networkResponse) => {
+            event.waitUntil(fetch(request).then((networkResponse) => {
               if (networkResponse && networkResponse.status === 200) {
-                caches.open(CACHE_NAME).then((cache) => cache.put(request, networkResponse));
+                return caches.open(CACHE_NAME).then((cache) => cache.put(request, networkResponse));
               }
-            }).catch(() => {/* offline, keep cached */});
+            }).catch(() => {/* offline, keep cached */}));
             return cachedResponse;
           }
           // Fallback to cached index.html or root
-          return caches.match('./index.html').then((indexCached) => {
+          return matchCached('./index.html').then((indexCached) => {
             if (indexCached) return indexCached;
-            return caches.match('./').then((rootCached) => {
+            return matchCached('./').then((rootCached) => {
               if (rootCached) return rootCached;
               return fetch(request);
             });
           });
         })
-        .catch(() => caches.match('./index.html'))
+        .catch(async () => (await matchCached('./index.html')) || new Response('Offline resource unavailable', { status: 503 }))
     );
     return;
   }
 
   // 3. Local static assets: Cache-first, fallback to network
   event.respondWith(
-    caches.match(request).then((cachedResponse) => {
+    matchCached(request).then((cachedResponse) => {
       if (cachedResponse) {
         return cachedResponse;
       }
@@ -105,16 +113,15 @@ self.addEventListener('fetch', (event) => {
         .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
             const responseClone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseClone);
-            });
+            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone))
+              .catch(error => console.warn('[PWA SW] Resource could not be cached:', error)));
           }
           return networkResponse;
         })
         .catch(() => {
           // If offline and request is an image or icon
           if (request.destination === 'image') {
-            return caches.match('./icons/icon.svg');
+            return matchCached('./icons/icon.svg').then(icon => icon || new Response('Offline resource unavailable', { status: 503 }));
           }
           return new Response('Offline resource unavailable', {
             status: 503,

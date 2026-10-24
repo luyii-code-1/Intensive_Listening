@@ -174,9 +174,17 @@ class IntensiveListeningApp {
     this.loadIlpFromUrlParam();
   }
 
+  readLocal(key) {
+    try { return localStorage.getItem(key); } catch { return null; }
+  }
+
+  writeLocal(key, value) {
+    try { localStorage.setItem(key, value); return true; } catch { return false; }
+  }
+
   // --- Theme Handling ---
   loadSavedTheme() {
-    const saved = localStorage.getItem('theme_mode');
+    const saved = this.readLocal('theme_mode');
     if (saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
       document.documentElement.setAttribute('data-theme', 'dark');
     } else {
@@ -188,7 +196,7 @@ class IntensiveListeningApp {
     const current = document.documentElement.getAttribute('data-theme');
     const next = current === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('theme_mode', next);
+    this.writeLocal('theme_mode', next);
   }
 
   // --- Event Bindings ---
@@ -255,7 +263,9 @@ class IntensiveListeningApp {
     this.audio.addEventListener('timeupdate', () => this.handleAudioTimeUpdate());
     this.audio.addEventListener('loadedmetadata', () => this.handleAudioLoadedMetadata());
     this.audio.addEventListener('play', () => this.setPlayState(true));
-    this.audio.addEventListener('pause', () => this.setPlayState(false));
+    this.audio.addEventListener('pause', () => { this.setPlayState(false); this.saveProgressDebounced(); void this.flushProgress(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { this.saveProgressDebounced(); void this.flushProgress(); } });
+    window.addEventListener('pagehide', () => { this.saveProgressDebounced(); void this.flushProgress(); });
     this.audio.addEventListener('ended', () => this.handleAudioEnded());
 
     // Playback Controls
@@ -400,7 +410,7 @@ class IntensiveListeningApp {
         }
         // 关键：在用户直接点击同意的手势事件中，同步激活并解锁浏览器音频硬件输出通道
         this.unlockAudioSession();
-        localStorage.setItem('il_privacy_consent', 'true');
+        this.writeLocal('il_privacy_consent', 'true');
         if (this.dom.blockingLegalOverlay) {
           this.dom.blockingLegalOverlay.style.display = 'none';
         }
@@ -706,6 +716,15 @@ class IntensiveListeningApp {
 
   // --- Lesson Loading & View Transition ---
   async loadLesson(lesson) {
+    const generation = this._loadGeneration = (this._loadGeneration || 0) + 1;
+    this.saveProgressDebounced();
+    await this.flushProgress();
+    if (generation !== this._loadGeneration) return;
+    if (this.currentLesson?.audioUrl && this.currentLesson.audioUrl !== lesson.audioUrl) {
+      URL.revokeObjectURL(this.currentLesson.audioUrl);
+      this.currentLesson.audioUrl = null;
+    }
+    this.audio.pause();
     if (!lesson.manifest && lesson.manifestRaw) {
       lesson.manifest = lesson.manifestRaw;
     }
@@ -779,9 +798,15 @@ class IntensiveListeningApp {
   }
 
   returnToHome() {
+    this._loadGeneration = (this._loadGeneration || 0) + 1;
+    this.saveProgressDebounced();
+    void this.flushProgress();
     this.dom.app.setAttribute('data-view', 'home');
     this.audio.pause();
+    const previous = this.currentLesson;
     this.currentLesson = null;
+    this.audio.removeAttribute('src'); this.audio.load();
+    if (previous?.audioUrl) { URL.revokeObjectURL(previous.audioUrl); previous.audioUrl = null; }
     this.dom.playerView.style.display = 'none';
     this.dom.homeView.style.display = 'flex';
     this.dom.backBtn.style.display = 'none';
@@ -791,7 +816,9 @@ class IntensiveListeningApp {
   }
 
   async refreshRecentLessons() {
-    const lessons = await lessonStorage.getAllLessons();
+    let lessons;
+    try { lessons = await lessonStorage.getAllLessons(); }
+    catch (error) { this.showAlert('课程读取失败', error.message || '浏览器未能读取课程数据库，请关闭其他旧页面后重试。'); return; }
     if (!lessons || lessons.length === 0) {
       this.dom.emptyState.style.display = 'flex';
       this.dom.recentSection.style.display = 'none';
@@ -860,7 +887,8 @@ class IntensiveListeningApp {
 
   async confirmDeleteLesson() {
     if (!this.pendingDeleteId) return;
-    await lessonStorage.deleteLesson(this.pendingDeleteId);
+    try { await lessonStorage.deleteLesson(this.pendingDeleteId); }
+    catch (error) { this.showAlert('课程删除失败', error.message || '浏览器未能完成删除，请重试。'); return; }
     this.pendingDeleteId = null;
     this.dom.deleteModal.style.display = 'none';
     this.refreshRecentLessons();
@@ -922,14 +950,29 @@ class IntensiveListeningApp {
   }
 
   saveProgressDebounced() {
-    if (!this.currentLesson || !this.currentLesson.id) return;
-    if (this._progressTimer) clearTimeout(this._progressTimer);
-    this._progressTimer = setTimeout(() => {
-      lessonStorage.updateProgress(this.currentLesson.id, {
-        position: this.currentTime,
-        revealedCloze: Array.from(this.revealedCloze)
-      });
-    }, 1000);
+    if (!this.currentLesson?.id) return;
+    this._pendingProgress = {
+      id: this.currentLesson.id,
+      position: Number.isFinite(this.currentTime) ? Math.max(0, this.currentTime) : 0,
+      revealedCloze: Array.from(this.revealedCloze)
+    };
+    if (this._progressTimer) return;
+    this._progressTimer = setTimeout(() => { this._progressTimer = null; void this.flushProgress(); }, 1000);
+  }
+
+  async flushProgress() {
+    clearTimeout(this._progressTimer); this._progressTimer = null;
+    const snapshot = this._pendingProgress; this._pendingProgress = null;
+    if (!snapshot) return;
+    try {
+      await lessonStorage.updateProgress(snapshot.id, snapshot);
+      this._progressSaveFailed = false;
+    } catch (error) {
+      if (!this._pendingProgress) this._pendingProgress = snapshot;
+      if (!this._progressSaveFailed) this.showAlert('进度保存失败', '浏览器未能保存本次学习进度，请检查可用空间后重试。');
+      this._progressSaveFailed = true;
+      console.warn('Learning progress could not be saved', error);
+    }
   }
 
   setPlayState(playing) {
@@ -2052,8 +2095,8 @@ class IntensiveListeningApp {
 
   getTelemetryStatus() {
     const hasSDK = Boolean(window.RumSDK?.default);
-    const isConsentAgreed = localStorage.getItem('il_privacy_consent') === 'true';
-    const anonUid = localStorage.getItem('il_telemetry_uid');
+    const isConsentAgreed = this.readLocal('il_privacy_consent') === 'true';
+    const anonUid = this.readLocal('il_telemetry_uid');
     const endpoint = window.__rum?.endpoint;
     return {
       status: hasSDK ? 'working' : 'waiting_or_blocked',
@@ -2069,17 +2112,17 @@ class IntensiveListeningApp {
 
   initTelemetryAndLegal() {
     // 1. Fullscreen Blocking Legal Overlay on First Visit (全屏阻断式协议弹窗)
-    const agreed = localStorage.getItem('il_privacy_consent');
+    const agreed = this.readLocal('il_privacy_consent');
     if (!agreed && this.dom.blockingLegalOverlay) {
       this.dom.blockingLegalOverlay.style.display = 'flex';
     }
 
     // 2. Client ID resolution
-    let anonUid = localStorage.getItem('il_telemetry_uid');
+    let anonUid = this.readLocal('il_telemetry_uid');
     if (!anonUid) {
       anonUid = 'u_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
       try {
-        localStorage.setItem('il_telemetry_uid', anonUid);
+        this.writeLocal('il_telemetry_uid', anonUid);
       } catch (e) {}
     }
 
@@ -2094,7 +2137,7 @@ class IntensiveListeningApp {
       userAgent: navigator.userAgent || '',
       referrer: document.referrer || 'direct',
       timezone: (typeof Intl !== 'undefined' && Intl.DateTimeFormat) ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'unknown',
-      themeMode: localStorage.getItem('theme_mode') || 'auto',
+      themeMode: this.readLocal('theme_mode') || 'auto',
       pageUrl: window.location.href,
       openTime: new Date().toISOString()
     };

@@ -19,9 +19,10 @@ function toPlainJson(obj) {
   }
 }
 
-class LessonStorage {
+export class LessonStorage {
   constructor() {
     this._dbPromise = this._initDb();
+    this._dbPromise.catch(() => {});
   }
 
   _initDb() {
@@ -36,7 +37,14 @@ class LessonStorage {
         }
       };
 
-      request.onsuccess = () => resolve(request.result);
+      let blocked = false;
+      request.onblocked = () => { blocked = true; reject(new Error('课程数据库正在被其他页面使用，请关闭旧页面后重新打开。')); };
+      request.onsuccess = () => {
+        const db = request.result;
+        db.onversionchange = () => db.close();
+        if (blocked) { db.close(); return; }
+        resolve(db);
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -66,8 +74,8 @@ class LessonStorage {
       };
 
       const request = store.put(serialized);
-      request.onsuccess = () => resolve(serialized);
-      request.onerror = () => reject(request.error);
+      tx.oncomplete = () => resolve(serialized);
+      tx.onabort = tx.onerror = () => reject(tx.error || new Error('课程保存未完成。'));
     });
   }
 
@@ -84,6 +92,7 @@ class LessonStorage {
 
       request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error);
+      tx.onabort = () => reject(tx.error || new Error('课程读取未完成。'));
     });
   }
 
@@ -104,6 +113,7 @@ class LessonStorage {
         resolve(results);
       };
       request.onerror = () => reject(request.error);
+      tx.onabort = () => reject(tx.error || new Error('课程读取未完成。'));
     });
   }
 
@@ -118,8 +128,8 @@ class LessonStorage {
       const store = tx.objectStore(STORE_LESSONS);
       const request = store.delete(id);
 
-      request.onsuccess = () => resolve(true);
-      request.onerror = () => reject(request.error);
+      tx.oncomplete = () => resolve(true);
+      tx.onabort = tx.onerror = () => reject(tx.error || new Error('课程删除未完成。'));
     });
   }
 
@@ -134,22 +144,24 @@ class LessonStorage {
       const tx = db.transaction([STORE_LESSONS], 'readwrite');
       const store = tx.objectStore(STORE_LESSONS);
       const getReq = store.get(id);
+      let saved = null;
+      tx.oncomplete = () => resolve(saved);
+      tx.onabort = tx.onerror = () => reject(tx.error || new Error('学习进度保存未完成。'));
 
       getReq.onsuccess = () => {
         const record = getReq.result;
-        if (!record) return resolve(null);
+        if (!record) return;
 
-        if (typeof progress.position === 'number') {
-          record.progressPosition = progress.position;
+        if (typeof progress.position === 'number' && Number.isFinite(progress.position)) {
+          record.progressPosition = Math.max(0, progress.position);
         }
         if (Array.isArray(progress.revealedCloze)) {
           record.revealedCloze = progress.revealedCloze;
         }
         record.lastOpenedAt = Date.now();
 
-        const putReq = store.put(record);
-        putReq.onsuccess = () => resolve(record);
-        putReq.onerror = () => reject(putReq.error);
+        saved = record;
+        store.put(record);
       };
       getReq.onerror = () => reject(getReq.error);
     });

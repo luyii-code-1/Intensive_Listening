@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 632" role="img" aria-labelledby="agentClientTitle agentClientDesc" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
+  <title id="agentClientTitle">智能体客户端连接示意</title>
+  <desc id="agentClientDesc">示意图：上方是客户端里的 MCP 服务器设置，填好名称、类型与地址后显示已连接；下方是对话窗口，先发送操作提示，智能体随后登记名称并申请接管。</desc>
+  <style>
+    .card { fill: #ffffff; stroke: #dcdad5; stroke-width: 1.2; }
+    .bar { fill: #f6f5f2; }
+    .line { stroke: #e6e4df; stroke-width: 1; }
+    .text { fill: #1b1f24; }
+    .muted { fill: #6b7280; }
+    .mono { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; }
+    .brand { fill: #b80f28; }
+    .chip { fill: #eaf6ee; stroke: #c6e6d1; stroke-width: 1; }
+    .chip-text { fill: #2f7d46; }
+    .dot { fill: #2f9e5b; }
+    .bubble-user { fill: #f9eef1; stroke: #eed3d9; stroke-width: 1; }
+    .bubble-bot { fill: #f7f6f3; stroke: #e6e4df; stroke-width: 1; }
+    .field { fill: #ffffff; stroke: #e0ded9; stroke-width: 1; }
+    .btn { fill: #ffffff; stroke: #d9d7d2; stroke-width: 1; }
+    .dot-live { animation: live 2.4s ease-in-out infinite; }
+    @keyframes live { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+    @media (prefers-color-scheme: dark) {
+      .card { fill: #1b1e23; stroke: #343941; }
+      .bar { fill: #22262c; }
+      .line { stroke: #2f353d; }
+      .text { fill: #f0eeea; }
+      .muted { fill: #9aa1ab; }
+      .brand { fill: #e05a6c; }
+      .chip { fill: rgba(70, 170, 110, .14); stroke: #35604a; }
+      .chip-text { fill: #7fd3a1; }
+      .dot { fill: #6fcf97; }
+      .bubble-user { fill: #2a1e22; stroke: #4a343a; }
+      .bubble-bot { fill: #1d2025; stroke: #333840; }
+      .field { fill: #14171a; stroke: #343a42; }
+      .btn { fill: #23272d; stroke: #3a4048; }
+    }
+    @media (prefers-reduced-motion: reduce) { .dot-live { animation: none; } }
+  </style>
+
+  <!-- Panel 1: MCP server settings -->
+  <rect x="8" y="8" width="604" height="252" rx="10" class="card"/>
+  <path d="M8 18 a10 10 0 0 1 10 -10 h584 a10 10 0 0 1 10 10 v26 h-604 z" class="bar"/>
+  <text x="24" y="33" class="muted" font-size="12">设置 · MCP 服务器</text>
+  <path d="M532 30 h10" stroke="#9aa1ab" stroke-width="1.3"/>
+  <rect x="556" y="25" width="12" height="10" rx="2" fill="none" stroke="#9aa1ab" stroke-width="1.3"/>
+  <path d="M580 25 l12 10 M592 25 l-12 10" stroke="#9aa1ab" stroke-width="1.3"/>
+
+  <text x="24" y="76" class="muted" font-size="12.5">名称</text>
+  <text x="88" y="76" class="text mono" font-size="12.5">intensive-listening</text>
+  <text x="24" y="104" class="muted" font-size="12.5">类型</text>
+  <text x="88" y="104" class="text" font-size="12.5">HTTP（流式）</text>
+  <text x="24" y="132" class="muted" font-size="12.5">地址</text>
+  <text x="88" y="132" class="text mono" font-size="11">http://127.0.0.1:17683/mcp?event=Agent&amp;token=abc123</text>
+
+  <rect x="392" y="54" width="196" height="26" rx="13" class="chip"/>
+  <circle cx="410" cy="67" r="3.5" class="dot dot-live"/>
+  <text x="422" y="72" class="chip-text" font-size="11.5">已连接 · 18 个工具</text>
+
+  <path d="M24 152 H588" class="line"/>
+  <text x="24" y="180" class="muted" font-size="11.5">上一步复制的 JSON 里就是这三项，粘贴或手填均可。</text>
+  <rect x="370" y="196" width="104" height="32" rx="7" class="btn"/>
+  <text x="422" y="217" class="text" font-size="12.5" text-anchor="middle">测试连接</text>
+  <rect x="482" y="196" width="104" height="32" rx="7" class="brand"/>
+  <text x="534" y="217" fill="#ffffff" font-size="12.5" text-anchor="middle">保存</text>
+
+  <!-- Panel 2: chat -->
+  <rect x="8" y="276" width="604" height="344" rx="10" class="card"/>
+  <path d="M8 286 a10 10 0 0 1 10 -10 h584 a10 10 0 0 1 10 10 v26 h-604 z" class="bar"/>
+  <text x="24" y="301" class="muted" font-size="12">WorkBuddy · 精听课制作</text>
+  <path d="M532 298 h10" stroke="#9aa1ab" stroke-width="1.3"/>
+  <rect x="556" y="293" width="12" height="10" rx="2" fill="none" stroke="#9aa1ab" stroke-width="1.3"/>
+  <path d="M580 293 l12 10 M592 293 l-12 10" stroke="#9aa1ab" stroke-width="1.3"/>
+  <path d="M8 312 H612" class="line"/>
+
+  <text x="588" y="336" class="muted" font-size="11.5" text-anchor="end">粘贴「操作提示」后发送</text>
+
+  <rect x="252" y="348" width="340" height="58" rx="12" class="bubble-user"/>
+  <text x="268" y="371" class="text" font-size="12.5">用 Intensive Listening 制作《六级听力 第一套》，</text>
+  <text x="268" y="391" class="text" font-size="12.5">音频 unit-1.mp3 已加入项目。</text>
+
+  <circle cx="30" cy="442" r="11" class="brand"/>
+  <text x="30" y="446" fill="#ffffff" font-size="9.5" font-weight="600" text-anchor="middle">W</text>
+  <rect x="48" y="420" width="440" height="58" rx="12" class="bubble-bot"/>
+  <text x="64" y="443" class="text" font-size="12.5">已登记名称：WorkBuddy 桌面版。</text>
+  <text x="64" y="463" class="text" font-size="12.5">正在申请接管，请在应用弹窗中点击「批准接管」。</text>
+
+  <rect x="48" y="488" width="440" height="44" rx="12" class="bubble-bot"/>
+  <text x="64" y="515" class="text" font-size="12.5">接管后我会依次完成转写、字幕校对、题目编排与挖空。</text>
+
+  <rect x="24" y="556" width="472" height="36" rx="8" class="field"/>
+  <text x="40" y="579" class="muted" font-size="12">输入消息…</text>
+  <rect x="508" y="556" width="80" height="36" rx="8" class="brand"/>
+  <text x="548" y="579" fill="#ffffff" font-size="12.5" text-anchor="middle">发送</text>
+</svg>

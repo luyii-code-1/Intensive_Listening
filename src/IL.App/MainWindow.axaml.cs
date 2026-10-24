@@ -61,8 +61,10 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
         Closed += (_, _) => _paneMotion.Stop();
         var standalone=Program.Arguments.Contains("--standalone");
         _services=new(action=>Dispatcher.UIThread.Post(action),standalone);
+        InteractionPerformance.Telemetry = _services.Telemetry;
+        InteractionPerformance.Install(this);
         AgentProgressHost.Content = new AgentProgressView(_services.Server.WorkflowProgress);
-        _student=new(_services.Student, standalone ? null : new CloudLessonsView(_services));
+        _student=new(_services.Student, standalone ? null : new CloudLessonsView(_services), standalone ? null : ShowTeacherAsync);
         AddHandler(KeyDownEvent, OnPlayerKeyDown, RoutingStrategies.Tunnel);
         AddHandler(KeyUpEvent, OnPlayerKeyUp, RoutingStrategies.Tunnel);
         Deactivated += (_, _) => _heldPlayerKeys.Clear();
@@ -433,6 +435,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
     }
     private static void ApplyTheme(AppSettings settings)
     {
+        MotionPreferences.Apply(settings);
         if (Application.Current is not { } app) return;
         app.RequestedThemeVariant = settings.ThemeMode switch { "dark" => ThemeVariant.Dark, "light" => ThemeVariant.Light, _ => ThemeVariant.Default };
         ApplicationTypography.Apply(settings);

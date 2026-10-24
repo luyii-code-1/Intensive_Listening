@@ -244,7 +244,7 @@ internal sealed class FirstRunWizard : Border
                 font.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) { _font = (int)Math.Round(font.Value); value.Text = _font.ToString(); } };
                 body.Children.Add(Card("font", "字幕字体大小", "调整播放页逐句字幕的字号。", WorkspaceUi.Row(font, value))); break;
             case 5:
-                body = Page("Intensive Listening 云服务", "登录后可使用云端课程和转写服务，也可以稍后设置。");
+                body = Page("Intensive Listening 云服务", "登录用于云端课程和云端转写。先听本地课程或录音，可以点“暂时跳过”。");
                 if (_cloudAccount is not null)
                     body.Children.Add(new CloudOnboardingView(_cloudAccount, _cloudEnabled, enabled => _cloudEnabled = enabled));
                 else body.Children.Add(CenterText("稍后可在设置中启用云服务。", 12));
@@ -252,7 +252,7 @@ internal sealed class FirstRunWizard : Border
                 skipCloud.HorizontalAlignment = HorizontalAlignment.Center; body.Children.Add(skipCloud);
                 break;
             case 6:
-                body = Page("转写接口", "使用云服务，或填写自己的 API Key。");
+                body = Page("转写接口", "把录音生成字幕时才需要设置。先听课程可以留空，点下一步继续。");
                 var key = new TextBox { Text = _key, PasswordChar = '●', PlaceholderText = "可留空", Width = 270 };
                 key.TextChanged += (_, _) => _key = key.Text ?? "";
                 var useCloud = new CheckBox { Content = "使用云服务提供的接口", IsChecked = _useCloudAsr, HorizontalAlignment = HorizontalAlignment.Center };
@@ -263,7 +263,7 @@ internal sealed class FirstRunWizard : Border
                 body.Children.Add(keyRow); RefreshMode();
                 var help = WorkspaceUi.Button("如何配置？", () => { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://il.luyii.cn/guide.html#api-setup") { UseShellExecute = true }); return Task.CompletedTask; }); help.HorizontalAlignment = HorizontalAlignment.Center; help.Margin = new Thickness(0, 6, 0, 0); body.Children.Add(help); break;
             default:
-                body = new StackPanel { Spacing = 10 }; var doneBrand = Brand(66); doneBrand.Name = "OobeDoneLogo"; doneBrand.Margin = new Thickness(0, 0, 0, 14); body.Children.Add(doneBrand); body.Children.Add(CenterText("设置完成", 22, true)); body.Children.Add(CenterText("现在可以开始播放精听包，或创建一份课程。")); break;
+                body = new StackPanel { Spacing = 10 }; var doneBrand = Brand(66); doneBrand.Name = "OobeDoneLogo"; doneBrand.Margin = new Thickness(0, 0, 0, 14); body.Children.Add(doneBrand); body.Children.Add(CenterText("设置完成", 22, true)); body.Children.Add(CenterText("进入播放首页，导入老师发来的 .ilp 文件或自己的录音。\n需要给录音制作字幕时，进入“制作”新建项目。\n随时可从播放页的“使用指南”查看步骤。")); break;
         }
         if (_windows) body.Spacing = 6;
         body.Name = $"OobePage{_step}";
@@ -368,6 +368,7 @@ internal sealed class FirstRunWizard : Border
 
     internal static bool MotionReduced()
     {
+        if (MotionPreferences.PerformanceMode) return true;
         if (ReducedMotionOverride is { } preference) return preference();
         if (OperatingSystem.IsWindows()) return SystemParametersInfo(0x1042, 0, out var enabled, 0) && !enabled;
         if (OperatingSystem.IsMacOS())

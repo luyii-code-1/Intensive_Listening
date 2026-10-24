@@ -47,7 +47,7 @@ internal sealed class MdnSettingsView : UserControl
         _errorDetails = new Expander { Header = "连接诊断详情", Content = WorkspaceUi.Stack(_error, copyError), HorizontalAlignment = HorizontalAlignment.Stretch };
         panel.Children.Add(_errorDetails);
         panel.Children.Add(_locked);
-        panel.Children.Add(new WrapPanel { Orientation = Orientation.Horizontal, Children = { _connect, _yaml, _retry, _leave } });
+        panel.Children.Add(WorkspaceUi.Row(_connect, _yaml, _retry, _leave));
         panel.Children.Add(WorkspaceUi.Text("退出管理需由管理员在后台授权。连接失败时保留已生效的组织策略。", 12));
         Content = panel;
         client.Changed += () => Dispatcher.UIThread.Post(Refresh);

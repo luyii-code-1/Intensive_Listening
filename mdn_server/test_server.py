@@ -31,6 +31,28 @@ class ManagementTests(unittest.TestCase):
     def tearDown(self):
         self.client.close(); self.temp.cleanup()
 
+    def test_receipts_reject_non_object_and_invalid_json(self):
+        for path in ("/api/policy/receipt", '/api/connection', '/api/updates/unknown/receipt'):
+            for body in ("[]", "null", "{", "42"):
+                with self.subTest(path=path, body=body):
+                    response = self.client.post(path, headers={**self.headers, "Content-Type": "application/json"}, content=body)
+                    self.assertEqual(response.status_code, 422)
+
+    def test_connection_rejects_boolean_latency(self):
+        self.assertEqual(self.client.post('/api/connection', headers=self.headers, json={"latency": True}).status_code, 422)
+
+    def test_binary_realtime_frame_is_rejected_and_reconnect_works(self):
+        with self.client.websocket_connect("/api/connect", headers=self.headers) as socket:
+            self.assertEqual(socket.receive_json()["type"], "ready")
+            socket.send_bytes(b"invalid frame")
+            with self.assertRaises(WebSocketDisconnect) as closed:
+                socket.receive_json()
+            self.assertEqual(closed.exception.code, 4400)
+        with self.client.websocket_connect("/api/connect", headers=self.headers) as socket:
+            self.assertEqual(socket.receive_json()["type"], "ready")
+            socket.send_json({"type": "heartbeat", "sentAt": 1})
+            self.assertEqual(socket.receive_json()["type"], "heartbeat")
+
     def register(self, identifier):
         response = self.client.post("/api/register", json={"deviceId": identifier, "deviceName": "IL-LAB", "appVersion": "2.0.1", "enrollmentToken": self.config["enrollment_token"]})
         self.assertEqual(response.status_code, 200)
@@ -343,7 +365,7 @@ class ManagementTests(unittest.TestCase):
         self.assertIn("轮询模式", self.client.get("/admin/status").json()["devices"][0]["connection"])
         with self.client.websocket_connect("/api/connect", headers=self.headers) as socket:
             socket.receive_json()
-            self.client.post("/api/connection", headers=self.headers, json={"latency": 42})
+            self.client.post('/api/connection', headers=self.headers, json={"latency": 42})
             self.assertEqual(self.client.get("/admin/status").json()["devices"][0]["connection"], "实时模式 - 42ms")
 
     def test_update_receipts_retry_and_history_cleanup(self):

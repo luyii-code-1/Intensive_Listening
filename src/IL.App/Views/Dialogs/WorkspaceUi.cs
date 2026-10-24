@@ -31,7 +31,12 @@ internal static class WorkspaceUi
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Margin = new Thickness(24, 22, 24, 20), MinHeight = 36 };
         if (back is not null) { var button = IconButton("back", "返回", back); button.Classes.Add("subtle"); button.Margin = new Thickness(-12, 0, 8, 0); grid.Children.Add(button); }
         var text = Text(title, 22, true); text.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(text, 1); grid.Children.Add(text);
-        if (commands is not null) { Grid.SetColumn(commands, 2); commands.VerticalAlignment = VerticalAlignment.Center; grid.Children.Add(commands); }
+        if (commands is not null)
+        {
+            commands.VerticalAlignment = VerticalAlignment.Center;
+            var margin = grid.Margin; grid.Margin = default;
+            return new ResponsivePair(grid, commands) { Margin = margin, MinimumContentWidth = 180 };
+        }
         return grid;
     }
     // Use the same Fluent settings control for individual rows and expandable groups.
@@ -44,8 +49,8 @@ internal static class WorkspaceUi
         SettingsGroup(icon, title, description, null, trailing);
     public static Control SettingsRow(string icon, string title, Control description, Control trailing, bool compact = false)
     {
-        var row = SettingsGroup(icon, title, "", null, trailing);
-        row.Header = new StackPanel { Spacing = 2, Children = { Text(title), description } };
+        var row = SettingsGroup(icon, title, "", null);
+        row.Header = new ResponsivePair(new StackPanel { Spacing = 2, Children = { Text(title), description } }, trailing);
         return row;
     }
     public static FASettingsExpander SettingsGroup(string icon, string title, string description, Control? content, Control? action = null, bool expanded = false)
@@ -53,10 +58,18 @@ internal static class WorkspaceUi
         var row = new FASettingsExpander
         {
             IconSource = SettingsIcon(icon), Header = title, Description = description,
-            Footer = action, IsExpanded = expanded, HorizontalAlignment = HorizontalAlignment.Stretch,
+            IsExpanded = expanded, HorizontalAlignment = HorizontalAlignment.Stretch,
             Margin = new Thickness(0), MinHeight = 64
         };
-        if (action is not null) { action.Margin = new Thickness(12, 0, 0, 0); action.VerticalAlignment = VerticalAlignment.Center; }
+        if (action is not null)
+        {
+            action.VerticalAlignment = VerticalAlignment.Center;
+            var labels = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+            labels.Children.Add(Text(title));
+            if (!string.IsNullOrWhiteSpace(description)) labels.Children.Add(Text(description, 12));
+            row.Header = new ResponsivePair(labels, action);
+            row.Description = null;
+        }
         if (content is not null) row.Items.Add(content);
         return row;
     }
@@ -72,7 +85,7 @@ internal static class WorkspaceUi
         label.Inlines = new InlineCollection { new Run(prefix), new Run(organization) { FontWeight = FontWeight.Bold }, new Run(suffix) };
     }
     public static StackPanel Stack(params Control[] controls) { var panel = new StackPanel { Spacing = 8 }; foreach (var c in controls) panel.Children.Add(c); return panel; }
-    public static WrapPanel Row(params Control[] controls) { var panel = new WrapPanel { Orientation = Orientation.Horizontal }; foreach (var c in controls) { c.Margin = new Thickness(0, 0, 8, 6); panel.Children.Add(c); } return panel; }
+    public static WrapPanel Row(params Control[] controls) { var panel = new WrapPanel { Orientation = Orientation.Horizontal, ItemSpacing = 8, LineSpacing = 6, VerticalAlignment = VerticalAlignment.Center }; foreach (var c in controls) { c.VerticalAlignment = VerticalAlignment.Center; panel.Children.Add(c); } return panel; }
     public static Button Button(string title, Func<Task> action, bool primary = false)
     {
         var button = new Button { Content = title };

@@ -79,12 +79,15 @@ internal sealed class PopupMotion
     }
     private void CaptureExit(object? sender, VisualTreeAttachmentEventArgs args)
     {
+        if (MotionPreferences.PerformanceMode || MotionPreferences.DisableAnimationWaiting) return;
         if (!_open || _surface == null || _owner?.IsVisible != true || _surface.Bounds.Width <= 0 || _surface.Bounds.Height <= 0) return;
         _exitSize = _surface.Bounds.Size;
         _capturedOpacity = _surface.Opacity;
         _capturedY = _motion?.TranslationY ?? 0;
         _capturedScale = (_surface.RenderTransform as TransformGroup)?.Children.OfType<ScaleTransform>().FirstOrDefault()?.ScaleX ?? 1;
         var scaling = _owner.RenderScaling;
+        // Cap the exit snapshot to logical pixels to bound GPU readback and allocation on high-DPI displays.
+        scaling = Math.Min(1, scaling);
         var bitmap = new RenderTargetBitmap(new PixelSize((int)Math.Ceiling(_exitSize.Width * scaling), (int)Math.Ceiling(_exitSize.Height * scaling)), new Vector(96 * scaling, 96 * scaling));
         try { bitmap.Render(_surface); _exitBitmap?.Dispose(); _exitBitmap = bitmap; }
         catch (Exception ex) { bitmap.Dispose(); AppLog.Error("浮窗动画绘制失败", ex); }

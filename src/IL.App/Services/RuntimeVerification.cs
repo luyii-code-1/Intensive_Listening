@@ -16,6 +16,8 @@ public static class RuntimeVerification
         void Check(bool condition,string name){if(!condition)throw new InvalidOperationException(name);checks.Add(name);}
         try
         {
+            stage="precompiled XAML";File.WriteAllText(output+".stage",stage);
+            XamlVerification.Validate();Check(true,"application and main window XAML compiled");
             stage="generate audio";File.WriteAllText(output+".stage",stage);var audio=Path.Combine(root,"test.wav");
             using(var stream=File.Create(audio))using(var writer=new BinaryWriter(stream)){var length=16000*2*8;writer.Write("RIFF"u8);writer.Write(length+36);writer.Write("WAVEfmt "u8);writer.Write(16);writer.Write((short)1);writer.Write((short)1);writer.Write(16000);writer.Write(32000);writer.Write((short)2);writer.Write((short)16);writer.Write("data"u8);writer.Write(length);for(var i=0;i<length/2;i++)writer.Write((short)(Math.Sin(i*440d*2*Math.PI/16000)*1200));}
             // Hosted CI runners have no audio endpoint; dummy output keeps the native playback clock active.

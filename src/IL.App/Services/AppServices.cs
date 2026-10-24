@@ -33,18 +33,20 @@ public sealed class AppServices : IAsyncDisposable
     public ManagedLessonReceiver ManagedLessons { get; }
     public CloudAccountService CloudAccount { get; } = new();
     public CloudResources CloudFiles { get; }
-    public CloudAsrProxyClient CloudAsr { get; }
+    public DesktopCloudAsrClient CloudAsr { get; }
+    private CloudAsrProxyClient LegacyCloudAsr { get; }
     public Func<Task<bool>>? ConfirmForcedCuts {get;set;}
     public bool Standalone {get;}
     public string? PreconfigurationError { get; private set; }
     public AppServices(Action<Action> dispatch,bool standalone)
     {
         Standalone=standalone; Mdn=new(DataDirectory,AppBuildInfo.UpdateVersion); if(!standalone)ManagedRuntime.Client=Mdn; ManagedUpdates=new(Mdn,DataDirectory) { Enabled = OperatingSystem.IsWindows() }; Projects=new(Path.Combine(DataDirectory,"projects"));
-        CloudFiles = new(CloudAccount.Authentication, DataDirectory); CloudAsr = new(CloudAccount.Authentication, DataDirectory);
+        CloudFiles = new(CloudAccount.Authentication, DataDirectory); CloudAsr = new(CloudAccount.Authentication, DataDirectory); LegacyCloudAsr = new(CloudAccount.Authentication, DataDirectory);
         Student=new(()=>new LibVlcAudioPlayer(),LibraryDirectory,new LessonProgressStore(Path.Combine(DataDirectory,"lesson_progress.json")),SettingsStore,dispatch);
         ManagedLessons = new(Mdn, LibraryDirectory, DataDirectory);
         Queue=new(RunAsrAsync,FindDuplicateAsync,new QueueStore(Path.Combine(DataDirectory,"transcription_queue.json")),new SrtRecognitionCache(Path.Combine(DataDirectory,"cache","asr-srt")),()=>Settings.AsrCacheProfile);
         Queue.RunJob = RunAsrJobAsync;
+        Queue.CancelRemoteJob = id => CloudAsr.CancelAsync(id, credits => Queue.SetChargedCredits(id, credits));
         Transcriptions=new(Projects,Queue);
         Mdn.Changed += ApplyStartup;
         CloudAccount.Changed += CloudStateChanged;
@@ -77,6 +79,7 @@ public sealed class AppServices : IAsyncDisposable
     public async Task ApplySettingsAsync(AppSettings settings)
     {
         settings=await SettingsStore.NormalizeAsync(settings); Settings=settings;AppLog.DebugEnabled=settings.DebugLogging;
+        Telemetry.ConfigurePerformanceAnalysis(settings.TelemetryEnabled && settings.PerformanceAnalysisEnabled && !Standalone);
         ApplyStartup();
         await CloudAccount.ApplyEnabledAsync(settings.CloudServiceEnabled);
         await CloudAccount.ApplyManagementAsync();
@@ -111,11 +114,13 @@ public sealed class AppServices : IAsyncDisposable
         var cloudJob = profile.Contains("il-cloud-service-v1", StringComparison.Ordinal);
         if (cloudJob != (Settings.AsrServiceMode == AsrServiceMode.CloudService)) throw new AsrException("转写模式已更改，请在当前模式下新建转写任务。");
         if (!cloudJob) return await RunAsrAsync(audio, progress, ct, estimated);
-        if (!profile.Contains("proxy-batch-v1", StringComparison.Ordinal)) throw new AsrException("这是旧版云端转写任务。请先确认云端原任务状态，再新建转写任务。");
+        if (!profile.Contains("proxy-batch-v1", StringComparison.Ordinal) && !profile.Contains("desktop-asr-v2", StringComparison.Ordinal)) throw new AsrException("这是旧版云端转写任务。请先确认云端原任务状态，再新建转写任务。");
         if (ManagedRuntime.IsManaged && ManagedRuntime.Policy.CloudService.Mode == "disabled") throw new AsrException("云服务由您的组织关闭。");
         if (!CloudAccount.IsSignedIn) throw new AsrException("请先启用并登录 Intensive Listening 云服务。");
         var started = System.Diagnostics.Stopwatch.StartNew();
-        try { var result = await CloudAsr.RunAsync(id, audio, progress, ct, () => Queue.WasUserCancelled(id), credits => Queue.SetChargedCredits(id, credits), ConfirmForcedCuts); Mdn.Report("asr", new { durationMs = started.ElapsedMilliseconds, success = true, provider = "ilCloud" }); return result; }
+        try { var result = profile.Contains("desktop-asr-v2", StringComparison.Ordinal)
+            ? await CloudAsr.RunAsync(id, audio, progress, ct, () => Queue.WasUserCancelled(id), credits => Queue.SetChargedCredits(id, credits))
+            : await LegacyCloudAsr.RunAsync(id, audio, progress, ct, () => Queue.WasUserCancelled(id), credits => Queue.SetChargedCredits(id, credits), ConfirmForcedCuts); Mdn.Report("asr", new { durationMs = started.ElapsedMilliseconds, success = true, provider = "ilCloud" }); return result; }
         catch (CloudAsrCompletedAfterCancellationException) { Mdn.Report("asr", new { durationMs = started.ElapsedMilliseconds, success = true, provider = "ilCloud" }); throw; }
         catch (CloudAuthenticationException error) { CloudAccount.AuthenticationFailed(error.Message); throw new AsrException(error.Message, error); }
         catch (CloudApiException error) { throw new AsrException(error.Message, error); }
@@ -146,7 +151,7 @@ public sealed class AppServices : IAsyncDisposable
     }
     public async ValueTask DisposeAsync()
     {
-        try { ManagedLessons.Dispose();ManagedUpdates.Dispose();Updates.Dispose();await Mdn.DisposeAsync();await Server.DisposeAsync();await Queue.DisposeAsync();CloudAsr.Dispose();CloudFiles.Dispose();CloudAccount.Dispose();await Transcriptions.DisposeAsync();await Student.DisposeAsync();await Telemetry.ShutdownAsync(); }
+        try { ManagedLessons.Dispose();ManagedUpdates.Dispose();Updates.Dispose();await Mdn.DisposeAsync();await Server.DisposeAsync();await Queue.DisposeAsync();CloudAsr.Dispose();LegacyCloudAsr.Dispose();CloudFiles.Dispose();CloudAccount.Dispose();await Transcriptions.DisposeAsync();await Student.DisposeAsync();await Telemetry.ShutdownAsync(); }
         finally { CloudAccount.Changed -= CloudStateChanged; CloudAccount.CommandCompleted -= CloudCommandCompleted; Mdn.Changed -= ApplyStartup; AppLog.DebugEnabled = false; await RuntimeDiagnostics.Completion; }
     }
 }

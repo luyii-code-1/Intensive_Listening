@@ -235,6 +235,16 @@ def sanitize_metrics(event: Telemetry):
     return event.metrics
 
 
+async def request_object(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(422, "请求须包含有效的 JSON 对象") from None
+    if not isinstance(body, dict):
+        raise HTTPException(422, "请求须包含 JSON 对象")
+    return body
+
+
 def create_app(root: Path, config: dict, store: SecretStore | None = None, diagnostics: bool = False) -> FastAPI:
     root.mkdir(parents=True, exist_ok=True)
     store = store or SecretStore()
@@ -355,31 +365,34 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
         await socket.accept()
         connections.peers.setdefault(identifier, set()).add(socket)
         connections.locks[socket] = asyncio.Lock()
-        with db() as conn:
-            conn.execute("UPDATE devices SET realtime=1 WHERE id=?", (identifier,))
         try:
+            with db() as conn:
+                conn.execute("UPDATE devices SET realtime=1 WHERE id=?", (identifier,))
             await connections.send(socket, {"type": "ready"})
             while True:
                 text = await asyncio.wait_for(socket.receive_text(), 75)
-                if len(text) > 1024 or json.loads(text).get("type") != "heartbeat":
+                message = json.loads(text) if len(text) <= 1024 else None
+                if not isinstance(message, dict) or message.get("type") != "heartbeat":
                     await socket.close(code=4400)
                     break
                 device(socket)
                 with db() as conn:
                     revision = conn.execute("SELECT max(revision) FROM policies WHERE scope IN ('all',?)", (identifier,)).fetchone()[0]
                     pending = cloud_management.pending(conn, identifier)
-                await connections.send(socket, {"type": "heartbeat", "sentAt": json.loads(text).get("sentAt"), "revision": revision,
+                await connections.send(socket, {"type": "heartbeat", "sentAt": message.get("sentAt"), "revision": revision,
                                                  "cloudCommandId": pending[0]["id"] if pending else None})
         except HTTPException:
             await socket.close(code=4403)
         except (WebSocketDisconnect, RuntimeError, OSError):
             pass
-        except (TimeoutError, ValueError, AttributeError):
+        except (TimeoutError, ValueError, AttributeError, KeyError):
             await socket.close(code=4400)
         finally:
-            connections.peers[identifier].discard(socket)
-            if not connections.peers[identifier]:
-                del connections.peers[identifier]
+            peers = connections.peers.get(identifier)
+            if peers is not None:
+                peers.discard(socket)
+                if not peers:
+                    connections.peers.pop(identifier, None)
             connections.locks.pop(socket, None)
 
     @app.post("/api/register")
@@ -465,7 +478,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
     @app.post("/api/policy/receipt")
     async def policy_receipt(request: Request):
         identifier = device(request)
-        body = await request.json()
+        body = await request_object(request)
         revision = body.get("revision")
         expected = policy_for(identifier)["revision"]
         if type(revision) is not int or not 0 <= revision <= expected:
@@ -477,9 +490,9 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
     @app.post("/api/connection")
     async def connection_state(request: Request):
         identifier = device(request)
-        body = await request.json()
+        body = await request_object(request)
         latency = body.get("latency")
-        if not isinstance(latency, int) or not 0 <= latency <= 60000:
+        if type(latency) is not int or not 0 <= latency <= 60000:
             raise HTTPException(422, "延迟无效")
         with db() as conn:
             conn.execute("UPDATE devices SET latency=? WHERE id=?", (latency, identifier))
@@ -509,7 +522,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
     @app.post("/api/updates/{task_id}/receipt")
     async def update_receipt(task_id: str, request: Request):
         identifier = device(request)
-        body = await request.json()
+        body = await request_object(request)
         status = body.get("status")
         progress = body.get("progress", 0)
         if status not in ("received", "downloading", "ready", "deferred", "installing", "success", "failed", "skipped") or type(progress) is not int or not 0 <= progress <= 100:
@@ -926,7 +939,15 @@ def initialize(root: Path, organization: str, url: str, password: str, store: Se
     shutil.copytree(ASSETS / "templates", root / "web" / "templates", dirs_exist_ok=True)
     (root / "settings-schema.json").write_bytes((ASSETS / "settings-schema.json").read_bytes())
     (root / "server.json").write_text(json.dumps({"public_url": config["public_url"], "host": "0.0.0.0", "port": config["port"], "disable_ssl": disable_ssl}, ensure_ascii=False, indent=2), encoding="utf-8")
-    config_path.write_bytes(store.encode(config))
+    temporary = config_path.with_name("config." + uuid.uuid4().hex + ".tmp")
+    try:
+        with temporary.open("xb") as output:
+            output.write(store.encode(config))
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.replace(config_path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return config
 
 

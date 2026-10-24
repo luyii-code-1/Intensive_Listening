@@ -97,10 +97,10 @@ public sealed class CloudLessonsView : UserControl
             var glyph = new ContentControl { Content = WorkspaceUi.Icon(ready ? "music_note" : "cloud", 22), Width = 28, VerticalAlignment = VerticalAlignment.Center };
             var caption = WorkspaceUi.Text(detail, 12);
             var info = new StackPanel { Margin = new Thickness(12, 0), Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Children = { WorkspaceUi.Text(item.Title, 14, true), caption } };
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Margin = new Thickness(14, 8) };
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
             grid.Children.Add(glyph); Grid.SetColumn(info, 1); grid.Children.Add(info);
-            var hint = WorkspaceUi.Text(action, 12); hint.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(hint, 2); grid.Children.Add(hint);
-            var button = new Button { Content = grid, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = default, MinHeight = 58 };
+            var hint = WorkspaceUi.Text(action, 12); hint.VerticalAlignment = VerticalAlignment.Center;
+            var button = new Button { Content = new ResponsivePair(grid, hint) { Margin = new Thickness(14, 8) }, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = default, MinHeight = 58 };
             button.Click += async (_, _) =>
             {
                 if (ready && local is not null)

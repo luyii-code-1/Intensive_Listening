@@ -39,12 +39,12 @@ public sealed class CloudAuthoringView : UserControl
         _cancel = WorkspaceUi.Button("取消登录", () => { _account.CancelLogin(); return Task.CompletedTask; });
         _logout = WorkspaceUi.Button("退出登录", _account.SignOutAsync);
         _reload = WorkspaceUi.Button("刷新", ReloadResourcesAsync);
-        _uploadFile = WorkspaceUi.Button("上传 ILP / 工程 ZIP", UploadFileAsync);
+        _uploadFile = WorkspaceUi.Button("上传课程包或项目", UploadFileAsync);
         _uploadProject = WorkspaceUi.Button("上传所选工程", UploadProjectAsync);
         _cancelTransfer = WorkspaceUi.Button("取消传输", () => { _transferCancellation?.Cancel(); return Task.CompletedTask; });
         _localProject.ItemTemplate = new FuncDataTemplate<CourseProject>((project, _) => WorkspaceUi.Text(project?.Title ?? ""));
         _files.ItemTemplate = new FuncDataTemplate<CloudFile>((file, _) => file is null ? null : ResourceRow(file.Title,
-            $"{(file.Kind == "project" ? "项目文件" : "ILP 精听包")} · {Size(file.Bytes)}", WorkspaceUi.Button("下载并导入", () => DownloadAsync(file.Id, file.Title, "file", file.Kind))));
+            $"{(file.Kind == "project" ? "项目文件" : "精听课程包")} · {Size(file.Bytes)}", WorkspaceUi.Button("下载并导入", () => DownloadAsync(file.Id, file.Title, "file", file.Kind))));
         _courses.ItemTemplate = new FuncDataTemplate<CloudCourse>((course, _) => course is null ? null : ResourceRow(course.Title, $"云制作工程 · 修订 {course.Revision}",
             WorkspaceUi.Row(WorkspaceUi.Button("下载工程", () => DownloadAsync(course.Id, course.Title, "course", "project")))));
         _jobs.ItemTemplate = new FuncDataTemplate<CloudJob>((job, _) => job is null ? null : WorkspaceUi.Stack(
@@ -65,9 +65,8 @@ public sealed class CloudAuthoringView : UserControl
             Process.Start(new ProcessStartInfo(CloudAuthClient.Server.AbsoluteUri) { UseShellExecute = true });
             return Task.CompletedTask;
         });
-        var actions = new WrapPanel { Orientation = Orientation.Horizontal };
-        foreach (var button in new[] { _login, _cancel, _logout, web }) { button.Margin = new Thickness(0, 0, 8, 8); actions.Children.Add(button); }
-        Content = new StackPanel
+        var actions = WorkspaceUi.Row(_login, _cancel, _logout, web);
+        var content = new StackPanel
         {
             MaxWidth = 1040, Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch,
             Children =
@@ -76,6 +75,7 @@ public sealed class CloudAuthoringView : UserControl
                 _status, actions, _resources
             }
         };
+        Content = content;
         AttachedToVisualTree += async (_, _) =>
         {
             _account.Changed += Changed;
@@ -140,7 +140,7 @@ public sealed class CloudAuthoringView : UserControl
 
     private async Task UploadFileAsync()
     {
-        var path = await WorkspaceUi.Pick(this, "上传 ILP 或工程 ZIP", "ilp", "zip");
+        var path = await WorkspaceUi.Pick(this, "上传课程包或项目", "ilp", "zip");
         if (path is null) return;
         await TransferAsync(async ct =>
         {

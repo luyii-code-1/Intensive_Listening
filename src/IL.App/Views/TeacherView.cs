@@ -46,9 +46,9 @@ public sealed class TeacherView : UserControl
     private readonly SpringListCollection<ListBoxItem> _projectMotion;
     private readonly ListBox _projectList = new() { Background = Brushes.Transparent };
     private readonly TextBox _title = WorkspaceUi.Input(hint: "项目名称");
-    private readonly TextBox _transcript = WorkspaceUi.Input(hint: "SRT 字幕", multiline: true);
+    private readonly TextBox _transcript = WorkspaceUi.Input(hint: "字幕内容", multiline: true);
     private readonly Grid _editor = new();
-    private readonly StackPanel _projectCommands = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+    private readonly WrapPanel _projectCommands = new() { Orientation = Orientation.Horizontal, ItemSpacing = 8, LineSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
     private readonly Grid _content = new() { ColumnDefinitions = new ColumnDefinitions("300,1,*") };
     private readonly Border _busyOverlay = new() { IsVisible = false };
     private readonly Button _back = new();
@@ -95,7 +95,7 @@ public sealed class TeacherView : UserControl
         _title.TextChanged += (_, _) => ScheduleSave(); _transcript.TextChanged += (_, _) => ScheduleSave();
         _autosave.Tick += async (_, _) => { _autosave.Stop(); await RunAsync(SaveDraftAsync, false); };
         _projectList.SelectionChanged += async (_, _) => { if (!_loading && _projectList.SelectedItem is ListBoxItem { Tag: string id }) await OpenProjectAsync(id); };
-        SizeChanged += (_, _) => { var compact = (TopLevel.GetTopLevel(this)?.ClientSize.Width ?? Bounds.Width) < 1220; if (_compact != compact) { _compact = compact; _content.ColumnDefinitions[0].Width = new GridLength(compact ? 240 : 300); BuildCommands(); } };
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
         AttachedToVisualTree += (_, _) => { _owner = TopLevel.GetTopLevel(this) as Window; _queue.Changed += QueueChanged; };
         DetachedFromVisualTree += async (_, _) => { _queue.Changed -= QueueChanged; _autosave.Stop(); await RunAsync(SaveDraftAsync, false); };
     }
@@ -160,7 +160,8 @@ public sealed class TeacherView : UserControl
         ToolTip.SetTip(_back, "返回项目列表"); _back.Click += async (_, _) => await RunAsync(CloseProjectAsync);
         header.Children.Add(_back);
         _heading.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(_heading, 1); header.Children.Add(_heading);
-        Grid.SetColumn(_projectCommands, 2); header.Children.Add(_projectCommands); page.Children.Add(header);
+        var headerMargin = header.Margin; header.Margin = default;
+        page.Children.Add(new ResponsivePair(header, _projectCommands) { Margin = headerMargin, MinimumContentWidth = 180 });
         var projects = new Grid { RowDefinitions = new RowDefinitions("*") , Margin = new Thickness(12, 4, 12, 16) };
         projects.Children.Add(_projectList); _emptyProjects.HorizontalAlignment = HorizontalAlignment.Center; _emptyProjects.VerticalAlignment = VerticalAlignment.Center; projects.Children.Add(_emptyProjects);
         _content.Children.Add(projects);
@@ -249,7 +250,19 @@ public sealed class TeacherView : UserControl
         _loading = true; _title.Text = _vm.Project?.Title ?? ""; _transcript.Text = _vm.Project?.Transcript ?? ""; _editingCues = _vm.Cues.ToArray(); _loading = false;
         foreach (var child in _editor.Children) if (Grid.GetRow(child) == 0) child.IsVisible = _vm.Project != null;
         _editor.IsEnabled = !_agentMode; _back.IsVisible = _vm.Project != null || _agentAuthoringHost.IsVisible;
-        RenderProgress(); RefreshProjects(); BuildStage();
+        ApplyResponsiveLayout(); RenderProgress(); RefreshProjects(); BuildStage();
+    }
+    private void ApplyResponsiveLayout()
+    {
+        var compact = Bounds.Width < 1000;
+        if (_compact != compact) { _compact = compact; BuildCommands(); }
+        var single = Bounds.Width < 900;
+        var editing = _vm.Project != null;
+        _content.ColumnDefinitions[0].Width = single ? editing ? new GridLength(0) : new GridLength(1, GridUnitType.Star) : new GridLength(compact ? 240 : 300);
+        _content.ColumnDefinitions[1].Width = new GridLength(single ? 0 : 1);
+        _content.ColumnDefinitions[2].Width = single && !editing ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        if (_content.Children.Count >= 2) { _content.Children[0].IsVisible = !single || !editing; _content.Children[1].IsVisible = !single; }
+        _editor.IsVisible = !single || editing;
     }
     private void RenderProgress()
     {
@@ -269,26 +282,33 @@ public sealed class TeacherView : UserControl
         {
             _reviewSaveButton = null; _reviewDeliveryCommands = null;
             _reviewList = null; _reviewScroll = null; _reviewStructure = null; _cueItemIndexes.Clear();
-            var empty = WorkspaceUi.Stack(WorkspaceUi.Icon("open_folder_horizontal", 40), WorkspaceUi.Text("还没有课程项目", 17, true), WorkspaceUi.Text("创建项目后即可绑定音频、转写字幕并导出精听包。"));
+            var chooseAudio = WorkspaceUi.Button("选择录音", () => RunAsync(NewFromAudioAsync), true);
+            chooseAudio.HorizontalAlignment = HorizontalAlignment.Center;
+            var startAction = ManagedUi.Feature(chooseAudio, "importAudio");
+            startAction.HorizontalAlignment = HorizontalAlignment.Center;
+            startAction.Margin = new Thickness(0, 4, 0, 0);
+            var empty = WorkspaceUi.Stack(WorkspaceUi.Icon("open_folder_horizontal", 40), WorkspaceUi.Text("从一段录音开始制作", 17, true),
+                WorkspaceUi.Text("选择一段听力录音，自动生成字幕，再检查文字、添加题目。完成后即可播放练习，或分享给学生。"),
+                startAction);
             empty.Children[0].Margin = new Thickness(0, 0, 0, 10);
             foreach (var text in empty.Children.OfType<TextBlock>()) text.TextAlignment = TextAlignment.Center;
             empty.MaxWidth = 360; empty.HorizontalAlignment = HorizontalAlignment.Center; empty.VerticalAlignment = VerticalAlignment.Center; _stage.Content = empty; return;
         }
         if (!p.HasAudio)
         {
-            _stage.Content = StepSurface("选择音频", "音频会复制到项目目录，之后可以随时退出并恢复制作。", WorkspaceUi.Row(WorkspaceUi.Button("选择音频", () => RunAsync(BindAudioAsync), true), WorkspaceUi.Button("导入 SRT", () => RunAsync(ImportSrtAsync)))); return;
+            _stage.Content = StepSurface("添加听力录音", "录音会保存在项目中，退出后也可以继续制作。", WorkspaceUi.Row(WorkspaceUi.Button("选择录音", () => RunAsync(BindAudioAsync), true), WorkspaceUi.Button("导入已有字幕", () => RunAsync(ImportSrtAsync)))); return;
         }
         if (p.Step == CourseProjectStep.Transcription && !p.HasTranscript)
         {
             var job = p.TranscriptionJobId is string id ? _queue.JobById(id) : null;
-            var actions = WorkspaceUi.Button(job?.Status == TranscriptionJobStatus.Failed ? "重新转写" : "开始转写", () => RunAsync(TranscribeAsync), true); actions.IsEnabled = job?.IsActive != true;
-            var replace = WorkspaceUi.Button("更换音频", () => RunAsync(BindAudioAsync)); replace.IsEnabled = job?.Status != TranscriptionJobStatus.Running;
-            var body = WorkspaceUi.Stack(); if (job != null) body.Children.Add(WorkspaceUi.Text(job.Message));
+            var actions = WorkspaceUi.Button(job?.Status == TranscriptionJobStatus.Failed ? "重新生成字幕" : "自动生成字幕", () => RunAsync(TranscribeAsync), true); actions.IsEnabled = job?.IsActive != true;
+            var replace = WorkspaceUi.Button("更换录音", () => RunAsync(BindAudioAsync)); replace.IsEnabled = job?.Status != TranscriptionJobStatus.Running;
+            var body = WorkspaceUi.Stack(WorkspaceUi.Text("将录音中的对话自动整理成逐句字幕。如果已经有字幕文件，也可以直接导入。", 13)); if (job != null) body.Children.Add(WorkspaceUi.Text(job.Message));
             if (job is { Status: TranscriptionJobStatus.AwaitingDecision, Duplicate: { } duplicate })
             {
                 body.Children.Add(WorkspaceUi.Text($"“{duplicate.ExistingTitle}”已使用这段音频。确认后可继续本次转写。", 12));
                 body.Children.Add(WorkspaceUi.Row(
-                    ManagedUi.Feature(WorkspaceUi.Button("继续转写", () => { _queue.Resolve(job.Id, true); return Task.CompletedTask; }, true), "asr"),
+                    ManagedUi.Feature(WorkspaceUi.Button("继续生成字幕", () => { _queue.Resolve(job.Id, true); return Task.CompletedTask; }, true), "asr"),
                     WorkspaceUi.Button("取消", () => { _queue.Resolve(job.Id, false); return Task.CompletedTask; })));
             }
             if (job?.Status == TranscriptionJobStatus.Running)
@@ -298,10 +318,10 @@ public sealed class TeacherView : UserControl
                 var percent = WorkspaceUi.Text($"{Math.Round((job.Fraction ?? 0) * 100)}%", 12); Grid.SetColumn(percent, 2); progress.Children.Add(percent); body.Children.Add(progress);
             }
             if (job?.Status == TranscriptionJobStatus.AwaitingDecision)
-                body.Children.Add(WorkspaceUi.Row(WorkspaceUi.Button("导入 SRT", () => RunAsync(ImportSrtAsync)), replace));
+                body.Children.Add(WorkspaceUi.Row(WorkspaceUi.Button("导入已有字幕", () => RunAsync(ImportSrtAsync)), replace));
             else
-                body.Children.Add(WorkspaceUi.Row(ManagedUi.Feature(actions,"asr"), WorkspaceUi.Button("导入 SRT", () => RunAsync(ImportSrtAsync)), replace));
-            _stage.Content = StepSurface("转写", Path.GetFileName(p.AudioPath!), body); return;
+                body.Children.Add(WorkspaceUi.Row(ManagedUi.Feature(actions,"asr"), WorkspaceUi.Button("导入已有字幕", () => RunAsync(ImportSrtAsync)), replace));
+            _stage.Content = StepSurface("生成字幕", Path.GetFileName(p.AudioPath!), body); return;
         }
         _stage.Content = BuildReview(p);
     }
@@ -316,18 +336,17 @@ public sealed class TeacherView : UserControl
         var grouping = p.ReviewPhase == ReviewPhase.Grouping;
         var structure = SrtTranscriptStructure.FromCues(_editingCues, !_manual);
         var layout = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto") };
-        var toolbar = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        var heading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, VerticalAlignment = VerticalAlignment.Center };
+        var heading = new WrapPanel { ItemSpacing = 16, LineSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
         heading.Children.Add(WorkspaceUi.Text(p.Step == CourseProjectStep.Completed ? "编辑练习" : "审阅与练习", 20));
         var phase = WorkspaceUi.Text(grouping ? "分题" : "设置挖空", 14, true); phase.Foreground = WorkspaceUi.Accent; heading.Children.Add(phase);
         if (grouping) heading.Children.Add(WorkspaceUi.Button(_manual ? "恢复自动处理" : "手动操作", () => { _manual = !_manual; _overview = false; BuildStage(); return Task.CompletedTask; }));
-        toolbar.Children.Add(heading);
+        Control toolbar = heading;
         if (grouping)
         {
-            var commands = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            var commands = new WrapPanel { ItemSpacing = 8, LineSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
             commands.Children.Add(WorkspaceUi.Button(_overview ? "返回原文" : $"题目总览 ({p.Exercises.Questions.Count})", () => { _overview = !_overview; BuildStage(); return Task.CompletedTask; }));
             _createQuestion = WorkspaceUi.Button($"新建题目 ({_selected.Count})", () => RunAsync(async () => { await SaveExercisesAsync(TeacherWorkspaceViewModel.CreateMaterial(_vm.Project!.Exercises, _selected)); _selected.Clear(); BuildStage(); }), true);
-            _createQuestion.IsEnabled = !_overview && _selected.Count > 0; commands.Children.Add(_createQuestion); Grid.SetColumn(commands, 1); toolbar.Children.Add(commands);
+            _createQuestion.IsEnabled = !_overview && _selected.Count > 0; commands.Children.Add(_createQuestion); toolbar = new ResponsivePair(heading, commands) { MinimumContentWidth = 180 };
         }
         layout.Children.Add(toolbar);
         var repeats = p.Exercises.EffectiveMaterials.Count(m => m.RepeatedCueIndexes.Count > 0);
@@ -335,7 +354,7 @@ public sealed class TeacherView : UserControl
         description.Margin = new Thickness(0, 4, 0, 10); Grid.SetRow(description, 1); layout.Children.Add(description);
         Control body = _editingCues.Count == 0 ? new TextBlock { Text = "字幕格式有误，无法生成时间卡片。", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } : grouping && _overview ? BuildQuestionOverview(p, structure) : BuildTranscript(p, structure, grouping);
         Grid.SetRow(body, 2); layout.Children.Add(body);
-        var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 12, 0, 0) };
+        var footer = new WrapPanel { ItemSpacing = 12, LineSpacing = 8, Margin = new Thickness(0, 12, 0, 0) };
         if (!grouping) footer.Children.Add(BackToQuestionsButton());
         _reviewSaveButton = WorkspaceUi.Button("保存", () => RunAsync(SaveReviewAsync), true);
         _reviewDeliveryCommands = BuildDeliveryCommands();
@@ -343,7 +362,7 @@ public sealed class TeacherView : UserControl
         var actions = grouping
             ? WorkspaceUi.Row(WorkspaceUi.Button("下一步：设置挖空", () => RunAsync(() => ChangePhaseAsync(ReviewPhase.Cloze))), _reviewSaveButton, _reviewDeliveryCommands)
             : WorkspaceUi.Row(_reviewSaveButton, _reviewDeliveryCommands);
-        Grid.SetColumn(actions, 1); footer.Children.Add(actions); Grid.SetRow(footer, 3); layout.Children.Add(footer);
+        footer.Children.Add(actions); Grid.SetRow(footer, 3); layout.Children.Add(footer);
         return layout;
     }
     private Control BackToQuestionsButton()
@@ -357,7 +376,7 @@ public sealed class TeacherView : UserControl
         var export = WorkspaceUi.Button(_exporting ? "正在导出 .ilp" : "导出为精听包", () => RunAsync(() => DeliverAsync(false)), true);
         var add = WorkspaceUi.Button(_addingToLibrary ? "正在添加" : "添加到播放", () => RunAsync(() => DeliverAsync(true)));
         export.IsEnabled = add.IsEnabled = !_exporting && !_addingToLibrary;
-        var commands = new WrapPanel(); export.Margin = new Thickness(0, 0, 8, 0); commands.Children.Add(export); commands.Children.Add(add); return ManagedUi.Feature(commands,"export");
+        return ManagedUi.Feature(WorkspaceUi.Row(export, add),"export");
     }
     private void UpdateReviewActions()
     {
@@ -665,6 +684,17 @@ public sealed class TeacherView : UserControl
         project = project with { AudioDuration = await VadSlicer.ProbeDurationAsync(project.AudioPath!) }; await _store.SaveAsync(project);
         await _vm.OpenAsync(project.Id); RenderProject(); await TranscribeAsync();
     });
+    private async Task NewFromAudioAsync()
+    {
+        IL.Core.Management.ManagedRuntime.Require("authoring");
+        IL.Core.Management.ManagedRuntime.Require("importAudio");
+        var audio = await WorkspaceUi.Pick(this, "选择要制作字幕的音频", "mp3", "m4a", "wav");
+        if (audio is null) return;
+        await SaveDraftAsync();
+        var project = await _store.CreateAsync(audio);
+        project = project with { AudioDuration = await VadSlicer.ProbeDurationAsync(project.AudioPath!) };
+        await _store.SaveAsync(project); await _vm.OpenAsync(project.Id); RenderProject();
+    }
     private async Task NewAsync()
     { IL.Core.Management.ManagedRuntime.Require("authoring");
         var choice = await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "新建项目", "选择课程的制作方式。", "人工制作", "智能体制作");
@@ -751,8 +781,9 @@ public sealed class TeacherView : UserControl
         try { await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Render); await action(); }
         finally { _busyOverlay.IsVisible = false; }
     }
-    private async Task RunAsync(Func<Task> action, bool enforce = true)
+    private async Task RunAsync(Func<Task> action, bool enforce = true, [System.Runtime.CompilerServices.CallerMemberName] string operationName = "")
     {
+        using var measurement = IL.App.Services.InteractionPerformance.Measure("authoring." + operationName);
         await _operations.WaitAsync();
         var operation = Guid.NewGuid().ToString("N")[..8];
         IL.Core.Infrastructure.AppLog.Operation("authoring", $"操作开始 id={operation} action={action.Method.Name} project={_vm.Project?.Id}");

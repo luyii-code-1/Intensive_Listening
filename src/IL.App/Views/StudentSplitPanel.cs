@@ -6,6 +6,11 @@ namespace IL.App.Views;
 
 internal sealed class StudentSplitPanel : Panel
 {
+    private double PlayerWidth(double width)
+    {
+        var scale = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
+        return Math.Round(Math.Max(0, width - 1) * 100 / 268 * scale) / scale;
+    }
     public StudentSplitPanel(Control player, Control transcript)
     {
         ClipToBounds = true;
@@ -17,14 +22,14 @@ internal sealed class StudentSplitPanel : Panel
     {
         if (availableSize.Width < 900)
         {
-            var playerHeight = Math.Min(420, Math.Max(0, availableSize.Height - 1));
+            var playerHeight = Math.Min(420, Math.Max(0, availableSize.Height * .55));
             Children[0].Measure(new Size(availableSize.Width, playerHeight));
             Children[1].Measure(new Size(availableSize.Width, 1));
             Children[2].Measure(new Size(availableSize.Width, Math.Max(0, availableSize.Height - playerHeight - 1)));
         }
         else
         {
-            var playerWidth = (availableSize.Width - 1) * 100 / 268;
+            var playerWidth = PlayerWidth(availableSize.Width);
             Children[0].Measure(new Size(playerWidth, availableSize.Height));
             Children[1].Measure(new Size(1, availableSize.Height));
             Children[2].Measure(new Size(availableSize.Width - playerWidth - 1, availableSize.Height));
@@ -35,14 +40,14 @@ internal sealed class StudentSplitPanel : Panel
     {
         if (finalSize.Width < 900)
         {
-            var playerHeight = Math.Min(420, Math.Max(0, finalSize.Height - 1));
+            var playerHeight = Math.Min(420, Math.Max(0, finalSize.Height * .55));
             Children[0].Arrange(new Rect(0, 0, finalSize.Width, playerHeight));
             Children[1].Arrange(new Rect(0, playerHeight, finalSize.Width, 1));
             Children[2].Arrange(new Rect(0, playerHeight + 1, finalSize.Width, Math.Max(0, finalSize.Height - playerHeight - 1)));
         }
         else
         {
-            var playerWidth = (finalSize.Width - 1) * 100 / 268;
+            var playerWidth = PlayerWidth(finalSize.Width);
             Children[0].Arrange(new Rect(0, 0, playerWidth, finalSize.Height));
             Children[1].Arrange(new Rect(playerWidth, 0, 1, finalSize.Height));
             Children[2].Arrange(new Rect(playerWidth + 1, 0, finalSize.Width - playerWidth - 1, finalSize.Height));
@@ -61,9 +66,9 @@ internal sealed class StudentCenteredWrapPanel : Panel
     protected override Size MeasureOverride(Size availableSize)
     {
         double rowWidth = 0, rowHeight = 0, height = 0, width = 0;
-        foreach (var child in Children)
+        foreach (var child in Children.Where(c => c.IsVisible))
         {
-            child.Measure(new Size(double.PositiveInfinity, availableSize.Height));
+            child.Measure(new Size(availableSize.Width, availableSize.Height));
             var size = child.DesiredSize;
             if (rowWidth > 0 && rowWidth + Gap + size.Width > availableSize.Width)
             { width = Math.Max(width, rowWidth); height += rowHeight + Gap; rowWidth = rowHeight = 0; }
@@ -77,7 +82,7 @@ internal sealed class StudentCenteredWrapPanel : Panel
     {
         var rows = new List<List<Control>>();
         double width = 0;
-        foreach (var child in Children)
+        foreach (var child in Children.Where(c => c.IsVisible))
         {
             if (rows.Count == 0 || width > 0 && width + Gap + child.DesiredSize.Width > finalSize.Width)
             { rows.Add([]); width = 0; }

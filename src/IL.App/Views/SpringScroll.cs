@@ -50,7 +50,7 @@ internal sealed class SpringScroll
         if (_moving && target == _target || !_moving && target == _viewer.Offset) return _settled;
         if (!_moving) { _x.Set(_viewer.Offset.X); _y.Set(_viewer.Offset.Y); }
         _target = target;
-        if (FirstRunWizard.MotionReduced()) { Stop(); Apply(target); return Task.CompletedTask; }
+        if (MotionPreferences.PerformanceMode || FirstRunWizard.MotionReduced()) { Stop(); Apply(target); return Task.CompletedTask; }
         _moving = true;
         return _settled = CompleteAsync(++_generation, _x.To(target.X, .42), _y.To(target.Y, .42));
     }

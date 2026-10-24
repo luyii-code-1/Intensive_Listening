@@ -3,13 +3,14 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using IL.Core.Infrastructure;
 namespace IL.Core.Telemetry;
-public sealed class AppTelemetry(string version="2.2.0",ITelemetryTransport? transport=null,string? dataDirectory=null,bool? supportedPlatform=null)
+public sealed partial class AppTelemetry(string version="2.2.0",ITelemetryTransport? transport=null,string? dataDirectory=null,bool? supportedPlatform=null)
 {
     private readonly ITelemetryTransport _transport=transport??new NativeTelemetryTransport(); private readonly SemaphoreSlim _gate=new(1,1); private readonly bool _supported=supportedPlatform??(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS());
     private volatile bool _consent,_enabled; private bool _launchReported,_activeReported; public bool Enabled=>_enabled;
     private string Root=>dataDirectory??AppDirectories.DataDirectory();
     public async Task ApplyConsentAsync(bool consent,bool mainInstance)
     {
+        if (!consent || !mainInstance || !_supported) ConfigurePerformanceAnalysis(false);
         _consent=consent&&mainInstance&&_supported;if(!_consent)_enabled=false;await _gate.WaitAsync();
         try
         {
@@ -22,6 +23,7 @@ public sealed class AppTelemetry(string version="2.2.0",ITelemetryTransport? tra
     }
     public async Task ShutdownAsync()
     {
+        ConfigurePerformanceAnalysis(false);
         _consent = _enabled = false; await _gate.WaitAsync();
         try { await Task.Run(() => _transport.StopAsync("")); } finally { _gate.Release(); }
     }

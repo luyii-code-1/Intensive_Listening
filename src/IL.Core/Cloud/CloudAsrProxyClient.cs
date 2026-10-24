@@ -6,6 +6,7 @@ using System.Text.Json;
 using IL.Core.Asr;
 using IL.Core.Audio;
 using IL.Core.Ilp;
+using IL.Core.Infrastructure;
 
 namespace IL.Core.Cloud;
 
@@ -39,6 +40,24 @@ public sealed class CloudAsrProxyClient : IDisposable
     }
     public async Task<string> RunAsync(string localJobId, string audio, IProgress<AsrProgress>? progress, CancellationToken ct,
         Func<bool> userCancellation, Action<decimal> settled, Func<Task<bool>>? confirmForcedCuts = null)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try { return await RunOnceAsync(localJobId, audio, progress, ct, userCancellation, settled, confirmForcedCuts); }
+            catch (Exception error) when (attempt < 2 && !ct.IsCancellationRequested && IsNetworkInterruption(error))
+            {
+                AppLog.Warning($"云端转写连接中断，准备恢复原任务 job={localJobId} retry={attempt + 1}", error);
+                await Task.Delay(TimeSpan.FromSeconds(attempt + 1), ct);
+                // Reload the saved batch and query server state before uploading pending fragments.
+            }
+        }
+    }
+
+    private static bool IsNetworkInterruption(Exception error) => error is HttpRequestException or TaskCanceledException ||
+        error is CloudAsrWaitingInterruptedException { InnerException: HttpRequestException or OperationCanceledException };
+
+    private async Task<string> RunOnceAsync(string localJobId, string audio, IProgress<AsrProgress>? progress, CancellationToken ct,
+        Func<bool> userCancellation, Action<decimal> settled, Func<Task<bool>>? confirmForcedCuts)
     {
         await _gate.WaitAsync(ct);
         Session? session = null; string? directory = null;
@@ -141,7 +160,11 @@ public sealed class CloudAsrProxyClient : IDisposable
             throw;
         }
         catch (Exception error) when (session is not null && (error is OperationCanceledException or HttpRequestException or IOException))
-        { throw new CloudAsrWaitingInterruptedException("等待已中断，云端整单保留；重试会继续原整单。", error); }
+        {
+            var state = session.BatchId is null ? "提交结果尚未确认，重试会使用原请求继续确认。" : "云端整单保留；重试会继续原整单。";
+            var reason = error is OperationCanceledException ? "连接超时或等待被中断。" : error is HttpRequestException ? "云服务网络连接中断。" : "传输或本地文件读写失败。";
+            throw new CloudAsrWaitingInterruptedException(reason + state, error);
+        }
         finally { _gate.Release(); }
     }
     private Task<CloudProxyBatch> BatchAsync(string id, CancellationToken ct) => SendAsync<CloudProxyBatch>(HttpMethod.Get, "asr/proxy/batches/" + Uri.EscapeDataString(id), null, null, ct);

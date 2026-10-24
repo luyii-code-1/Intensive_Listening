@@ -13,13 +13,15 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     public TranscriptionQueue(AsrRunner runner,Func<string,Task<DuplicateMatch?>> resolveDuplicate,QueueStore store,SrtRecognitionCache cache,Func<string> resolveCacheProfile,int maxConcurrent=1,int maxRetained=50)
     {this.runner=runner;this.resolveDuplicate=resolveDuplicate;this.store=store;this.cache=cache;this.resolveCacheProfile=resolveCacheProfile;this.maxConcurrent=Math.Max(1,maxConcurrent);this.maxRetained=Math.Max(0,maxRetained);}
     public Func<string, string, IProgress<AsrProgress>?, CancellationToken, TimeSpan?, Task<string>>? RunJob { get; set; }
+    public Func<string, Task>? CancelRemoteJob { get; set; }
+    private readonly HashSet<string> remoteCancellations = [];
     private readonly HashSet<string> userCancellations = [];
     public bool WasUserCancelled(string id) { lock (sync) return userCancellations.Contains(id); }
     public void SetChargedCredits(string id, decimal credits) => Update(id, job => job with { ChargedCredits = credits }, true);
     public event EventHandler? Changed;
     public event Action<TranscriptionJob,bool>? Completed;
     public IReadOnlyList<TranscriptionJob> Jobs {get{lock(sync)return jobs.ToArray();}}
-    public bool IsBusy=>Jobs.Any(j=>j.IsActive);
+    public bool IsBusy { get { lock (sync) return jobs.Any(j => j.IsActive) || remoteCancellations.Count > 0; } }
     public int InterruptedCount=>Jobs.Count(j=>j.Status==TranscriptionJobStatus.Interrupted);
     public IReadOnlyList<TranscriptionJob> PendingDecisions=>Jobs.Where(j=>j.Status==TranscriptionJobStatus.AwaitingDecision).ToArray();
     public TranscriptionJob? LatestUnconsumedSrt=>Jobs.FirstOrDefault(j=>j.Status==TranscriptionJobStatus.Completed&&!j.SrtConsumed&&!string.IsNullOrEmpty(j.Srt));
@@ -43,11 +45,39 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     {
         var job=JobById(id);if(job==null||job.IsTerminal)return;
         if (userInitiated) { lock (sync) userCancellations.Add(id); }
+        if (userInitiated && job.Status != TranscriptionJobStatus.Running && job.CacheProfile?.Contains("desktop-asr-v2", StringComparison.Ordinal) == true && CancelRemoteJob is not null)
+        {
+            lock (sync)
+            {
+                if (running.TryGetValue(id, out var activeCancellation)) { activeCancellation.Cancel(); return; }
+                if (!remoteCancellations.Add(id)) return;
+                var task = CancelRemoteAsync(id); executions.Add(task);
+                _ = task.ContinueWith(done => { lock (sync) executions.Remove(done); }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+            return;
+        }
         if(job.Status==TranscriptionJobStatus.Running){Update(id,j=>j with{Message="正在取消。"});lock(sync)if(running.TryGetValue(id,out var cancellation))cancellation.Cancel();}
         else{Update(id,j=>j with{Status=TranscriptionJobStatus.Canceled,Duplicate=null,Fraction=null,FinishedAt=DateTimeOffset.Now,Message="任务已取消。"},true);Trim();Pump();}
     }
+    private async Task CancelRemoteAsync(string id)
+    {
+        Update(id, j => j with { Status = TranscriptionJobStatus.Interrupted, Message = "正在向服务器确认取消。" }, true);
+        try
+        {
+            await CancelRemoteJob!(id);
+            if (!disposed) Update(id, j => j with { Status = TranscriptionJobStatus.Canceled, Fraction = null, FinishedAt = DateTimeOffset.Now, Message = "云端任务已取消。" }, true);
+        }
+        catch (CloudAsrCompletedAfterCancellationException completed) { if (!disposed) Complete(id, completed.Transcript, false); }
+        catch (Exception error)
+        {
+            if (!disposed) Update(id, j => j with { Status = TranscriptionJobStatus.Interrupted, Message = "云端取消尚未确认，请重试取消。" + error.Message }, true);
+        }
+        finally { lock (sync) remoteCancellations.Remove(id); Notify(); }
+        Trim(); Pump();
+    }
     public void Retry(string id)
     {
+        lock (sync) if (remoteCancellations.Contains(id)) return;
         var job=JobById(id);if(job==null||job.Status is not (TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted))return;
         if (job.Status == TranscriptionJobStatus.Failed && job.Srt is not null && job.AudioMd5 is not null && job.CacheProfile is not null)
             cache.Invalidate(job.AudioMd5, job.CacheProfile);
@@ -87,7 +117,7 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     }
     public void ResumeInterrupted()
     {
-        lock(sync){jobs=jobs.Select(j=>j.Status==TranscriptionJobStatus.Interrupted?j with{Status=TranscriptionJobStatus.Queued,Stage=TranscriptionStage.Queued,Fraction=null,Message="等待前面的任务完成。"}:j).ToList();PersistLocked();}Notify();Pump();
+        lock(sync){jobs=jobs.Select(j=>j.Status==TranscriptionJobStatus.Interrupted&&!remoteCancellations.Contains(j.Id)?j with{Status=TranscriptionJobStatus.Queued,Stage=TranscriptionStage.Queued,Fraction=null,Message="等待前面的任务完成。"}:j).ToList();PersistLocked();}Notify();Pump();
     }
     public Task FlushAsync(){lock(sync)return persistence;}
     public async Task WaitForIdleAsync(CancellationToken ct=default)
@@ -100,7 +130,7 @@ public sealed class TranscriptionQueue : IAsyncDisposable
         var starts=new List<(string Id,CancellationTokenSource Cancellation)>();lock(sync)
         {
             if(disposed)return;
-            while(running.Count<maxConcurrent)
+            while(running.Count+remoteCancellations.Count<maxConcurrent)
             {
                 var index=jobs.FindLastIndex(j=>j.Status==TranscriptionJobStatus.Queued);if(index<0)break;
                 var job=jobs[index];var cancellation=new CancellationTokenSource();running[job.Id]=cancellation;
@@ -146,7 +176,12 @@ public sealed class TranscriptionQueue : IAsyncDisposable
             Complete(id,srt,false);
         }
         catch(CloudAsrCompletedAfterCancellationException completed) { if (!disposed) Complete(id, completed.Transcript, false); }
-        catch(CloudAsrWaitingInterruptedException interrupted) { if (!disposed) Update(id, j => j with { Status=TranscriptionJobStatus.Interrupted, Fraction=null, Message=interrupted.Message }, true); }
+        catch(CloudAsrWaitingInterruptedException interrupted)
+        {
+            var details = CrashReportStore.Redact($"转写任务 {id}\n阶段：{JobById(id)?.Stage}\n时间：{DateTimeOffset.Now:O}\n{interrupted}");
+            AppLog.Warning($"云端转写等待中断 id={id}", interrupted);
+            if (!disposed) Update(id, j => j with { Status=TranscriptionJobStatus.Interrupted, Fraction=null, Message=interrupted.Message, ErrorDetails=details }, true);
+        }
         catch(OperationCanceledException){if(!disposed)Update(id,j=>j with{Status=TranscriptionJobStatus.Canceled,Fraction=null,FinishedAt=DateTimeOffset.Now,Message="任务已取消。"},true);}
         catch(Exception ex)
         {
@@ -166,12 +201,13 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     {
         var (stage,fraction,message)=p.Stage switch
         {
-            AsrStage.Decoding=>(TranscriptionStage.Decoding,0.07,"正在分析音频。"),AsrStage.Slicing=>(TranscriptionStage.Slicing,0.1,"正在按静音位置切分音频。"),
+            AsrStage.Queued=>(TranscriptionStage.Recognizing,0.15,"音频已上传，等待服务器处理。"),
+            AsrStage.Decoding=>(TranscriptionStage.Decoding,0.07,"正在分析音频。"),AsrStage.Slicing=>(TranscriptionStage.Slicing,p.Detail is null?0.1:0.15,"正在按静音位置切分音频。"),
             AsrStage.Uploading=>(TranscriptionStage.Uploading,0.1+(p.StageFraction??0)*0.05,$"正在发送音频，{p.BytesDone/(1024d*1024):F1} / {p.BytesTotal/(1024d*1024):F1} MB。"),
             AsrStage.Recognizing=>(TranscriptionStage.Recognizing,0.15+(p.StageFraction??0)*0.8,p.SegmentTotal==null?"服务器正在识别。":"正在并行识别音频分段。"),
             AsrStage.Formatting=>(TranscriptionStage.Formatting,0.97,"正在写入 SRT。"),_=>(TranscriptionStage.Merging,0.99,"正在合并字幕时间轴。")
         };
-        Update(id,j=>j with{Stage=stage,Fraction=fraction,Message=message,BytesDone=p.BytesDone,BytesTotal=p.BytesTotal,SegmentIndex=p.SegmentIndex,SegmentTotal=p.SegmentTotal});
+        Update(id,j=>j with{Stage=stage,Fraction=p.Stage==AsrStage.Queued?j.Fraction??fraction:fraction,Message=p.Detail??message,BytesDone=p.BytesDone,BytesTotal=p.BytesTotal,SegmentIndex=p.SegmentIndex,SegmentTotal=p.SegmentTotal});
     }
     private void Update(string id,Func<TranscriptionJob,TranscriptionJob> transform,bool persist=false)
     {lock(sync){var index=jobs.FindIndex(j=>j.Id==id);if(index<0||disposed)return;jobs[index]=transform(jobs[index]);if(persist)PersistLocked();}Notify();}

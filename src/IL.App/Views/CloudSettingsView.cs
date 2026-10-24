@@ -42,7 +42,7 @@ public sealed class CloudSettingsView : UserControl
             catch (Exception error) { WorkspaceToast.Show(this, "云服务设置未保存", error.Message, true); }
             finally { settingsChanged?.Invoke(); Refresh(); }
         };
-        Content = new StackPanel
+        var content = new StackPanel
         {
             MaxWidth = 920, Spacing = 20, HorizontalAlignment = HorizontalAlignment.Stretch,
             Children =
@@ -52,6 +52,7 @@ public sealed class CloudSettingsView : UserControl
                 _status, WorkspaceUi.Row(_login, _cancel, _logout, web)
             }
         };
+        Content = content;
         AttachedToVisualTree += (_, _) => { services.CloudAccount.Changed += Changed; Refresh(); };
         DetachedFromVisualTree += (_, _) => services.CloudAccount.Changed -= Changed;
         Refresh();

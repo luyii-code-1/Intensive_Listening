@@ -8,7 +8,7 @@ namespace IL.App;
 
 public partial class App : Application
 {
-    public override void Initialize() { AvaloniaXamlLoader.Load(this); Views.SpringMotion.InstallFeedback(); Views.PopupMotion.Install(); Views.SpringScroll.Install(); }
+    public override void Initialize() { AvaloniaXamlLoader.Load(this); Views.MotionPreferences.Install(); Views.SpringMotion.InstallFeedback(); Views.PopupMotion.Install(); Views.SpringScroll.Install(); }
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)

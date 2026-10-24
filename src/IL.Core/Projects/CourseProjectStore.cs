@@ -39,10 +39,26 @@ public sealed class CourseProjectStore(string? root=null)
     }
     public async Task<CourseProject> BindAudioAsync(CourseProject project,string source,TimeSpan? duration=null,CancellationToken ct=default)
     {
+        await _io.WaitAsync(ct);
+        try
+        {
         var directory=DirectoryFor(project.Id);Directory.CreateDirectory(directory);var destination=Path.Combine(directory,"audio"+Path.GetExtension(source).ToLowerInvariant());
-        if(Path.GetFullPath(source)!=Path.GetFullPath(destination)){await using var input=File.OpenRead(source);await using var output=File.Create(destination);await input.CopyToAsync(output,ct);}
+        if(!string.Equals(Path.GetFullPath(source),Path.GetFullPath(destination),OperatingSystem.IsWindows()?StringComparison.OrdinalIgnoreCase:StringComparison.Ordinal))
+        {
+            var temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                await using (var input=File.OpenRead(source))
+                await using (var output=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None))
+                    await input.CopyToAsync(output,ct);
+                ct.ThrowIfCancellationRequested(); File.Move(temporary,destination,true);
+            }
+            finally { TryDeleteTemporary(temporary); }
+        }
         var updated=project with{Title=project.Title=="未命名项目"?Path.GetFileNameWithoutExtension(source):project.Title,AudioPath=destination,AudioDuration=duration,Step=CourseProjectStep.Transcription,TranscriptionJobId=null,Transcript="",ReviewPhase=ReviewPhase.Grouping,Exercises=LessonExercises.Empty,AutomaticQuestionPlanApplied=false,AutoQuestionPlanDeferred=false,UpdatedAt=DateTimeOffset.Now};
-        await SaveAsync(updated,ct);return updated;
+        await SaveCoreAsync(updated,ct);return updated;
+        }
+        finally { _io.Release(); }
     }
     public async Task SaveAsync(CourseProject project,CancellationToken ct=default)
     {
@@ -62,8 +78,21 @@ public sealed class CourseProjectStore(string? root=null)
     private async Task SaveCoreAsync(CourseProject project,CancellationToken ct)
     {
         var directory=DirectoryFor(project.Id);Directory.CreateDirectory(directory);
-        await File.WriteAllTextAsync(Path.Combine(directory,"transcript.srt"),project.Transcript,new UTF8Encoding(false),ct);
-        await File.WriteAllTextAsync(Path.Combine(directory,"project.json"),JsonSerializer.Serialize(project.ToMetadata(),JsonOptions),ct);
+        var transcript = Path.Combine(directory,"transcript.srt"); var metadata = Path.Combine(directory,"project.json");
+        var suffix = "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(transcript+suffix,project.Transcript,new UTF8Encoding(false),ct);
+            await File.WriteAllTextAsync(metadata+suffix,JsonSerializer.Serialize(project.ToMetadata(),JsonOptions),ct);
+            ct.ThrowIfCancellationRequested();
+            File.Move(transcript+suffix,transcript,true); File.Move(metadata+suffix,metadata,true);
+        }
+        finally { TryDeleteTemporary(transcript+suffix); TryDeleteTemporary(metadata+suffix); }
+    }
+    private static void TryDeleteTemporary(string path)
+    {
+        try { File.Delete(path); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { AppLog.Warning("工程临时文件清理失败",error); }
     }
     private static async Task<CourseProject?> LoadDirectoryAsync(string directory,CancellationToken ct)
     {
@@ -74,18 +103,33 @@ public sealed class CourseProjectStore(string? root=null)
             if(!value.TryGetProperty("version",out var version)||version.GetInt32() is not (1 or 2))return null;
             var transcript=Path.Combine(directory,"transcript.srt");return CourseProject.FromMetadata(value,File.Exists(transcript)?await File.ReadAllTextAsync(transcript,ct):"");
         }
-        catch(Exception ex)when(ex is IOException or JsonException or FormatException or InvalidOperationException or ArgumentException){return null;}
+        catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or JsonException or FormatException or InvalidOperationException or ArgumentException or OverflowException){return null;}
     }
-    public Task DeleteAsync(string id,CancellationToken ct=default){ct.ThrowIfCancellationRequested();var directory=DirectoryFor(id);if(Directory.Exists(directory))Directory.Delete(directory,true);return Task.CompletedTask;}
+    public async Task DeleteAsync(string id,CancellationToken ct=default)
+    {
+        await _io.WaitAsync(ct);
+        try { var directory=DirectoryFor(id);if(Directory.Exists(directory))Directory.Delete(directory,true); }
+        finally { _io.Release(); }
+    }
     public async Task<byte[]> ExportZipAsync(CourseProject project,CancellationToken ct=default)
     {
-        using var output=new MemoryStream();await WriteZipAsync(project,output,ct);return output.ToArray();
+        await _io.WaitAsync(ct);
+        try { using var output=new MemoryStream();await WriteZipAsync(project,output,ct);return output.ToArray(); }
+        finally { _io.Release(); }
     }
     public async Task<string> ExportZipToFileAsync(CourseProject project,string output,CancellationToken ct=default)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);await using var file=File.Create(output);await WriteZipAsync(project,file,ct);return output;
+        await _io.WaitAsync(ct);
+        var temporary = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+            await using(var file=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None)) await WriteZipAsync(project,file,ct,output);
+            ct.ThrowIfCancellationRequested(); File.Move(temporary,output,true);return output;
+        }
+        finally { try { TryDeleteTemporary(temporary); } finally { _io.Release(); } }
     }
-    private async Task WriteZipAsync(CourseProject project,Stream output,CancellationToken ct)
+    private async Task WriteZipAsync(CourseProject project,Stream output,CancellationToken ct,string? destinationFile=null)
     {
         var directory=DirectoryFor(project.Id);if(!Directory.Exists(directory))throw new CourseProjectArchiveException("工程目录不存在");
         using var zip=new ZipArchive(output,ZipArchiveMode.Create,leaveOpen:true);var metadata=project.ToMetadata();metadata["audioPath"]=project.AudioPath==null?null:Path.GetFileName(project.AudioPath);
@@ -95,6 +139,9 @@ public sealed class CourseProjectStore(string? root=null)
         await AddText("project/transcript.srt",project.Transcript);
         foreach(var file in Directory.EnumerateFiles(directory,"*",SearchOption.AllDirectories))
         {
+            var comparison = OperatingSystem.IsWindows()?StringComparison.OrdinalIgnoreCase:StringComparison.Ordinal;
+            if (output is FileStream writing && string.Equals(Path.GetFullPath(file),Path.GetFullPath(writing.Name),comparison) ||
+                destinationFile != null && string.Equals(Path.GetFullPath(file),Path.GetFullPath(destinationFile),comparison)) continue;
             var relative=Path.GetRelativePath(directory,file).Replace('\\','/');if(relative is "project.json" or "transcript.srt")continue;
             if((File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)continue;
             await using var source=File.OpenRead(file);await using var entry=zip.CreateEntry("project/"+relative).Open();await source.CopyToAsync(entry,ct);

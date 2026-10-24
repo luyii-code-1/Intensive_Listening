@@ -9,8 +9,9 @@ internal static class ManagedUi
 {
     public static Control Wrap(Control content, Func<bool> managed)
     {
-        var note = new TextBlock { Text = "该设置由您的组织管理", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse("#C49520")), Margin = new Thickness(18, 0, 18, 6) };
-        var panel = new StackPanel { Spacing = 2, Children = { content, note } };
+        var note = new TextBlock { Text = "该设置由您的组织管理", FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = new SolidColorBrush(Color.Parse("#C49520")), Margin = new Thickness(0, 2, 0, 0) };
+        var panel = new Grid { RowDefinitions = new RowDefinitions("*,Auto"), VerticalAlignment = content.VerticalAlignment };
+        panel.Children.Add(content); Grid.SetRow(note, 1); panel.Children.Add(note);
         void Refresh() { var locked = managed(); panel.IsEnabled = !locked; content.Opacity = locked ? .45 : 1; note.IsVisible = locked; }
         var client=ManagedRuntime.Client;
         void Changed()=>Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);

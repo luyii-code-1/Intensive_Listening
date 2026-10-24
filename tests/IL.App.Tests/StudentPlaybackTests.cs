@@ -20,8 +20,8 @@ public sealed class StudentPlaybackTests
             var store=new LessonProgressStore(Path.Combine(root,"lesson_progress.json"));await store.SaveAsync(new Dictionary<string,LessonProgress>{{lesson.Id,new(lesson.Id,2500,null,new HashSet<string>{"1:3"})}});
             var fake=new FakePlayer();await using var vm=new StudentViewModel(()=>fake,library,store,new AppSettingsStore(Path.Combine(root,"settings.json")));
             await vm.RefreshAsync();Assert.Null(vm.SelectedLesson);vm.SelectedLesson=vm.Lessons.Single();await vm.CurrentLoad;
-            Assert.Equal(2.5,vm.PositionSeconds);Assert.Equal(1,vm.ActiveCue!.Index);Assert.Contains("1:3",vm.RevealedCloze);Assert.Equal(0,fake.OpenCount);
-            await vm.PreviousCueCommand.ExecuteAsync(null);Assert.Equal(0,vm.ActiveCue!.Index);Assert.Equal(0,fake.OpenCount);
+            Assert.Equal(2.5,vm.PositionSeconds);Assert.Equal(1,vm.ActiveCue!.Index);Assert.Contains("1:3",vm.RevealedCloze);Assert.Equal(1,fake.OpenCount);Assert.True(vm.CanPlay);
+            await vm.PreviousCueCommand.ExecuteAsync(null);Assert.Equal(0,vm.ActiveCue!.Index);Assert.Equal(1,fake.OpenCount);
             await vm.TogglePlaybackCommand.ExecuteAsync(null);Assert.True(vm.IsPlaying);Assert.Equal(1,fake.OpenCount);Assert.Equal(vm.PositionSeconds,fake.Position.TotalSeconds);
             vm.SingleSentenceLoop=true;await vm.SeekAsync(1);Assert.NotNull(fake.LoopEnd);
             await vm.TogglePlaybackCommand.ExecuteAsync(null);Assert.False(vm.IsPlaying);Assert.Equal((long)(vm.PositionSeconds*1000),(await store.LoadAsync())[lesson.Id].PositionMs);
@@ -39,7 +39,9 @@ public sealed class StudentPlaybackTests
             var source=Path.Combine(AppContext.BaseDirectory,"fixtures","dart-course.ilp");var library=Path.Combine(root,"library");await new IlpImporter(library).ImportFileAsync(source);
             var fake=new FakePlayer{FailOpen=true};await using var vm=new StudentViewModel(()=>fake,library,new LessonProgressStore(Path.Combine(root,"progress.json")),new AppSettingsStore(Path.Combine(root,"settings.json")));
             await vm.RefreshAsync();vm.SelectedLesson=vm.Lessons[0];vm.SelectedLesson=null;await vm.CurrentLoad;Assert.Empty(vm.Cues);Assert.False(vm.CanPlay);
-            vm.SelectedLesson=vm.Lessons[0];await vm.CurrentLoad;await vm.TogglePlaybackCommand.ExecuteAsync(null);Assert.Contains("native failure",vm.Status);Assert.False(vm.IsPlaying);Assert.False(vm.IsBusy);
+            vm.SelectedLesson=vm.Lessons[0];await vm.CurrentLoad;Assert.Contains("native failure",vm.Status);Assert.False(vm.IsPlaying);Assert.False(vm.IsBusy);Assert.False(vm.CanPlay);
+            fake.FailOpen=false;await vm.OpenLessonAsync(vm.Lessons[0]);Assert.True(vm.CanPlay);
+            await vm.TogglePlaybackCommand.ExecuteAsync(null);Assert.True(vm.IsPlaying);
         }
         finally{Directory.Delete(root,true);}
     }

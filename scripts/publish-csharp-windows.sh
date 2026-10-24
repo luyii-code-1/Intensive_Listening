@@ -7,7 +7,13 @@ python_runtime="${PYTHON:-python3}"
 mkdir -p "$output/tools" artifacts/native
 output="$(cd "$output" && pwd)"
 if [[ "${IL_SKIP_TESTS:-0}" != 1 ]]; then dotnet test IL2.slnx -c Release --nologo; fi
-dotnet publish src/IL.App/IL.App.csproj -c Release -r win-x64 --self-contained true -o "$output" --nologo
+# Rebuild replaces intermediate assemblies left by an interrupted XAML compilation.
+dotnet build src/IL.App/IL.App.csproj -t:Rebuild -c Release -r win-x64 --self-contained true --nologo
+# Publish must run BeforeBuild so the VLC package collects its native content.
+dotnet publish src/IL.App/IL.App.csproj -c Release -r win-x64 --self-contained true --no-restore -o "$output" --nologo
+if [[ "${OS:-}" == Windows_NT ]]; then
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-published-xaml.ps1 -RuntimeDirectory "$output"
+fi
 dotnet publish src/IL.Launcher/IL.Launcher.csproj -c Release -r win-x64 --self-contained true -o artifacts/build/launcher --nologo
 cp artifacts/version/build.json "$output/build-info.json"
 cp artifacts/build/launcher/lesson_player_launcher.exe "$output/tools/lesson_player_launcher.exe"

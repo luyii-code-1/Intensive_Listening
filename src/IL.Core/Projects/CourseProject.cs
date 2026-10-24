@@ -28,12 +28,12 @@ public sealed record CourseProject(string Id,string Title,DateTimeOffset Created
     {
         string Text(string key,string fallback="")=>json.TryGetProperty(key,out var value)&&value.ValueKind==JsonValueKind.String?value.GetString()!:fallback;
         string? Nullable(string key)=>Text(key) is {Length:>0} text?text:null;
-        double? Number(string key)=>json.TryGetProperty(key,out var value)&&value.ValueKind==JsonValueKind.Number&&value.TryGetDouble(out var n)?n:null;
+        double? Number(string key)=>json.TryGetProperty(key,out var value)&&value.ValueKind==JsonValueKind.Number&&value.TryGetDouble(out var n)&&double.IsFinite(n)?n:null;
         bool Flag(string key)=>json.TryGetProperty(key,out var value)&&value.ValueKind==JsonValueKind.True;
         var id=Text("id");if(id.Length==0)throw new FormatException("项目 ID 无效");
         var uuid=Nullable("packageUuid")??StableUuid(id);
         return new(id,Text("title"),DateTimeOffset.Parse(Text("createdAt")),DateTimeOffset.Parse(Text("updatedAt")),Enum.TryParse<CourseProjectStep>(Text("step"),true,out var step)?step:CourseProjectStep.Audio,uuid,
-            Nullable("audioPath"),Number("audioDurationMs") is {} ms?TimeSpan.FromMilliseconds(ms):null,Nullable("transcriptionJobId"),transcript,Nullable("lastExportPath"),(int)(Number("packageVersion")??0),
+            Nullable("audioPath"),Number("audioDurationMs") is {} ms&&ms>=0&&ms<=TimeSpan.MaxValue.TotalMilliseconds-1?TimeSpan.FromMilliseconds(ms):null,Nullable("transcriptionJobId"),transcript,Nullable("lastExportPath"),(int)Math.Clamp(Number("packageVersion")??0,0,int.MaxValue),
             Enum.TryParse<ReviewPhase>(Text("reviewPhase"),true,out var phase)?phase:ReviewPhase.Grouping,json.TryGetProperty("exercises",out var exercises)?LessonExercises.FromJson(exercises):null,Flag("automaticQuestionPlanApplied"),Flag("autoQuestionPlanDeferred"))
         { CreatorMachine = Text("creatorMachine", "未知"), CreatorAgent = Text("creatorAgent", "未知"), UserEdited = Flag("userEdited") };
     }

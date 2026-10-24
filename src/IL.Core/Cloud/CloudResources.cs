@@ -59,6 +59,7 @@ public sealed class CloudResources : IDisposable
     public async Task<CloudFile> UploadAsync(string source, IProgress<CloudTransferProgress>? progress, CancellationToken ct = default)
     {
         await _transfer.WaitAsync(ct);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(TimeSpan.FromMinutes(10)); ct = deadline.Token;
         try
         {
             await EnsureUserAsync(ct);
@@ -87,6 +88,7 @@ public sealed class CloudResources : IDisposable
     {
         if (kind is not ("file" or "course") || format is not ("ilp" or "project")) throw new ArgumentException("云端文件类型无效。");
         await _transfer.WaitAsync(ct);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(TimeSpan.FromMinutes(10)); ct = deadline.Token;
         TransferOperation? operation = null;
         string? file = null;
         try
@@ -119,6 +121,7 @@ public sealed class CloudResources : IDisposable
             var target = new Uri(CloudAuthClient.Server, delivery.Url);
             var partial = file + ".part";
             var offset = File.Exists(partial) ? new FileInfo(partial).Length : 0;
+            if (offset > delivery.Bytes) { File.Delete(partial); offset = 0; }
             using var request = new HttpRequestMessage(HttpMethod.Get, target);
             if (offset > 0) request.Headers.Range = new RangeHeaderValue(offset, null);
             using var response = await _api.SendAsync(request, ct);
@@ -149,6 +152,7 @@ public sealed class CloudResources : IDisposable
                     var read = await stream.ReadAsync(buffer, ct);
                     if (read == 0) break;
                     received += read;
+                    if (received > total) throw new CloudApiException("invalid_length", "云端返回的文件超过授权大小，下载片段已重置，请重试。");
                     if (received > MaximumFileBytes) throw new CloudApiException("file_too_large", "云端文件超过 200 MiB，已停止下载。");
                     await output.WriteAsync(buffer.AsMemory(0, read), ct);
                     progress?.Report(new(received, total));
@@ -166,6 +170,11 @@ public sealed class CloudResources : IDisposable
             operation.Complete = true;
             await SaveOperationAsync(operation, ct);
             return file;
+        }
+        catch (CloudApiException error) when (error.Code == "invalid_length")
+        {
+            if (file is not null) File.Delete(file + ".part");
+            throw;
         }
         catch (CloudApiException error) when (error.Code is "download" or "delivery")
         {
@@ -222,11 +231,12 @@ public sealed class CloudResources : IDisposable
     }
     private async Task<T> PostAsync<T>(string endpoint, string? key, CancellationToken ct)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(TimeSpan.FromSeconds(30));
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(CloudAuthClient.Server, endpoint));
         if (key is not null) request.Headers.Add("Idempotency-Key", key);
-        using var response = await _api.SendAsync(request, ct);
-        await RequireSuccessAsync(response, ct);
-        return await ReadAsync<T>(response, ct);
+        using var response = await _api.SendAsync(request, deadline.Token);
+        await RequireSuccessAsync(response, deadline.Token);
+        return await ReadAsync<T>(response, deadline.Token);
     }
     private static async Task<T> ReadAsync<T>(HttpResponseMessage response, CancellationToken ct) =>
         await response.Content.ReadFromJsonAsync<T>(Json, ct) ?? throw new CloudApiException("invalid_response", "云服务返回的数据无效。");

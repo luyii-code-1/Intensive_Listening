@@ -11,8 +11,13 @@ namespace IL.Core.Tests;
 
 public sealed class CloudAsrProxyTests
 {
-    [Fact]
-    public async Task UploadsAllTwelveFragmentsBeforeReadingAnyResultAndKeepsOneBatchAfterDisconnect()
+    [Theory]
+    [InlineData("upload")]
+    [InlineData("poll")]
+    [InlineData("timeout")]
+    [InlineData("result")]
+    [InlineData("persistent")]
+    public async Task RecoversOriginalBatchAfterDisconnectAndUploadsAllFragmentsBeforeResults(string disconnect)
     {
         var root = Path.Combine(Path.GetTempPath(), "il-proxy-test-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
         try
@@ -30,7 +35,7 @@ public sealed class CloudAsrProxyTests
             {
                 audioHash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(audio))), operationId = "same-operation", batchId = (string?)null, segments = fragments
             }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-            var submitted = 0; var uploaded = new ConcurrentDictionary<int, byte>(); var lostResponse = true; var results = 0;
+            var submitted = 0; var uploaded = new ConcurrentDictionary<int, byte>(); var failures = disconnect == "persistent" ? 3 : 1; var results = 0;
             object Batch() => new { id = "batch", state = uploaded.Count == 12 ? "succeeded" : "queued", priceCredits = .5m, heldCredits = uploaded.Count == 12 ? 0 : .5m, chargedCredits = uploaded.Count == 12 ? .5m : 0,
                 segments = Enumerable.Range(0, 12).Select(i => new { index = i, state = uploaded.ContainsKey(i) ? "succeeded" : "pending", statusCode = uploaded.ContainsKey(i) ? 200 : 0 }).ToArray(), error = (string?)null };
             using var http = new HttpClient(new Handler(request =>
@@ -42,26 +47,61 @@ public sealed class CloudAsrProxyTests
                 if (path == "/api/v1/asr/proxy/batches") { Assert.Equal("same-operation", request.Headers.GetValues("Idempotency-Key").Single()); submitted++; return Json(Batch()); }
                 if (path == "/api/v1/asr/proxy/batches/batch")
                 {
-                    if (uploaded.Count == 12 && lostResponse) { lostResponse = false; throw new HttpRequestException("offline after uploads"); }
+                    if (uploaded.Count == 12 && (disconnect is "poll" or "timeout" or "persistent") && Interlocked.Decrement(ref failures) >= 0)
+                    {
+                        if (disconnect == "timeout") throw new TaskCanceledException("query timed out");
+                        throw new HttpRequestException("offline after uploads");
+                    }
                     return Json(Batch());
                 }
                 if (path.EndsWith("/result"))
                 {
-                    Assert.Equal(12, uploaded.Count); results++;
+                    Assert.Equal(12, uploaded.Count);
+                    if (disconnect == "result" && Interlocked.Decrement(ref failures) >= 0) throw new HttpRequestException("result response lost");
+                    results++;
                     return Json(new { output = new { sentence = new[] { new { words = new[] { new { text = "Hello", begin_time = 0, end_time = 500, punctuation = "." } }, end_time = 500 } } } });
                 }
-                if (path.Contains("/segments/")) { uploaded.TryAdd(int.Parse(path.Split('/')[^1]), 0); return Json(Batch()); }
+                if (path.Contains("/segments/"))
+                {
+                    var index = int.Parse(path.Split('/')[^1]);
+                    Assert.True(uploaded.TryAdd(index, 0), "Acknowledged fragments must not be uploaded again.");
+                    if (disconnect == "upload" && Interlocked.Decrement(ref failures) >= 0) throw new HttpRequestException("upload response lost");
+                    return Json(Batch());
+                }
                 throw new InvalidOperationException("Unexpected endpoint");
             }));
             using var auth = new CloudAuthClient(new Tokens(), http); using var client = new CloudAsrProxyClient(auth, root, http);
             decimal? charged = null;
-            await Assert.ThrowsAsync<CloudAsrWaitingInterruptedException>(() => client.RunAsync("job", audio, null, default, () => false, value => charged = value));
-            Assert.Equal(0, results);
+            if (disconnect == "persistent")
+            {
+                await Assert.ThrowsAsync<CloudAsrWaitingInterruptedException>(() => client.RunAsync("job", audio, null, default, () => false, value => charged = value));
+                Assert.Equal(0, results);
+            }
             var srt = await client.RunAsync("job", audio, null, default, () => false, value => charged = value);
             Assert.Equal(1, submitted); Assert.Equal(12, uploaded.Count); Assert.Equal(12, results); Assert.Equal(.5m, charged);
             Assert.Contains("00:00:11,000 --> 00:00:11,500", srt);
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task CancellationStopsAutomaticReconnect()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il-proxy-cancel-" + Guid.NewGuid().ToString("N"));
+        using var cancellation = new CancellationTokenSource();
+        var requests = 0;
+        using var http = new HttpClient(new Handler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/connect/token")
+                return Json(new { access_token = "access", refresh_token = "refresh", token_type = "Bearer", expires_in = 900 });
+            requests++;
+            cancellation.CancelAfter(TimeSpan.FromMilliseconds(100));
+            throw new HttpRequestException("connection interrupted");
+        }));
+        using var auth = new CloudAuthClient(new Tokens(), http);
+        using var client = new CloudAsrProxyClient(auth, root, http);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.RunAsync("job", "unused.wav", null, cancellation.Token, () => true, _ => { }));
+        Assert.Equal(1, requests);
     }
 
     [Fact]

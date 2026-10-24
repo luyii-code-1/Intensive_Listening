@@ -29,7 +29,7 @@ public sealed class SettingsView : UserControl
     private Control? _cloudAsrNotice;
     private readonly TextBlock _cloudAsrPrice = WorkspaceUi.Text("登录云服务后读取价格与音频限制。", 12);
     private bool _pricingPending;
-    private readonly IL.Core.Cloud.CloudAsrProxyClient? _cloudAsr;
+    private readonly IL.Core.Cloud.DesktopCloudAsrClient? _cloudAsr;
     private readonly CloudAccountService? _cloudAccount;
     private GitHubUpdateChecker? _updates;
         private readonly TextBlock _updateStatus = WorkspaceUi.Text("尚未检查更新",12);
@@ -78,12 +78,13 @@ public sealed class SettingsView : UserControl
         AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontSize = 17, MinHeight = 110
     };
     private readonly ToggleSwitch _association = new(), _mcp = new(), _skip = new(), _createProject = new(), _debug = new(), _telemetry = new();
+    private readonly ToggleSwitch _performance = new(), _animationWaiting = new(), _performanceAnalysis = new();
     private readonly TextBox _localDirectory = WorkspaceUi.Input();
     private readonly ComboBox _localModel = new() { MinWidth = 180 };
     private readonly DispatcherTimer _fontSave = new() { Interval = TimeSpan.FromMilliseconds(250) };
     public Action? BackRequested { get; set; }
     public Func<Task>? WithdrawAgreementRequested { get; set; }
-    public SettingsView(AppSettingsStore store, Func<AppSettings, Task>? apply = null, AppPrivateApiServer? mcpServer = null, Control? cloudPage = null, IL.Core.Cloud.CloudAsrProxyClient? cloudAsr = null, CloudAccountService? cloudAccount = null)
+    public SettingsView(AppSettingsStore store, Func<AppSettings, Task>? apply = null, AppPrivateApiServer? mcpServer = null, Control? cloudPage = null, IL.Core.Cloud.DesktopCloudAsrClient? cloudAsr = null, CloudAccountService? cloudAccount = null)
     {
         _cloudAsr = cloudAsr; _cloudAccount = cloudAccount; _store = store; _mcpServer = mcpServer; _cloudPage = cloudPage; _apply = apply ?? (_ => Task.CompletedTask);
         _playerShortcuts = new(bindings => ChangePreferenceAsync(s => s with { PlayerKeyBindings = bindings }, "扩展按键"));
@@ -131,6 +132,8 @@ public sealed class SettingsView : UserControl
             _playerShortcuts.Populate(settings.PlayerKeyBindings);
             _association.IsChecked = settings.FileAssociationEnabled; _mcp.IsChecked = settings.McpEnabled; _skip.IsChecked = settings.SkipOpeningPrompts; _createProject.IsChecked = settings.CreateProjectOnAudioImport;
             _debug.IsChecked = settings.DebugLogging; _telemetry.IsChecked = settings.TelemetryEnabled;
+            _performance.IsChecked = settings.PerformanceMode; _animationWaiting.IsChecked = settings.DisableAnimationWaiting;
+            _performanceAnalysis.IsChecked = settings.PerformanceAnalysisEnabled; _performanceAnalysis.IsEnabled = settings.TelemetryEnabled;
             _startup.IsChecked = ManagedRuntime.IsManaged || settings.StartAtLogin; _startup.IsEnabled = !ManagedRuntime.IsManaged;
             if (_liveLogs != null) _liveLogs.IsEnabled = settings.DebugLogging;
             _localDirectory.Text = settings.LocalModelsDirectory; _localModel.ItemsSource = settings.DetectedLocalModels; _localModel.SelectedItem = settings.SelectedLocalModel;
@@ -144,6 +147,9 @@ public sealed class SettingsView : UserControl
     };
     private void WirePreferences()
     {
+        _performance.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { PerformanceMode = _performance.IsChecked == true }, "性能模式"); };
+        _animationWaiting.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { DisableAnimationWaiting = _animationWaiting.IsChecked == true }, "禁用动画等待"); };
+        _performanceAnalysis.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { PerformanceAnalysisEnabled = _performanceAnalysis.IsChecked == true }, "性能分析"); };
         _useCloudAsr.IsCheckedChanged += async (_, _) =>
         {
             if (_populating) return;
@@ -174,6 +180,7 @@ public sealed class SettingsView : UserControl
             if (!enabled && _settings.TelemetryEnabled && !await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "关闭匿名数据分析？", "关闭后会停止后续上报并清理待发送缓存。已送达的数据不会立即撤回；阿里云文档所述默认保留期为 60 天，实际以工作区配置为准。\n\n关闭后可以随时在设置中重新开启。", "确认关闭"))
             { _populating = true; _telemetry.IsChecked = true; _populating = false; return; }
             await ChangePreferenceAsync(s => s with { TelemetryEnabled = enabled, TelemetryPrompted = true }, "匿名使用情况分析");
+            _performanceAnalysis.IsEnabled = _settings.TelemetryEnabled;
         };
         _font.ValueChanged += (_, _) => { _fontValue.Text = ((int)Math.Round(_font.Value)).ToString(); if (!_populating) { _fontSave.Stop(); _fontSave.Start(); } };
         _fontSave.Tick += async (_, _) => { _fontSave.Stop(); await ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); };
@@ -207,6 +214,7 @@ public sealed class SettingsView : UserControl
     }
     private async Task PersistPreferenceAsync(Task previous, AppSettings next, string label)
     {
+        using var measurement = InteractionPerformance.Measure("settings." + label);
         await previous;
         try { await PersistAsync(next); WorkspaceToast.Show(this, $"{label}已更新。"); }
         catch (Exception ex) { ShowError("设置未应用", ex); }
@@ -227,16 +235,16 @@ public sealed class SettingsView : UserControl
     private void Build()
     {
         var typography = new StackPanel { Spacing = 10, Margin = new Thickness(18, 8, 18, 10) };
-        var fontSelectors = new WrapPanel { Orientation = Orientation.Horizontal };
-        var familyField = WorkspaceUi.Field("字体", _applicationFont); familyField.Margin = new Thickness(0, 0, 12, 8); fontSelectors.Children.Add(familyField);
-        var weightField = WorkspaceUi.Field("字重", _applicationWeight); weightField.Margin = new Thickness(0, 0, 0, 8); fontSelectors.Children.Add(weightField);
+        var fontSelectors = WorkspaceUi.Row(WorkspaceUi.Field("字体", _applicationFont), WorkspaceUi.Field("字重", _applicationWeight));
         typography.Children.Add(fontSelectors);
         typography.Children.Add(WorkspaceUi.Field("字体预览 · 可以编辑测试文字", _fontPreview));
         var fontSettings = WorkspaceUi.SettingsGroup("font", "应用字体与样式", "调整应用字体和字重", typography, ActionButton("恢复默认", ResetTypographyAsync), expanded: true);
         var appearance = CategoryPage("外观与字体", "调整应用外观与全局文字显示",
+            Card("play", "性能模式", "关闭界面动画，直接切换到最终状态", _performance),
+            Card("play", "禁用动画等待", "立即完成对话框操作，跳过退出动画等待", _animationWaiting),
             Card("color", "外观主题", "选择跟随系统、浅色或深色外观", _theme), ManagedUi.Setting(fontSettings,"applicationFontFamily","applicationFontWeight"));
 
-        var transcriptSize = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, VerticalAlignment = VerticalAlignment.Center };
+        var transcriptSize = new WrapPanel { ItemSpacing = 12, LineSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
         _fontValue.VerticalAlignment = VerticalAlignment.Center; transcriptSize.Children.Add(_font); transcriptSize.Children.Add(_fontValue);
         var shortcutSettings = WorkspaceUi.SettingsGroup("play", "扩展按键", "使用翻页笔或键盘单键控制播放", ManagedUi.Setting(_playerShortcuts, "playerKeyBindings"));
         var playback = CategoryPage("播放", "设置播放习惯、字幕大小与精听包关联",
@@ -258,7 +266,7 @@ public sealed class SettingsView : UserControl
         var apiBody = _apiBody = new StackPanel { Spacing = 10, Margin = new Thickness(18, 8, 18, 10) };
         var archiveActions = Actions(ActionButton("导入", ImportApiAsync), ActionButton("导出", ExportApiAsync)); archiveActions.HorizontalAlignment = HorizontalAlignment.Right; apiBody.Children.Add(archiveActions);
         apiBody.Children.Add(ManagedUi.Setting(WorkspaceUi.Field("API Endpoint", _baseUrl),"cloudBaseUrl")); apiBody.Children.Add(ManagedUi.Setting(WorkspaceUi.Field("Path", _endpoint),"cloudEndpoint")); apiBody.Children.Add(ManagedUi.Setting(WorkspaceUi.Field("Name", _model),"cloudModel")); apiBody.Children.Add(ManagedUi.Setting(WorkspaceUi.Field("Key", _key),"cloudApiKey"));
-        var limits = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*") }; limits.Children.Add(ManagedUi.Setting(WorkspaceUi.Field("分段并发", _concurrency),"cloudConcurrency")); var timeout = ManagedUi.Setting(WorkspaceUi.Field("单段超时（秒）", _timeout),"cloudTimeoutSeconds"); Grid.SetColumn(timeout, 2); limits.Children.Add(timeout); apiBody.Children.Add(limits);
+        var limits = new ResponsivePair(ManagedUi.Setting(WorkspaceUi.Field("分段并发", _concurrency),"cloudConcurrency"), ManagedUi.Setting(WorkspaceUi.Field("单段超时（秒）", _timeout),"cloudTimeoutSeconds")) { MinimumContentWidth = 180 }; apiBody.Children.Add(limits);
         apiBody.Children.Add(new FAInfoBar { IsOpen = true, IsClosable = false, Severity = FAInfoBarSeverity.Informational, Title = "音频处理策略", Message = "VAD 在静音处切片，每段最长 120 秒，确保请求低于 10 MB；并发与请求启动速率均限制为 10 QPS。" });
         var local = WorkspaceUi.Stack(ManagedUi.Setting(WorkspaceUi.Field("本地模型目录", _localDirectory),"localModelsDirectory"), ManagedUi.Setting(_localModel,"selectedLocalModel","detectedLocalModels"), ActionButton("扫描模型", () => { var models = AppSettings.ScanLocalModels(_localDirectory.Text ?? ""); _localModel.ItemsSource = models; _localModel.SelectedIndex = models.Count > 0 ? 0 : -1; WorkspaceToast.Show(this, $"已发现 {models.Count} 个模型。"); return Task.CompletedTask; }));
         apiBody.Children.Add(WorkspaceUi.SettingsGroup("folder_open", "本地模型", "模型目录与选择", local));
@@ -288,6 +296,7 @@ public sealed class SettingsView : UserControl
             Card("info", "开机自启", "加入组织后自动开启并由组织管理，退出组织后恢复个人设置", _startup));
         var privacy = CategoryPage("隐私", "查看数据使用选项与协议",
             Card("chart", "匿名使用情况分析", "向阿里云发送匿名设备 ID、ASR 指标与 API 主机名、系统与硬件信息、红色错误提示原文及运行元数据，可随时关闭", _telemetry),
+            Card("chart", "性能分析", "记录操作名称与耗时；累计 500 条或单次超过 2 秒时上报。随匿名使用情况分析总开关生效", _performanceAnalysis),
             Card("document", "用户协议与隐私", "查看协议或撤回此前的同意", Actions(ActionButton("查看隐私说明", () => ShowLegalAsync("privacy_zh_cn.txt", "隐私说明")), ActionButton("撤回同意", WithdrawAsync))));
         var updatesPage = CategoryPage("更新", "检查应用版本，查看组织更新状态",
             Card("download","检查更新","启动时异步读取 GitHub Latest，10 秒超时",Actions(_updateStatus,ActionButton("检查更新",()=>_updates?.CheckAsync(AppBuildInfo.UpdateVersion)??Task.CompletedTask),ActionButton("查看发布",()=>LaunchAsync(_updates?.Result.ReleaseUrl??"https://github.com/luyii-code-1/Intensive_Listening/releases/latest")))),
@@ -374,11 +383,11 @@ public sealed class SettingsView : UserControl
     private Control Card(string symbol, string title, string description, Control trailing)
     {
         var row=WorkspaceUi.SettingsRow(symbol,title,description,trailing,compact:true);
-        string? setting=ReferenceEquals(trailing,_theme)?"themeMode":ReferenceEquals(trailing,_createProject)?"createProjectOnAudioImport":ReferenceEquals(trailing,_skip)?"skipOpeningPrompts":ReferenceEquals(trailing,_association)?"fileAssociationEnabled":ReferenceEquals(trailing,_debug)?"debugLogging":trailing is StackPanel panel && panel.Children.Contains(_font)?"transcriptFontSize":null;
+        string? setting=ReferenceEquals(trailing,_theme)?"themeMode":ReferenceEquals(trailing,_createProject)?"createProjectOnAudioImport":ReferenceEquals(trailing,_skip)?"skipOpeningPrompts":ReferenceEquals(trailing,_association)?"fileAssociationEnabled":ReferenceEquals(trailing,_debug)?"debugLogging":trailing is Panel panel && panel.Children.Contains(_font)?"transcriptFontSize":null;
         if(setting is not null)return ManagedUi.Setting(row,setting);
         return title is "缓存" or "日志"?ManagedUi.Feature(row,"dataMaintenance"):row;
     }
-    private static WrapPanel Actions(params Control[] controls) { var panel = new WrapPanel { MaxWidth = 420, HorizontalAlignment = HorizontalAlignment.Right }; foreach (var c in controls) { c.Margin = new Thickness(0, 3, 8, 3); c.VerticalAlignment = VerticalAlignment.Center; panel.Children.Add(c); } return panel; }
+    private static WrapPanel Actions(params Control[] controls) { var panel = WorkspaceUi.Row(controls); panel.MaxWidth = 420; panel.ItemsAlignment = WrapPanelItemsAlignment.End; return panel; }
     private Button ActionButton(string title, Func<Task> action, bool primary = false) => WorkspaceUi.Button(title, () => RunAsync(action), primary);
     private void CloudPricingChanged() => Dispatcher.UIThread.Post(async () => await RefreshCloudPricingAsync());
     private async Task RefreshCloudPricingAsync()
@@ -389,7 +398,7 @@ public sealed class SettingsView : UserControl
         try
         {
             var config = await _cloudAsr.ConfigurationAsync();
-            _cloudAsrPrice.Text = $"{config.CreditsPerMinute:0.##} 积分 / 分钟，按整单分钟数向上取整。最长 {config.MaxAudioSeconds / 60} 分钟；失败或未完成时取消释放冻结积分。";
+            _cloudAsrPrice.Text = $"{config.CreditsPerMinute:0.##} 积分 / 分钟，按音频总分钟数向上取整。服务器负责切片、转写并返回 SRT。最长 {config.MaxAudioSeconds / 60} 分钟；失败或未完成时取消释放冻结积分。";
         }
         catch (IL.Core.Cloud.CloudAuthenticationException error) { _cloudAsrPrice.Text = error.Message; _cloudAccount.AuthenticationFailed(error.Message); }
         catch (IL.Core.Cloud.CloudApiException error) { _cloudAsrPrice.Text = error.Message; }

@@ -59,9 +59,9 @@ public sealed class QueueView : UserControl, IDisposable
             if (_pickAudio != null) { var pick = WorkspaceUi.Button("选择音频", () => RunAsync(_pickAudio)); pick.HorizontalAlignment = HorizontalAlignment.Center; empty.Children.Add(pick); }
             _rows.Update([("empty", empty)]); return;
         }
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,8,*,Auto") };
-        header.Children.Add(WorkspaceUi.Text("转写队列", 14, true)); var count = WorkspaceUi.Text($"{jobs.Count} 个任务", 12); count.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(count, 2); header.Children.Add(count);
-        if (jobs.Any(j => j.IsTerminal)) { var clear = WorkspaceUi.Button("清除已完成", () => RunAsync(() => { _queue.ClearFinished(); return Task.CompletedTask; })); Grid.SetColumn(clear, 3); header.Children.Add(clear); }
+        var heading = WorkspaceUi.Row(WorkspaceUi.Text("转写队列", 14, true), WorkspaceUi.Text($"{jobs.Count} 个任务", 12));
+        Control header = heading;
+        if (jobs.Any(j => j.IsTerminal)) header = new ResponsivePair(heading, WorkspaceUi.Button("清除已完成", () => RunAsync(() => { _queue.ClearFinished(); return Task.CompletedTask; })));
         entries.Add(("header", header));
         var interrupted = jobs.Count(j => j.Status == TranscriptionJobStatus.Interrupted);
         if (interrupted > 0)

@@ -1,58 +1,80 @@
 # 首次运行
 
-首次启动会在主窗口中依次显示 8 个设置页面。除许可条款外都可以先保持默认，之后在「设置」里修改。
+首次启动会依次显示 8 个设置页。除许可条款外，其余页面均可保持默认值，完成后再按需调整。
 
-## 同意许可条款
+## 1. 欢迎与许可（第 1–2 页）
 
-**👉️ 分别勾选用户协议与隐私说明，然后点右下角箭头。**
+1. 阅读用户协议与隐私说明。
+2. 分别勾选两项确认框。
+3. 点击右下角箭头进入下一步。
 
-<figure class="shot shot--compact">
-  <img src="./assets/guide/first-run-license.png" alt="首次运行：同意许可条款页" loading="lazy">
-  <span class="shot-pin" style="--x:50%;--y:62%"><span class="shot-pin-label">两项都要勾选</span></span>
-  <figcaption>两项都勾选后，「下一步」才可以使用。</figcaption>
+<figure class="shot">
+  <div class="shot-frame">
+    <img src="./assets/guide/first-run-license.png" alt="第 1/8 页：同意许可条款" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:30%;--y:52%;--w:45%;--h:14%"></span>
+  </div>
+  <ol class="shot-key"><li>两项确认框</li></ol>
+  <figcaption>两项均勾选后，下一步按钮才可用。</figcaption>
 </figure>
 
-## 基本设置
+## 2. 基本设置（第 3 页）
 
-**👉️ 建议打开「关联 .ilp 文件」**，这样以后双击课程包就能直接打开。其余开关按需要调整，拿不准就保持默认。
+1. 建议启用「关联 .ilp 文件」，便于后续双击课程包直接打开。
+2. 按需启用 MCP 制作接口与「导入音频时同时建立项目」。
+3. 按需关闭匿名数据分析。
 
-<figure class="shot shot--medium">
-  <img src="./assets/guide/first-run-basics.png" alt="首次运行：基本设置页" loading="lazy">
-  <span class="shot-pin flip" style="--x:88%;--y:20%"><span class="shot-pin-label">关联 .ilp 文件</span></span>
-  <figcaption>每个开关右侧都有说明；匿名数据分析可以随时关闭。</figcaption>
+<figure class="shot">
+  <div class="shot-frame">
+    <img src="./assets/guide/first-run-basics.png" alt="第 3/8 页：基本设置" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:82%;--y:12%;--w:10%;--h:10%"></span>
+  </div>
+  <ol class="shot-key"><li>「关联 .ilp 文件」开关</li></ol>
+  <figcaption>未确定用途的选项保持默认；全部设置均可在「设置」中修改。</figcaption>
 </figure>
 
-## 快捷按键
+## 3. 快捷按键（第 4 页）
 
-**👉️ 想用翻页笔或单键控制播放时再设置**，暂时不设置不影响使用。
+1. 为播放、上一句、下一句等操作录入单键。
+2. 翻页笔可使用 PageUp、PageDown。
+3. 如暂不需要，直接进入下一步。
 
-<figure class="shot shot--medium">
-  <img src="./assets/guide/first-run-keys.png" alt="首次运行：快捷按键设置页" loading="lazy">
-  <figcaption>点一下键位按钮，再按键盘上的单键即可录入；Esc 取消。</figcaption>
+<figure class="shot">
+  <div class="shot-frame">
+    <img src="./assets/guide/first-run-keys.png" alt="第 4/8 页：快捷按键" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:66%;--y:24%;--w:16%;--h:10%"></span>
+  </div>
+  <ol class="shot-key"><li>按键录入区域</li></ol>
+  <figcaption>按键仅在应用前台、播放页处于激活状态时生效。</figcaption>
 </figure>
 
-## 外观与云服务
+## 4. 外观与云服务（第 5–6 页）
 
-**👉️ 选择浅色或深色主题、调整字幕字号；云服务页可以直接点「暂时跳过」。**
+1. 选择浅色或深色主题。
+2. 调整播放页字幕字号。
+3. 云服务页可直接选择「暂时跳过」，稍后登录。
 
-<figure class="shot shot--compact">
-  <img src="./assets/guide/first-run-cloud.png" alt="首次运行：云服务页" loading="lazy">
-  <span class="shot-pin" style="--x:50%;--y:71%"><span class="shot-pin-label">暂时跳过</span></span>
-  <figcaption>云服务不是必需项，登录后才有云端课程与云端转写。</figcaption>
+<figure class="shot">
+  <div class="shot-frame">
+    <img src="./assets/guide/first-run-cloud.png" alt="第 6/8 页：云服务" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:42%;--y:58%;--w:16%;--h:14%"></span>
+  </div>
+  <ol class="shot-key"><li>「暂时跳过」</li></ol>
+  <figcaption>云服务用于云端课程与云端转写，不影响本地课程播放。</figcaption>
 </figure>
 
-## 转写接口与完成
+## 5. 转写接口与完成（第 7–8 页）
 
-**👉️ 填写阿里云百炼 API Key，或勾选「使用云服务提供的接口」；也可以留空，稍后再配。**
+1. 填写阿里云百炼 API Key，或勾选「使用云服务提供的接口」。
+2. 可留空，稍后在设置中配置。
+3. 最后一页点击「完成设置」。
 
-<figure class="shot shot--medium">
-  <img src="./assets/guide/first-run-asr.png" alt="首次运行：转写接口页" loading="lazy">
-  <span class="shot-pin flip" style="--x:55%;--y:45%"><span class="shot-pin-label">API Key 可以留空</span></span>
-  <figcaption>最后一页点「完成设置」，就会进入播放页。</figcaption>
+<figure class="shot">
+  <div class="shot-frame">
+    <img src="./assets/guide/first-run-asr.png" alt="第 7/8 页：转写接口" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:43%;--y:38%;--w:38%;--h:18%"></span>
+  </div>
+  <ol class="shot-key"><li>API Key 输入框</li></ol>
+  <figcaption>留空不影响课程播放；开始转写前再配置亦可不迟。</figcaption>
 </figure>
 
-**🎉 完成设置后，应用已经可以使用。** 接下来可以[打开课程](./listening)或[开始制作](./authoring)。
-
-::: tip 配置转写
-需要自动生成字幕时，按[配置阿里云百炼转写](./transcription)填写 API Key。
-:::
+完成设置后进入播放页。自动字幕配置见[配置转写服务](./transcription)。

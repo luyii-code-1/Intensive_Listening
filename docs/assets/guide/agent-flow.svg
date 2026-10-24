@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 380" role="img" aria-labelledby="agentFlowTitle agentFlowDesc" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
+  <title id="agentFlowTitle">智能体制作流程图</title>
+  <desc id="agentFlowDesc">在应用中新建智能体项目并选择材料，在设置中启用 MCP 并复制配置与提示词，客户端连接后由应用批准接管，智能体按步骤整理，最后交还应用审阅并导出精听包。</desc>
+  <style>
+    .box { fill: #ffffff; stroke: #d8d8d2; stroke-width: 1.5; }
+    .box-app { stroke: #b80f28; }
+    .box-client { fill: #f7f2f2; stroke: #d8b3ba; }
+    .num { fill: #b80f28; font-size: 15px; font-weight: 700; }
+    .title { fill: #1b1f24; font-size: 16px; font-weight: 700; }
+    .body { fill: #586068; font-size: 12.5px; }
+    .lane { fill: #586068; font-size: 12px; letter-spacing: 1px; }
+    .arrow { stroke: #b80f28; stroke-width: 2; fill: none; stroke-dasharray: 7 6; animation: dash 1.6s linear infinite; }
+    .arrow-soft { stroke: #b8a3a7; stroke-width: 2; fill: none; stroke-dasharray: 4 6; }
+    @keyframes dash { to { stroke-dashoffset: -26; } }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #1b1f24; stroke: #3a3f46; }
+      .box-app { stroke: #e05a6c; }
+      .box-client { fill: #241d21; stroke: #6a4a52; }
+      .title { fill: #f2f0ec; }
+      .body, .lane { fill: #a8adb6; }
+      .arrow { stroke: #e05a6c; }
+      .arrow-soft { stroke: #6a5a5f; }
+      .num { fill: #f08391; }
+    }
+    @media (prefers-reduced-motion: reduce) { .arrow { animation: none; } }
+  </style>
+
+  <text x="40" y="34" class="lane">应用内操作</text>
+  <text x="300" y="34" class="lane">设置与客户端连接</text>
+  <text x="800" y="34" class="lane">应用内接管与审阅</text>
+
+  <!-- Step 1 -->
+  <rect x="40" y="56" width="220" height="112" rx="10" class="box box-app"/>
+  <text x="60" y="86" class="num">1</text>
+  <text x="82" y="86" class="title">新建智能体项目</text>
+  <text x="60" y="112" class="body">制作 → 新建项目 →</text>
+  <text x="60" y="132" class="body">智能体制作</text>
+  <text x="60" y="152" class="body">选择音频与参考材料</text>
+
+  <path d="M268 112 L300 112" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <!-- Step 2 -->
+  <rect x="308" y="56" width="240" height="112" rx="10" class="box"/>
+  <text x="328" y="86" class="num">2</text>
+  <text x="350" y="86" class="title">启用 MCP</text>
+  <text x="328" y="112" class="body">设置 → 制作与智能体</text>
+  <text x="328" y="132" class="body">打开 MCP 开关</text>
+  <text x="328" y="152" class="body">复制 MCP 配置</text>
+
+  <path d="M556 112 L588 112" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <!-- Step 3 -->
+  <rect x="596" y="56" width="250" height="112" rx="10" class="box box-client"/>
+  <text x="616" y="86" class="num">3</text>
+  <text x="638" y="86" class="title">客户端连接</text>
+  <text x="616" y="112" class="body">粘贴 MCP 配置到客户端</text>
+  <text x="616" y="132" class="body">发送「操作提示」开始</text>
+  <text x="616" y="152" class="body">自报名称并申请接管</text>
+
+  <path d="M854 112 L886 112" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <!-- Step 4 -->
+  <rect x="894" y="56" width="250" height="112" rx="10" class="box box-app"/>
+  <text x="914" y="86" class="num">4</text>
+  <text x="936" y="86" class="title">批准接管</text>
+  <text x="914" y="112" class="body">核对智能体名称</text>
+  <text x="914" y="132" class="body">60 秒内选择允许</text>
+  <text x="914" y="152" class="body">接管期间编辑被锁定</text>
+
+  <!-- second row -->
+  <path d="M1019 176 L1019 208" class="arrow-soft" marker-end="url(#arrowHeadSoft)"/>
+
+  <rect x="894" y="216" width="250" height="112" rx="10" class="box box-client"/>
+  <text x="914" y="246" class="num">5</text>
+  <text x="936" y="246" class="title">智能体整理</text>
+  <text x="914" y="272" class="body">转写、字幕、题目、挖空</text>
+  <text x="914" y="292" class="body">应用显示 11 步进度</text>
+  <text x="914" y="312" class="body">转写与资料提取可并行</text>
+
+  <path d="M886 272 L854 272" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <rect x="596" y="216" width="250" height="112" rx="10" class="box box-app"/>
+  <text x="616" y="246" class="num">6</text>
+  <text x="638" y="246" class="title">交还并审阅</text>
+  <text x="616" y="272" class="body">逐题核对字幕与答案</text>
+  <text x="616" y="292" class="body">保存后导出 .ilp</text>
+  <text x="616" y="312" class="body">或添加到本机播放</text>
+
+  <rect x="40" y="286" width="500" height="64" rx="8" fill="none" stroke="#d8d8d2" stroke-dasharray="4 5"/>
+  <text x="60" y="312" class="lane">说明</text>
+  <text x="60" y="334" class="body">红色为应用内操作，浅色为本机智能体客户端；虚线表示跨程序连接。</text>
+
+  <defs>
+    <marker id="arrowHead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#b80f28"/>
+    </marker>
+    <marker id="arrowHeadSoft" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#b8a3a7"/>
+    </marker>
+  </defs>
+</svg>

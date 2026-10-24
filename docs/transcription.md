@@ -1,45 +1,64 @@
-# 配置阿里云百炼转写
+# 配置转写服务
 
-需要从录音自动生成字幕时，先配置自己的百炼 API Key。手里已有匹配的 SRT 时可以直接导入，不必配置。
+转写服务用于把音频自动转换为带时间轴的字幕。已有匹配 SRT 时可跳过本章。
 
-## 打开 API 设置
+## 1. 打开 API 设置
 
-**👉️ 左侧点「设置」，选择「制作与智能体」，再点开「API 设置」。**
+1. 在左侧导航进入「设置」。
+2. 选择「制作与智能体」分类。
+3. 展开「API 设置」。
 
 <figure class="shot">
-  <img src="./assets/guide/settings-api.png" alt="设置页的「制作与智能体」分类，包含 API 设置与 MCP" loading="lazy">
-  <span class="shot-pin" style="--x:50%;--y:44%"><span class="shot-pin-label">API 设置</span></span>
-  <figcaption>同一页下方的 MCP 开关留给智能体制作。</figcaption>
+  <div class="shot-frame">
+    <img src="./assets/guide/settings-api.png" alt="设置页中的「制作与智能体」分类" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:38%;--y:22%;--w:30%;--h:35%"></span>
+  </div>
+  <ol class="shot-key"><li>「API 设置」</li></ol>
+  <figcaption>同一页面下方的 MCP 设置用于智能体制作，与转写互不影响。</figcaption>
 </figure>
 
-## 创建 API Key
+## 2. 创建并填写 API Key
 
-1. **👉️ 打开[阿里云百炼控制台](https://bailian.console.aliyun.com/)，开通服务。**
-2. **👉️ 进入「API Key」页面，创建并复制 Key。**
-3. **👉️ 回到应用，把 Key 粘贴到「API 设置」里，点「保存 API 配置」。**
+1. 打开[阿里云百炼控制台](https://bailian.console.aliyun.com/)，开通服务。
+2. 在「API Key」页面创建密钥并复制。
+3. 回到应用，将密钥粘贴到「API 设置」的 Key 字段。
+4. 北京地域可保留以下默认参数，然后点击「保存 API 配置」。
 
-::: tip 北京地域的默认参数
-| 项目 | 值 |
+<figure class="shot">
+  <div class="shot-frame">
+    <img src="./assets/guide/settings-api-expanded.png" alt="展开后的 API 设置表单" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:4%;--y:42%;--w:90%;--h:6%"></span>
+  </div>
+  <ol class="shot-key"><li>Key 输入框</li></ol>
+  <figcaption>参数需与所选地域、模型一致；修改后必须重新保存。</figcaption>
+</figure>
+
+| 参数 | 默认值 |
 | --- | --- |
 | API Endpoint | `https://dashscope.aliyuncs.com` |
 | Path | `/api/v1/services/aigc/multimodal-generation/generation` |
 | Name | `qwen-audio-3.0-asr-flash` |
-| 分段并发 | 默认 10，可设置 1–10 |
-| 单段超时 | 默认 180 秒 |
+| 分段并发 | 10（范围 1–10） |
+| 单段超时 | 180 秒 |
 
-使用其他地域时，先按[阿里云地域说明](https://help.aliyun.com/zh/model-studio/regions)核对接入地址与模型。
-:::
+使用其他地域时，按[阿里云地域说明](https://help.aliyun.com/zh/model-studio/regions)核对接入地址与模型。
 
-## 开始转写
+## 3. 提交转写任务
 
-1. **👉️ 回到课程项目，绑定音频后在「转写」步骤点「开始转写」。**
-2. **👉️ 点左下角「转写任务」查看进度。**
-3. **👉️ 任务完成后点「载入字幕」。**
+1. 返回「制作」，打开课程工程。
+2. 在「转写」步骤点击「开始转写」。
+3. 打开左下角「转写任务」查看进度。
+4. 任务完成后点击「载入字幕」。
 
 <figure class="shot">
-  <img src="./assets/guide/queue.png" alt="转写任务列表，每个任务有载入字幕、导出 SRT 和删除按钮" loading="lazy">
-  <span class="shot-pin" style="--x:12%;--y:19%"><span class="shot-pin-label">载入字幕</span></span>
-  <figcaption>也可以先「导出 SRT」备份，再回到工程校对。</figcaption>
+  <div class="shot-frame">
+    <img src="./assets/guide/queue.png" alt="转写任务队列" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:3%;--y:22%;--w:13%;--h:9%"></span>
+  </div>
+  <ol class="shot-key"><li>「载入字幕」</li></ol>
+  <figcaption>任务完成后可载入字幕，或先导出 SRT 备份。</figcaption>
 </figure>
 
-**完成标志：** 工程里出现与录音对应的逐句字幕和时间轴。
+::: warning 转写失败时
+先确认 API Key、Endpoint、模型三者属于同一地域，再重试。已有 SRT 时可直接导入，无需转写。
+:::

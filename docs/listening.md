@@ -1,47 +1,61 @@
-# 打开课程，逐句精听
+# 导入并播放课程
 
-拿到老师发来的 `.ilp` 后，用播放页就能开始练习。左侧看题目，右侧看逐句字幕，底部是播放控制。
+播放页用于逐句训练。左侧为题目区，右侧为字幕时间轴，底部为播放控制。
 
-## 导入课程
+## 1. 导入精听包
 
-**👉️ 点「导入精听包或音频」，选中 `.ilp` 文件。**
-
-<figure class="shot">
-  <img src="./assets/guide/student-open.png" alt="播放页顶部：打开课程、导入精听包或音频、最近课程" loading="lazy">
-  <span class="shot-pin" style="--x:21%;--y:15%"><span class="shot-pin-label">导入精听包或音频</span></span>
-  <figcaption>导过的课程会进入「最近课程」，下次直接点开即可。</figcaption>
-</figure>
-
-## 按题或按句定位
-
-**👉️ 用「上一题／下一题」换题，用「上一句／下一句」逐句移动，也可以直接点句子。**
-
-<figure class="shot shot--medium">
-  <img src="./assets/guide/student-question.png" alt="播放页左侧：题目、选项与显示答案" loading="lazy">
-  <span class="shot-pin" style="--x:16%;--y:21%"><span class="shot-pin-label">当前题目</span></span>
-  <figcaption>先看题干和选项，再回到右侧逐句听。</figcaption>
-</figure>
+1. 在播放页点击「导入精听包或音频」。
+2. 选择 `.ilp` 文件。
+3. 导入完成后，课程出现在「最近课程」列表。
 
 <figure class="shot">
-  <img src="./assets/guide/student-transcript.png" alt="播放页右侧：逐句字幕，当前句高亮" loading="lazy">
-  <span class="shot-pin" style="--x:40%;--y:46%"><span class="shot-pin-label">当前句</span></span>
-  <figcaption>播放时高亮自动跟随；点击任意一句可以跳过去。</figcaption>
+  <div class="shot-frame">
+    <img src="./assets/guide/student-open.png" alt="播放页顶部的导入入口" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:12%;--y:7%;--w:19%;--h:20%"></span>
+  </div>
+  <ol class="shot-key"><li>「导入精听包或音频」</li></ol>
+  <figcaption>已导入的课程会保留在「最近课程」，后续可直接打开。</figcaption>
 </figure>
 
-## 循环、盲听与核对
+## 2. 查看题目与定位句子
 
-**👉️ 勾选「单句循环」反复听当前句；勾选「隐藏字幕」做盲听。**
+1. 在左侧题目区确认题干与选项。
+2. 使用「上一题」「下一题」切换题目。
+3. 使用「上一句」「下一句」逐句移动，或直接点击目标句。
 
-<figure class="shot shot--compact">
-  <img src="./assets/guide/student-controls.png" alt="播放页底部控件：上一题、上一句、播放、下一句、下一题，单句循环与隐藏字幕" loading="lazy">
-  <span class="shot-pin" style="--x:22%;--y:28%"><span class="shot-pin-label">单句循环</span></span>
-  <figcaption>「重复本句」「显示本段挖空」「显示全部挖空」都在同一排。</figcaption>
+<figure class="shot">
+  <div class="shot-frame">
+    <img src="./assets/guide/student-question.png" alt="播放页左侧的题目区" loading="lazy">
+  </div>
+  <figcaption>「显示答案」用于核对答案；练习时建议先保持隐藏。</figcaption>
 </figure>
 
-::: tip 做完后自查
-点「显示全部挖空」核对拼写，再点「隐藏字幕」盲听一遍，确认每个空都能听出来。
-:::
+播放时右侧当前句会高亮并随播放推进，点击任意句可跳转定位。
 
-## 接着上次继续
+<figure class="shot">
+  <div class="shot-frame">
+    <img src="./assets/guide/student-transcript.png" alt="播放页右侧的逐句字幕" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:4%;--y:12%;--w:92%;--h:22%"></span>
+  </div>
+  <ol class="shot-key"><li>当前句高亮</li></ol>
+  <figcaption>时间点位于每句左侧，可用于确认句间间隔。</figcaption>
+</figure>
 
-应用会保存每门课程的练习进度，下次打开时从上次的位置继续。字幕字号与是否跳过题前提示在[设置](./settings)里调整。
+## 3. 循环与盲听
+
+1. 勾选「单句循环」，反复播放当前句。
+2. 勾选「隐藏字幕」进行盲听。
+3. 使用「重复本句」重听；使用「显示本段挖空」或「显示全部挖空」核对拼写。
+
+<figure class="shot">
+  <div class="shot-frame">
+    <img src="./assets/guide/student-controls.png" alt="播放页底部的练习控制" loading="lazy">
+    <span class="shot-hl" data-no="1" style="--x:18%;--y:18%;--w:10%;--h:10%"></span>
+  </div>
+  <ol class="shot-key"><li>「单句循环」</li></ol>
+  <figcaption>挖空词在揭晓前显示为模糊占位，点击词槽可查看拼写。</figcaption>
+</figure>
+
+## 4. 恢复练习进度
+
+课程进度按课程保存。再次打开同一课程时，应用会回到上次位置。字幕字号与「跳过题前提示」可在[设置](./settings)中调整。

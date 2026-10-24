@@ -11,9 +11,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/student-open.png" alt="播放页顶部的导入入口" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:12%;--y:7%;--w:19%;--h:20%"></span>
   </div>
-  <ol class="shot-key"><li>「导入精听包或音频」</li></ol>
   <figcaption>已导入的课程会保留在「最近课程」，后续可直接打开。</figcaption>
 </figure>
 
@@ -35,9 +33,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/student-transcript.png" alt="播放页右侧的逐句字幕" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:4%;--y:12%;--w:92%;--h:22%"></span>
   </div>
-  <ol class="shot-key"><li>当前句高亮</li></ol>
   <figcaption>时间点位于每句左侧，可用于确认句间间隔。</figcaption>
 </figure>
 
@@ -50,9 +46,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/student-controls.png" alt="播放页底部的练习控制" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:18%;--y:18%;--w:10%;--h:10%"></span>
   </div>
-  <ol class="shot-key"><li>「单句循环」</li></ol>
   <figcaption>挖空词在揭晓前显示为模糊占位，点击词槽可查看拼写。</figcaption>
 </figure>
 

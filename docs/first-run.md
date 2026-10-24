@@ -11,9 +11,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/first-run-license.png" alt="第 1/8 页：同意许可条款" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:30%;--y:52%;--w:45%;--h:14%"></span>
   </div>
-  <ol class="shot-key"><li>两项确认框</li></ol>
   <figcaption>两项均勾选后，下一步按钮才可用。</figcaption>
 </figure>
 
@@ -26,9 +24,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/first-run-basics.png" alt="第 3/8 页：基本设置" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:82%;--y:12%;--w:10%;--h:10%"></span>
   </div>
-  <ol class="shot-key"><li>「关联 .ilp 文件」开关</li></ol>
   <figcaption>未确定用途的选项保持默认；全部设置均可在「设置」中修改。</figcaption>
 </figure>
 
@@ -41,9 +37,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/first-run-keys.png" alt="第 4/8 页：快捷按键" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:66%;--y:24%;--w:16%;--h:10%"></span>
   </div>
-  <ol class="shot-key"><li>按键录入区域</li></ol>
   <figcaption>按键仅在应用前台、播放页处于激活状态时生效。</figcaption>
 </figure>
 
@@ -56,9 +50,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/first-run-cloud.png" alt="第 6/8 页：云服务" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:42%;--y:58%;--w:16%;--h:14%"></span>
   </div>
-  <ol class="shot-key"><li>「暂时跳过」</li></ol>
   <figcaption>云服务用于云端课程与云端转写，不影响本地课程播放。</figcaption>
 </figure>
 
@@ -71,9 +63,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/first-run-asr.png" alt="第 7/8 页：转写接口" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:43%;--y:38%;--w:38%;--h:18%"></span>
   </div>
-  <ol class="shot-key"><li>API Key 输入框</li></ol>
   <figcaption>留空不影响课程播放；开始转写前再配置亦可不迟。</figcaption>
 </figure>
 

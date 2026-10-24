@@ -1,6 +1,8 @@
 # 智能体制课
 
-智能体制课是推荐的制作方式：应用负责保存、审阅与授权，智能体负责读取材料并整理字幕、题目与挖空初稿。接管与最终交付始终由用户确认。
+智能体指的是电脑上的 AI 助手程序（例如 WorkBuddy）。应用通过 **MCP** 与它连接：可以把 MCP 理解为应用给这个助手开的一条专用通道，配置一次即可反复使用。
+
+制作时，应用把课程标题、音频和参考材料交给助手，助手整理出字幕、题目与挖空初稿；你在应用内批准它接管，结束后再逐项审阅、保存并导出。
 
 <figure class="shot shot--diagram">
   <img src="./assets/guide/agent-flow.svg" alt="智能体制作流程：新建项目、启用 MCP、客户端连接、批准接管、智能体整理、交还审阅" loading="lazy">
@@ -25,9 +27,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/authoring-mode.png" alt="新建项目对话框" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:19%;--y:61%;--w:30%;--h:14%"></span>
   </div>
-  <ol class="shot-key"><li>「智能体制作」</li></ol>
   <figcaption>材料推荐 DOCX 或文字版 PDF；音频为必选项。</figcaption>
 </figure>
 
@@ -41,10 +41,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/settings-agent.png" alt="MCP 设置与授权区域" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:84%;--y:20%;--w:12%;--h:60%"></span>
-    <span class="shot-hl" data-no="2" style="--x:71%;--y:70%;--w:18%;--h:16%"></span>
   </div>
-  <ol class="shot-key"><li>MCP 开关</li><li>复制配置与操作提示</li></ol>
   <figcaption>开关启用后才会出现复制配置、复制操作提示与授权列表。</figcaption>
 </figure>
 
@@ -63,6 +60,11 @@
 2. 核对名称是否与当前客户端一致。
 3. 在 60 秒内选择允许，接管随即开始。
 
+<figure class="shot">
+  <img src="./assets/guide/agent-approval.png" alt="智能体请求接管弹窗，包含拒绝、批准接管与关闭 MCP 三个选项" loading="lazy">
+  <figcaption>批准接管弹窗。「WorkBuddy 桌面版」是示例智能体名称，实际显示客户端自报的名称。</figcaption>
+</figure>
+
 ::: warning 授权范围
 接管期间应用会锁定编辑，并显示当前制作步骤与进度。名称或来源不明确时请拒绝；授权可在 MCP 设置中随时撤销，或删除注册记录。
 :::
@@ -72,6 +74,11 @@
 1. 制作过程共 11 步，覆盖音频与材料、转写、字幕校对、题目编排、重复朗读、挖空、校验与交还。
 2. 应用显示每一步的状态、详情与整体百分比。
 3. 转写与资料提取可以并行执行，无需等待其中一项完成。
+
+<figure class="shot">
+  <img src="./assets/guide/agent-progress.png" alt="智能体制作进度面板，显示百分比、已完成步骤与进行中的步骤" loading="lazy">
+  <figcaption>进度面板：上方是整体百分比，下方是步骤列表，列表可滚动查看后续步骤。</figcaption>
+</figure>
 
 ## 6. 交还后审阅与交付
 

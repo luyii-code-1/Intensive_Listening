@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 140" role="img" aria-labelledby="t d" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
+  <title id="t">保存后的交付操作示意</title>
+  <desc id="d">保存成功后，课程工程底部右侧出现导出为精听包与添加到播放两个操作。</desc>
+  <style>
+    .bar { fill: #ffffff; stroke: #e0dedb; }
+    .hint { fill: #586068; font-size: 13px; }
+    .btn { fill: #ffffff; stroke: #c9c9c3; }
+    .btn-primary { fill: #b80f28; stroke: #b80f28; }
+    .btn-text { fill: #1b1f24; font-size: 13px; font-weight: 600; }
+    .btn-text-light { fill: #ffffff; font-size: 13px; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      .bar { fill: #1e2126; stroke: #34383f; }
+      .hint { fill: #a8adb6; }
+      .btn { fill: #262a30; stroke: #454a52; }
+      .btn-primary { fill: #d43a52; stroke: #d43a52; }
+      .btn-text { fill: #f2f0ec; }
+    }
+  </style>
+  <rect x="0" y="20" width="900" height="100" rx="10" class="bar"/>
+  <text x="28" y="76" class="hint">已保存 · 课程工程可交付</text>
+  <rect x="520" y="50" width="170" height="44" rx="6" class="btn-primary"/>
+  <text x="605" y="77" text-anchor="middle" class="btn-text-light">导出为精听包</text>
+  <rect x="706" y="50" width="164" height="44" rx="6" class="btn"/>
+  <text x="788" y="77" text-anchor="middle" class="btn-text">添加到播放</text>
+</svg>

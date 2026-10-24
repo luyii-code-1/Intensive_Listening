@@ -11,9 +11,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/settings-api.png" alt="设置页中的「制作与智能体」分类" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:38%;--y:22%;--w:30%;--h:35%"></span>
   </div>
-  <ol class="shot-key"><li>「API 设置」</li></ol>
   <figcaption>同一页面下方的 MCP 设置用于智能体制作，与转写互不影响。</figcaption>
 </figure>
 
@@ -27,9 +25,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/settings-api-expanded.png" alt="展开后的 API 设置表单" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:4%;--y:42%;--w:90%;--h:6%"></span>
   </div>
-  <ol class="shot-key"><li>Key 输入框</li></ol>
   <figcaption>参数需与所选地域、模型一致；修改后必须重新保存。</figcaption>
 </figure>
 
@@ -53,9 +49,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/queue.png" alt="转写任务队列" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:3%;--y:22%;--w:13%;--h:9%"></span>
   </div>
-  <ol class="shot-key"><li>「载入字幕」</li></ol>
   <figcaption>任务完成后可载入字幕，或先导出 SRT 备份。</figcaption>
 </figure>
 

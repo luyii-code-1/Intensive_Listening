@@ -5,9 +5,7 @@
 <figure class="shot">
   <div class="shot-frame">
     <img src="./assets/guide/settings.png" alt="设置页的分类导航与当前分类内容" loading="lazy">
-    <span class="shot-hl" data-no="1" style="--x:0%;--y:18%;--w:22%;--h:10%"></span>
   </div>
-  <ol class="shot-key"><li>「外观与字体」分类</li></ol>
   <figcaption>左侧切换分类，右侧显示当前分类的选项。</figcaption>
 </figure>
 

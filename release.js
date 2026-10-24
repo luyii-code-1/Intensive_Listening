@@ -1,6 +1,6 @@
 // 兜底版本号：仅在 downloads/latest.json 缺失或不可用时使用。
 // 正常情况由 CI 在发版后写入 latest.json，这里无需改动。
-const DEFAULT_TAG = 'v2.1.2.3';
+const DEFAULT_TAG = 'v2.2.0';
 
 const RELEASE_ORIGIN = 'https://github.com/luyii-code-1/Intensive_Listening/releases/download/';
 

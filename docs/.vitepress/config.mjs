@@ -5,7 +5,11 @@ export default defineConfig({
   title: 'Intensive Listening 文档',
   description: '从打开第一份精听课程，到播放录音、制作字幕和分享课程。',
   base: '/docs/',
-  head: [['link', { rel: 'icon', href: '/assets/logo.svg' }]],
+  head: [
+    ['link', { rel: 'icon', href: '/assets/logo.svg' }],
+    ['script', { charset: 'UTF-8', id: 'LA_COLLECT', src: 'https://sdk.51.la/js-sdk-pro.min.js' }],
+    ['script', {}, 'LA.init({id:"LKvATKXPjg1HJl6i",ck:"LKvATKXPjg1HJl6i",autoTrack:true,hashMode:true,screenRecord:true})']
+  ],
   themeConfig: {
     logo: 'https://il.luyii.cn/assets/logo.svg',
     siteTitle: 'Intensive Listening',

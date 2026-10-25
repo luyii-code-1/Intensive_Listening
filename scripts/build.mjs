@@ -11,7 +11,9 @@ await rm(output, { recursive: true, force: true });
 await mkdir(output);
 // downloads/ 必须进 dist：release.js 要按站点根路径取 downloads/latest.json。
 // 注意 edge-functions 的路由是 /downloads/:tag/:file，两段的 latest.json 不会命中它。
-for (const file of ['index.html', 'guide.html', 'guide-redirect.js', 'styles.css', 'release.js', 'assets', 'downloads']) {
+// plugins/ 与 event/ 是 51.la 统计 SDK 的自托管副本：基础 SDK 在 /plugins，
+// 事件 SDK 由基座按 prefix: 'event' 从 /event 加载，两处都要随站点发布。
+for (const file of ['index.html', 'guide.html', 'guide-redirect.js', 'styles.css', 'release.js', 'assets', 'downloads', 'plugins', 'event']) {
   await cp(join(root, file), join(output, file), { recursive: true });
 }
 

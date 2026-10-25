@@ -7,8 +7,8 @@ export default defineConfig({
   base: '/docs/',
   head: [
     ['link', { rel: 'icon', href: '/assets/logo.svg' }],
-    ['script', { charset: 'UTF-8', id: 'LA_COLLECT', src: 'https://sdk.51.la/js-sdk-pro.min.js' }],
-    ['script', {}, 'LA.init({id:"LKvATKXPjg1HJl6i",ck:"LKvATKXPjg1HJl6i",autoTrack:true,hashMode:true,screenRecord:true})']
+    ['script', { charset: 'UTF-8', id: 'LA_COLLECT', src: '/plugins/js-sdk-pro.min.js' }],
+    ['script', {}, 'LA.init({id:"LKvATKXPjg1HJl6i",ck:"LKvATKXPjg1HJl6i",autoTrack:true,hashMode:true,screenRecord:true,prefix:"event"})']
   ],
   themeConfig: {
     logo: 'https://il.luyii.cn/assets/logo.svg',

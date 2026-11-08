@@ -28,7 +28,7 @@ public sealed class AppServices : IAsyncDisposable
     public AppPrivateApiServer Server {get;}
     public AppTelemetry Telemetry {get;} = new();
     public MdnClient Mdn { get; }
-    public GitHubUpdateChecker Updates { get; } = new();
+    public WebsiteUpdateChecker Updates { get; } = new();
     public ManagedUpdater ManagedUpdates { get; }
     public ManagedLessonReceiver ManagedLessons { get; }
     public CloudAccountService CloudAccount { get; } = new();

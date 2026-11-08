@@ -32,16 +32,23 @@ internal static class MotionPreferences
         if (PerformanceMode) state.Override ??= control.SetValue(Animatable.TransitionsProperty, null, BindingPriority.Animation);
         else { state.Override?.Dispose(); state.Override = null; }
     }
+    public static event Action? LevelChanged;
     public static bool PerformanceMode { get; private set; }
+    public static bool ReducedMotion { get; private set; }
     public static bool DisableAnimationWaiting { get; private set; }
     public static void Apply(AppSettings settings)
     {
-        var changed = PerformanceMode != settings.PerformanceMode;
-        PerformanceMode = settings.PerformanceMode;
+        var disabled = settings.PerformanceMode || settings.AnimationLevel == AnimationLevel.Off;
+        var reduced = disabled || settings.AnimationLevel == AnimationLevel.Reduced;
+        var levelChanged = PerformanceMode != disabled || ReducedMotion != reduced;
+        var changed = PerformanceMode != disabled;
+        PerformanceMode = disabled;
+        ReducedMotion = reduced;
         DisableAnimationWaiting = settings.DisableAnimationWaiting;
         if (changed)
             for (var i = Loaded.Count - 1; i >= 0; i--)
                 if (Loaded[i].TryGetTarget(out var state)) ApplyTransitions(state);
                 else Loaded.RemoveAt(i);
+        if (levelChanged) LevelChanged?.Invoke();
     }
 }

@@ -3,18 +3,19 @@ using Avalonia.Controls;
 namespace IL.App.Views;
 
 /// <summary>Retargetable scalar spring for local layout changes such as disclosures and the navigation pane.</summary>
-internal sealed class SpringScalar(Control owner, double initial, Action<double> apply)
+internal sealed class SpringScalar(Control owner, double initial, Action<double> apply, Func<bool>? motionDisabled = null)
 {
     private double _value = initial, _velocity, _target = initial, _response;
     private TimeSpan? _lastFrame;
     private bool _running;
     private long _generation;
     private TaskCompletionSource? _completion;
+    private bool MotionDisabled => motionDisabled?.Invoke() ?? MotionPreferences.ReducedMotion;
     public double Value => _value;
     public void Set(double value) { Stop(); _value = _target = value; _velocity = 0; apply(value); }
     public Task To(double target, double response = .32)
     {
-        if (MotionPreferences.PerformanceMode) { Set(target); return Task.CompletedTask; }
+        if (MotionDisabled) { Set(target); return Task.CompletedTask; }
         _completion?.TrySetResult(); _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         _target = target; _response = response;
         var completion = _completion;
@@ -29,7 +30,7 @@ internal sealed class SpringScalar(Control owner, double initial, Action<double>
     private void RequestFrame(TopLevel topLevel, long generation) => topLevel.RequestAnimationFrame(time =>
     {
         if (!_running || generation != _generation) return;
-        if (MotionPreferences.PerformanceMode) { Set(_target); return; }
+        if (MotionDisabled) { Set(_target); return; }
         var dt = _lastFrame is { } last ? Math.Max(0, (time - last).TotalSeconds) : 0;
         _lastFrame = time;
         var omega = 2 * Math.PI / _response; var offset = _value - _target; var coefficient = _velocity + omega * offset; var decay = Math.Exp(-omega * dt);

@@ -5,6 +5,7 @@ if (-not $InnoCompiler) { $InnoCompiler=(Get-Command ISCC.exe -ErrorAction Silen
 if (-not $InnoCompiler) { $InnoCompiler='E:\dev\Inno\ISCC.exe' }
 if (-not (Test-Path -LiteralPath $InnoCompiler)) { throw 'Locate existing Inno Setup and pass -InnoCompiler.' }
 $repo=Split-Path -Parent $PSScriptRoot
+if (-not (Test-Path -LiteralPath (Join-Path $RuntimeDirectory 'tools/IL.MdnRestore.exe'))) { throw 'Publish the complete Windows bundle including IL.MdnRestore before packaging.' }
 & (Join-Path $PSScriptRoot 'verify-published-xaml.ps1') -RuntimeDirectory $RuntimeDirectory
 $identity = Get-Content -LiteralPath (Join-Path $RuntimeDirectory 'build-info.json') -Raw | ConvertFrom-Json
 if ($identity.baseVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Runtime build identity is invalid.' }

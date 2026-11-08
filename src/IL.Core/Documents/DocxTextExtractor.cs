@@ -2,6 +2,8 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using System.Xml;
+using IL.Core.Ilp;
 namespace IL.Core.Documents;
 public sealed record DocxTextResult(string Text,int ParagraphCount,int TableCount);
 public sealed class DocxTextExtractionException(string message,Exception? inner=null):Exception(message,inner);
@@ -23,7 +25,8 @@ public sealed class DocxTextExtractor
         try
         {
             using var stream=new MemoryStream(bytes);using var archive=new ZipArchive(stream,ZipArchiveMode.Read);
-            XDocument? Read(string name){var entry=archive.GetEntry(name);if(entry==null)return null;using var file=entry.Open();return XDocument.Load(file);}
+            long xmlBytes=0;
+            XDocument? Read(string name){var entry=archive.GetEntry(name);if(entry==null)return null;using var file=ArchiveSafety.OpenRead(entry,50L*1024*1024-xmlBytes);using var reader=XmlReader.Create(file,new XmlReaderSettings{DtdProcessing=DtdProcessing.Prohibit,XmlResolver=null,MaxCharactersInDocument=5_000_000,MaxCharactersFromEntities=1024});var result=XDocument.Load(reader);xmlBytes=checked(xmlBytes+file.Position);return result;}
             XDocument document;try{document=Read("word/document.xml")??throw new DocxTextExtractionException("DOCX 中缺少正文内容");}catch(System.Xml.XmlException ex){throw new DocxTextExtractionException("DOCX 正文无法解析",ex);}
             var body=document.Descendants().FirstOrDefault(e=>e.Name.LocalName=="body")??throw new DocxTextExtractionException("DOCX 中没有可读取的正文");
             var schemes=new Dictionary<int,Dictionary<int,Level>>();var styles=new Dictionary<string,(string? BasedOn,Reference? Numbering)>();

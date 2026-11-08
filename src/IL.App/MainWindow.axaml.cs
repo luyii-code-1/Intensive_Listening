@@ -62,7 +62,6 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
         var standalone=Program.Arguments.Contains("--standalone");
         _services=new(action=>Dispatcher.UIThread.Post(action),standalone);
         InteractionPerformance.Telemetry = _services.Telemetry;
-        InteractionPerformance.Install(this);
         AgentProgressHost.Content = new AgentProgressView(_services.Server.WorkflowProgress);
         _student=new(_services.Student, standalone ? null : new CloudLessonsView(_services), standalone ? null : ShowTeacherAsync);
         AddHandler(KeyDownEvent, OnPlayerKeyDown, RoutingStrategies.Tunnel);
@@ -86,6 +85,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
         };
         _settings=new(_services.SettingsStore,async settings=>{ApplyTheme(settings);await _services.ApplySettingsAsync(settings);_residence?.UpdateMcpState(_services.Server.IsRunning);},_services.Server,
             standalone ? null : new CloudSettingsView(_services, () => _settings?.Populate(_services.Settings)), standalone ? null : _services.CloudAsr, standalone ? null : _services.CloudAccount);
+        InteractionPerformance.Install(this, () => _settings.ReduceAnimationsForPerformanceAsync());
         _teacher.CloudTransfers = async () =>
         {
             ManagedRuntime.Require("authoring");
@@ -185,7 +185,17 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
         _residence?.UpdateMcpState(_services.Server.IsRunning);
         if (!ManagedRuntime.Allows("playback")) await _services.Student.PauseAsync();
         _teacher.ApplyManagement(); _student.ApplyManagement(); UpdatePane();
-        if (!ManagedRuntime.Allows("authoring") && _destination == 1) { await _teacher.FlushDraftAsync(); Navigate(0); }
+        if (!ManagedRuntime.Allows("authoring") && _destination == 1)
+        {
+            try { await _teacher.FlushDraftAsync(); }
+            catch (Exception error)
+            {
+                AppLog.Warning("组织策略已应用，但草稿尚未保存", error);
+                WorkspaceToast.Show(this, "草稿尚未保存", "请检查磁盘或文件占用后重试。" + error.Message, true);
+                return;
+            }
+            Navigate(0);
+        }
         _managedRevision = _services.Mdn.Policy.Revision;
     }
     private void ToggleMaximize() => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
@@ -250,22 +260,36 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
         try
         {
             foreach (var path in args.Where(p => p.EndsWith(".ilp", StringComparison.OrdinalIgnoreCase) && File.Exists(p)))
-            {
-                if ((_services.Student.HasMedia || _teacher.HasOpenProject) &&
-                    !await AppDialogs.ConfirmAsync(this, "打开新的精听包？", "当前有正在打开的播放或制作内容。是否保存制作进度并打开新文件？", "打开文件")) continue;
-                if (_services.Server.AgentActive) { WorkspaceToast.Show(this, "请先结束智能体接管", "结束接管后可以打开精听包。"); continue; }
-                await _teacher.FlushDraftAsync(); await _services.Student.PauseAsync();
-                Navigate(0); await _student.ImportFileAsync(path);
-            }
+                await OpenIlpFromLaunchAsync(path);
         }
         catch (Exception error) { AppLog.Warning("打开精听包失败",error); WorkspaceToast.Show(this,"无法打开精听包",error.Message,true); }
         finally { _launchGate.Release(); }
+    }
+    private async Task OpenIlpFromLaunchAsync(string path)
+    {
+        if (_services.Server.AgentActive)
+        {
+            WorkspaceToast.Show(this, "请先结束智能体接管", "结束接管后可以打开精听包。");
+            return;
+        }
+        ManagedRuntime.Require("importIlp");
+        if (_teacher.HasOpenProject) await _teacher.FlushDraftAsync();
+        Navigate(0);
+        await _student.ImportFileAsync(path, fromLaunch: true);
     }
     internal async Task ExitAsync()
     {
         if (_residence != null) { await _residence.ExitAsync(); return; }
         if (_closing) return; _closing=true;
-        try { await _teacher.FlushDraftAsync();await _settings.StopDiagnosticsAsync();await _services.DisposeAsync(); }
+        try { await _teacher.FlushDraftAsync(); }
+        catch (Exception error)
+        {
+            _closing = false;
+            AppLog.Warning("保存失败，已取消退出", error);
+            WorkspaceToast.Show(this, "未退出应用", "草稿保存失败，请检查磁盘或文件占用后重试。" + error.Message, true);
+            return;
+        }
+        try { await _settings.StopDiagnosticsAsync(); await _services.DisposeAsync(); }
         catch(Exception ex){AppLog.Warning("关闭时保存失败",ex);}
         Close();
     }
@@ -480,9 +504,11 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
             if (!_services.Standalone) _ = _services.Updates.CheckAsync(AppBuildInfo.UpdateVersion);
             if (_services.PreconfigurationError is {} presetError) WorkspaceToast.Show(this, "预设配置", presetError, true);
             _residence?.UpdateMcpState(_services.Server.IsRunning);
-            for(var i=0;i<Program.Arguments.Length;i++)
+            var launchFile = Program.Arguments.FirstOrDefault(path => path.EndsWith(".ilp", StringComparison.OrdinalIgnoreCase) && File.Exists(path));
+            if (launchFile is not null)
             {
-                var file=Program.Arguments[i];if(file.EndsWith(".ilp",StringComparison.OrdinalIgnoreCase)&&File.Exists(file)){await _student.ImportFileAsync(file,_services.Standalone);break;}
+                try { await OpenIlpFromLaunchAsync(launchFile); }
+                catch (Exception error) { AppLog.Warning("打开精听包失败", error); WorkspaceToast.Show(this, "无法打开精听包", error.Message, true); }
             }
             await AppLog.WriteAsync("INFO","应用初始化完成");
             foreach (var report in new CrashReportStore(_services.DataDirectory).Reports().Where(r => !r.Displayed))

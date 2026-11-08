@@ -136,13 +136,28 @@ public sealed class LibVlcAudioPlayer : IAudioPlayer
         }
         finally {media.ParsedChanged-=Parsed;}
     }
-    public Task PlayAsync(CancellationToken ct = default)
+    public async Task PlayAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested(); EnsureMedia();
         _ended = false; _error = null; _applyOptions = true;
         if (!_player.Play()) throw new IOException("播放引擎无法开始播放");
-        _playing = true; Changed();
-        return Task.CompletedTask;
+        try
+        {
+            var deadline = Environment.TickCount64 + 10000;
+            while (!_player.IsPlaying)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (_error is not null) throw new IOException(_error);
+                if (Environment.TickCount64 >= deadline) throw new IOException("播放引擎未能开始播放，请重试");
+                await Task.Delay(20, ct).ConfigureAwait(false);
+            }
+            _playing = true; Changed();
+        }
+        catch
+        {
+            _player.SetPause(true); _playing = false; Changed();
+            throw;
+        }
     }
     public Task PauseAsync(CancellationToken ct = default)
     {

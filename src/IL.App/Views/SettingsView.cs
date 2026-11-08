@@ -31,7 +31,7 @@ public sealed class SettingsView : UserControl
     private bool _pricingPending;
     private readonly IL.Core.Cloud.DesktopCloudAsrClient? _cloudAsr;
     private readonly CloudAccountService? _cloudAccount;
-    private GitHubUpdateChecker? _updates;
+    private WebsiteUpdateChecker? _updates;
         private readonly TextBlock _updateStatus = WorkspaceUi.Text("尚未检查更新",12);
     private readonly TextBlock _managedUpdateStatus = WorkspaceUi.Text("",12);
     private readonly Button _installButton = new(){Content="更新",IsVisible=false};
@@ -42,7 +42,7 @@ public sealed class SettingsView : UserControl
     private ListBox? _categoryNavigation;
     public void ShowCloud() { if (_categoryNavigation is not null) _categoryNavigation.SelectedItem = _categoryNavigation.Items.OfType<SettingsCategory>().FirstOrDefault(c => c.Title == "云服务"); }
     public void ShowUpdates() { if (_categoryNavigation is not null) _categoryNavigation.SelectedItem = _categoryNavigation.Items.OfType<SettingsCategory>().FirstOrDefault(c => c.Title == "更新"); }
-    public void ConfigureUpdates(GitHubUpdateChecker updates,ManagedUpdater managed,Func<Task> install)
+    public void ConfigureUpdates(WebsiteUpdateChecker updates,ManagedUpdater managed,Func<Task> install)
     {
         _updates=updates;
         void Refresh(){_updateStatus.Text=updates.Result.Message;_managedUpdateStatus.Text=managed.Status;_installButton.IsVisible=OperatingSystem.IsWindows() && managed.HasUpdate;_installButton.IsEnabled=managed.CanUpdate;}
@@ -54,6 +54,49 @@ public sealed class SettingsView : UserControl
     private readonly Func<AppSettings, Task> _apply;
     private readonly PlayerShortcutSettingsView _playerShortcuts;
     private AppSettings _settings = AppSettings.Defaults();
+    private bool _preferencesLoaded;
+    private readonly TextBlock _performanceCounters = WorkspaceUi.Text("等待性能采样", 12);
+    private void UpdatePerformanceCounters()
+    {
+        var c = InteractionPerformance.Counters;
+        var level = MotionPreferences.PerformanceMode ? "关闭" : MotionPreferences.ReducedMotion ? "简化" : "完整";
+        _performanceCounters.Text = $"调度延迟 {c.LastDelayMs:F0} ms · 峰值 {c.PeakDelayMs:F0} ms\n累计卡顿 {c.Stalls} 次 · 动画：{level}";
+    }
+    public Task<bool> ReduceAnimationsForPerformanceAsync()
+    {
+        if (!_preferencesLoaded || _settings.PerformanceMode || _settings.AnimationLevel == AnimationLevel.Off ||
+            ManagedRuntime.IsManaged && (ManagedRuntime.Policy.IsLocked("animationLevel") || ManagedRuntime.Policy.IsLocked("performanceMode"))) return Task.FromResult(false);
+        var previous = _settings;
+        var next = previous with { AnimationLevel = previous.AnimationLevel == AnimationLevel.Full ? AnimationLevel.Reduced : AnimationLevel.Off };
+        _settings = next;
+        var saving = SaveAutomaticAnimationLevelAsync(_preferenceSaves, previous, next);
+        _preferenceSaves = saving;
+        return saving;
+    }
+    private async Task<bool> SaveAutomaticAnimationLevelAsync(Task previousSave, AppSettings previous, AppSettings next)
+    {
+        await previousSave;
+        try
+        {
+            await PersistAsync(next);
+            var populating = _populating; _populating = true;
+            try { _animationLevel.SelectedIndex = (int)_settings.AnimationLevel; }
+            finally { _populating = populating; }
+            UpdatePerformanceCounters();
+            WorkspaceToast.Show(this, "已自动调整动画", $"检测到界面持续卡顿，动画已降为{(next.AnimationLevel == AnimationLevel.Reduced ? "简化" : "关闭")}并保存。可在设置中重新调整。");
+            return true;
+        }
+        catch (Exception error)
+        {
+            if (ReferenceEquals(_settings, next))
+            {
+                _settings = previous;
+                try { await _apply(previous); } catch (Exception rollback) { AppLog.Warning("恢复动画设置失败", rollback); }
+            }
+            ShowError("动画设置未保存", error);
+            return false;
+        }
+    }
     private Task _preferenceSaves = Task.CompletedTask;
     private bool _populating;
     private readonly ToggleSwitch _startup = new();
@@ -65,7 +108,7 @@ public sealed class SettingsView : UserControl
     private readonly Slider _font = new() { Minimum = 14, Maximum = 28, TickFrequency = 1, IsSnapToTickEnabled = true, Width = 200 };
     private readonly TextBlock _fontValue = WorkspaceUi.Text("18");
     private readonly Slider _blur = new() { Minimum = AppSettings.MinTranscriptBlurIntensity, Maximum = AppSettings.MaxTranscriptBlurIntensity, Value = AppSettings.MaxTranscriptBlurIntensity, TickFrequency = 1, IsSnapToTickEnabled = true, Width = 200 };
-    private readonly TextBlock _blurValue = WorkspaceUi.Text("8 / 8");
+    private readonly TextBlock _blurValue = WorkspaceUi.Text($"{AppSettings.MaxTranscriptBlurIntensity} / {AppSettings.MaxTranscriptBlurIntensity}");
     private readonly DispatcherTimer _blurSave = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly ComboBox _theme = new() { MinWidth = 145 };
     private sealed record FontChoice(string Value, string Label, FontFamily Family);
@@ -78,7 +121,8 @@ public sealed class SettingsView : UserControl
         AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontSize = 17, MinHeight = 110
     };
     private readonly ToggleSwitch _association = new(), _mcp = new(), _skip = new(), _createProject = new(), _debug = new(), _telemetry = new();
-    private readonly ToggleSwitch _performance = new(), _animationWaiting = new(), _performanceAnalysis = new();
+    private readonly ComboBox _animationLevel = new() { ItemsSource = new[] { "完整", "简化", "关闭" }, MinWidth = 140 };
+    private readonly ToggleSwitch _animationWaiting = new(), _performanceAnalysis = new();
     private readonly TextBox _localDirectory = WorkspaceUi.Input();
     private readonly ComboBox _localModel = new() { MinWidth = 180 };
     private readonly DispatcherTimer _fontSave = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -109,11 +153,12 @@ public sealed class SettingsView : UserControl
         Build(); WirePreferences();
         AttachedToVisualTree += async (_, _) =>
         {
+            InteractionPerformance.CountersChanged += UpdatePerformanceCounters; UpdatePerformanceCounters();
             if (_mcpServer is not null) { _mcpServer.AgentsChanged += OnAgentsChanged; _mcpServer.AgentStateChanged += OnAgentStateChanged; }
             if (_cloudAccount is not null) _cloudAccount.Changed += CloudPricingChanged;
             await RunAsync(ReloadAsync); _ = RefreshCloudPricingAsync();
         };
-        DetachedFromVisualTree += (_, _) => { if (_cloudAccount is not null) _cloudAccount.Changed -= CloudPricingChanged; if (_mcpServer is not null) { _mcpServer.AgentsChanged -= OnAgentsChanged; _mcpServer.AgentStateChanged -= OnAgentStateChanged; } _fontSave.Stop(); _blurSave.Stop(); if (!_populating && (int)Math.Round(_font.Value) != _settings.TranscriptFontSize) _ = ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); if (!_populating && (int)Math.Round(_blur.Value) != _settings.TranscriptBlurIntensity) _ = ChangePreferenceAsync(s => s with { TranscriptBlurIntensity = (int)Math.Round(_blur.Value) }, "高速模糊强度"); };
+        DetachedFromVisualTree += (_, _) => { InteractionPerformance.CountersChanged -= UpdatePerformanceCounters; if (_cloudAccount is not null) _cloudAccount.Changed -= CloudPricingChanged; if (_mcpServer is not null) { _mcpServer.AgentsChanged -= OnAgentsChanged; _mcpServer.AgentStateChanged -= OnAgentStateChanged; } _fontSave.Stop(); _blurSave.Stop(); if (!_populating && (int)Math.Round(_font.Value) != _settings.TranscriptFontSize) _ = ChangePreferenceAsync(s => s with { TranscriptFontSize = (int)Math.Round(_font.Value) }, "字幕字体大小"); if (!_populating && (int)Math.Round(_blur.Value) != _settings.TranscriptBlurIntensity) _ = ChangePreferenceAsync(s => s with { TranscriptBlurIntensity = (int)Math.Round(_blur.Value) }, "高速模糊强度"); };
     }
     public async Task ReloadAsync() { await _preferenceSaves; Populate(await _store.LoadAsync()); await RefreshAgentsAsync(); }
     public void Populate(AppSettings settings)
@@ -121,6 +166,7 @@ public sealed class SettingsView : UserControl
         _populating = true;
         try
         {
+            _preferencesLoaded = true;
             _settings = settings; settings=ManagedRuntime.Display(settings);
             _useCloudAsr.IsChecked = settings.AsrServiceMode == AsrServiceMode.CloudService; RefreshAsrMode();
             _baseUrl.Text = settings.CloudBaseUrl; _endpoint.Text = settings.CloudEndpoint; _model.Text = settings.CloudModel; _key.Text = settings.CloudApiKey;
@@ -132,7 +178,7 @@ public sealed class SettingsView : UserControl
             _playerShortcuts.Populate(settings.PlayerKeyBindings);
             _association.IsChecked = settings.FileAssociationEnabled; _mcp.IsChecked = settings.McpEnabled; _skip.IsChecked = settings.SkipOpeningPrompts; _createProject.IsChecked = settings.CreateProjectOnAudioImport;
             _debug.IsChecked = settings.DebugLogging; _telemetry.IsChecked = settings.TelemetryEnabled;
-            _performance.IsChecked = settings.PerformanceMode; _animationWaiting.IsChecked = settings.DisableAnimationWaiting;
+            _animationLevel.SelectedIndex = settings.PerformanceMode ? 2 : (int)settings.AnimationLevel; _animationWaiting.IsChecked = settings.DisableAnimationWaiting;
             _performanceAnalysis.IsChecked = settings.PerformanceAnalysisEnabled; _performanceAnalysis.IsEnabled = settings.TelemetryEnabled;
             _startup.IsChecked = ManagedRuntime.IsManaged || settings.StartAtLogin; _startup.IsEnabled = !ManagedRuntime.IsManaged;
             if (_liveLogs != null) _liveLogs.IsEnabled = settings.DebugLogging;
@@ -147,7 +193,7 @@ public sealed class SettingsView : UserControl
     };
     private void WirePreferences()
     {
-        _performance.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { PerformanceMode = _performance.IsChecked == true }, "性能模式"); };
+        _animationLevel.SelectionChanged += async (_, _) => { if (!_populating && _animationLevel.SelectedIndex >= 0) await ChangePreferenceAsync(s => s with { AnimationLevel = (AnimationLevel)_animationLevel.SelectedIndex, PerformanceMode = false }, "动画等级"); };
         _animationWaiting.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { DisableAnimationWaiting = _animationWaiting.IsChecked == true }, "禁用动画等待"); };
         _performanceAnalysis.IsCheckedChanged += async (_, _) => { if (!_populating) await ChangePreferenceAsync(s => s with { PerformanceAnalysisEnabled = _performanceAnalysis.IsChecked == true }, "性能分析"); };
         _useCloudAsr.IsCheckedChanged += async (_, _) =>
@@ -240,7 +286,8 @@ public sealed class SettingsView : UserControl
         typography.Children.Add(WorkspaceUi.Field("字体预览 · 可以编辑测试文字", _fontPreview));
         var fontSettings = WorkspaceUi.SettingsGroup("font", "应用字体与样式", "调整应用字体和字重", typography, ActionButton("恢复默认", ResetTypographyAsync), expanded: true);
         var appearance = CategoryPage("外观与字体", "调整应用外观与全局文字显示",
-            Card("play", "性能模式", "关闭界面动画，直接切换到最终状态", _performance),
+            Card("play", "动画等级", "完整：保留所有效果；简化：减少位移与布局动画；关闭：直接显示最终状态", _animationLevel),
+            Card("chart", "性能计数器", "仅在窗口活跃时采样；持续卡顿会逐级降低动画并保存", _performanceCounters),
             Card("play", "禁用动画等待", "立即完成对话框操作，跳过退出动画等待", _animationWaiting),
             Card("color", "外观主题", "选择跟随系统、浅色或深色外观", _theme), ManagedUi.Setting(fontSettings,"applicationFontFamily","applicationFontWeight"));
 
@@ -299,7 +346,7 @@ public sealed class SettingsView : UserControl
             Card("chart", "性能分析", "记录操作名称与耗时；累计 500 条或单次超过 2 秒时上报。随匿名使用情况分析总开关生效", _performanceAnalysis),
             Card("document", "用户协议与隐私", "查看协议或撤回此前的同意", Actions(ActionButton("查看隐私说明", () => ShowLegalAsync("privacy_zh_cn.txt", "隐私说明")), ActionButton("撤回同意", WithdrawAsync))));
         var updatesPage = CategoryPage("更新", "检查应用版本，查看组织更新状态",
-            Card("download","检查更新","启动时异步读取 GitHub Latest，10 秒超时",Actions(_updateStatus,ActionButton("检查更新",()=>_updates?.CheckAsync(AppBuildInfo.UpdateVersion)??Task.CompletedTask),ActionButton("查看发布",()=>LaunchAsync(_updates?.Result.ReleaseUrl??"https://github.com/luyii-code-1/Intensive_Listening/releases/latest")))),
+            Card("download","检查更新","启动时检查官网正式版，前往官网下载获取更新",Actions(_updateStatus,ActionButton("检查更新",()=>_updates?.CheckAsync(AppBuildInfo.UpdateVersion)??Task.CompletedTask),ActionButton("前往官网下载",()=>LaunchAsync(WebsiteUpdateChecker.DownloadPageUrl)))),
             ManagedUi.Feature(Card("download","组织更新","冷更新下载完成后点击安装；OTA 自动执行。安装时由用户确认 UAC",Actions(_managedUpdateStatus,_installButton)),"updates"));
         if(ManagedRuntime.Client is {} organization && organization.Status!="未加入管理")
         {

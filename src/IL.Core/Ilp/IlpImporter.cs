@@ -11,7 +11,11 @@ public sealed class IlpImporter(string libraryDirectory)
         try
         {
             IlpManifest manifest;
-            using (var archive = ZipFile.OpenRead(file)) manifest = await ReadManifestAsync(Entries(archive), ct);
+            using (var archive = ZipFile.OpenRead(file))
+            {
+                await ArchiveSafety.ValidateAsync(archive, 2L * 1024 * 1024 * 1024, ct);
+                manifest = await ReadManifestAsync(Entries(archive), ct);
+            }
             return manifest.FormatVersion < IlpManifest.SupportedVersion ? await UpgradeFileAsync(file, ct) : manifest;
         }
         catch (InvalidDataException ex) { throw new IlpException(IlpError.CorruptArchive, ".ilp 文件不是有效的 ZIP", ex); }
@@ -33,7 +37,7 @@ public sealed class IlpImporter(string libraryDirectory)
             foreach (var name in new[] { manifest.AudioPath, manifest.TranscriptPath })
             {
                 var entry = Required(entries, name);
-                await using var input = entry.Open();
+                await using var input = ArchiveSafety.OpenRead(entry, name == manifest.TranscriptPath ? 2 * 1024 * 1024 : 2L * 1024 * 1024 * 1024);
                 await using var output = new FileStream(Path.Combine(staging, name), FileMode.CreateNew);
                 await input.CopyToAsync(output, ct);
             }
@@ -70,34 +74,43 @@ public sealed class IlpImporter(string libraryDirectory)
         var temporary = Path.GetFullPath(file) + "." + Guid.NewGuid().ToString("N") + ".upgrade";
         try
         {
-            await using (var source = File.OpenRead(file))
-            await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
-                await source.CopyToAsync(target, ct);
             var upgraded = await Task.Run(async () =>
             {
-                using var archive = ZipFile.Open(temporary, ZipArchiveMode.Update);
-                var entries = Entries(archive);
+                using var source = ZipFile.OpenRead(file);
+                var entries = Entries(source);
                 var manifest = await ReadManifestAsync(entries, ct);
                 foreach (var (name, expected) in new[] { (manifest.AudioPath, manifest.AudioSha256), (manifest.TranscriptPath, manifest.TranscriptSha256) })
                 {
-                    await using var input = Required(entries, name).Open();
+                    await using var input = ArchiveSafety.OpenRead(Required(entries, name), name == manifest.TranscriptPath ? 2 * 1024 * 1024 : 2L * 1024 * 1024 * 1024);
                     var actual = Convert.ToHexString(await SHA256.HashDataAsync(input, ct)).ToLowerInvariant();
                     if (actual != expected) throw new IlpException(IlpError.HashMismatch, "升级前完整性校验失败");
                 }
                 byte[] transcript;
-                await using (var input = Required(entries, manifest.TranscriptPath).Open())
+                await using (var input = ArchiveSafety.OpenRead(Required(entries, manifest.TranscriptPath), 2 * 1024 * 1024))
                 { using var output = new MemoryStream(); await input.CopyToAsync(output, ct); transcript = output.ToArray(); }
                 SrtParser.Parse(transcript, manifest.Duration);
                 JsonObject json;
-                await using (var input = Required(entries, "manifest.json").Open())
+                await using (var input = ArchiveSafety.OpenRead(Required(entries, "manifest.json"), 256 * 1024))
                     json = (await JsonNode.ParseAsync(input, cancellationToken: ct))!.AsObject();
                 var result = manifest with { FormatVersion = IlpManifest.SupportedVersion };
                 json["formatVersion"] = result.FormatVersion;
                 json["creatorMachine"] = result.CreatorMachine;
                 json["creatorAgent"] = result.CreatorAgent;
-                entries["manifest.json"].Delete();
-                await using (var output = archive.CreateEntry("manifest.json").Open())
-                    await System.Text.Json.JsonSerializer.SerializeAsync(output, json, cancellationToken: ct);
+                await using var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write);
+                using var archive = new ZipArchive(target, ZipArchiveMode.Create, true);
+                foreach (var entry in source.Entries)
+                {
+                    var replacement = archive.CreateEntry(entry.FullName, CompressionLevel.Optimal);
+                    replacement.ExternalAttributes = entry.ExternalAttributes;
+                    replacement.LastWriteTime = entry.LastWriteTime;
+                    await using var output = replacement.Open();
+                    if (entry.FullName == "manifest.json") await System.Text.Json.JsonSerializer.SerializeAsync(output, json, cancellationToken: ct);
+                    else
+                    {
+                        await using var input = ArchiveSafety.OpenRead(entry, entry.FullName == manifest.TranscriptPath ? 2 * 1024 * 1024 : 2L * 1024 * 1024 * 1024);
+                        await input.CopyToAsync(output, ct);
+                    }
+                }
                 return result;
             }, ct);
             ct.ThrowIfCancellationRequested();
@@ -123,7 +136,7 @@ public sealed class IlpImporter(string libraryDirectory)
     {
         var entry = Required(entries, "manifest.json");
         if (entry.Length > 256 * 1024) throw new IlpException(IlpError.InvalidManifest, "manifest.json 过大");
-        await using var input = entry.Open();
+        await using var input = ArchiveSafety.OpenRead(entry, 256 * 1024);
         using var output = new MemoryStream();
         await input.CopyToAsync(output, ct);
         return IlpManifest.FromBytes(output.ToArray());

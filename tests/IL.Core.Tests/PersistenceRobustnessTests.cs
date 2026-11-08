@@ -13,6 +13,62 @@ public sealed class PersistenceRobustnessTests : IDisposable
     public void Dispose() => Directory.Delete(root, true);
 
     [Fact]
+    public async Task FailedAudioReplacementRestoresProjectAndOriginalAudio()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var store = new CourseProjectStore(Path.Combine(root, "projects"));
+        var source = Path.Combine(root, "source.wav"); await File.WriteAllTextAsync(source, "old audio");
+        var original = (await store.CreateAsync(source)) with { Title = "old title", Transcript = "old transcript" };
+        await store.SaveAsync(original);
+        var metadata = Path.Combine(store.RootDirectory, original.Id, "project.json");
+        var before = await File.ReadAllBytesAsync(metadata);
+        var replacement = Path.Combine(root, "replacement.wav"); await File.WriteAllTextAsync(replacement, "new audio");
+        using (var held = new FileStream(original.AudioPath!, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            await Assert.ThrowsAsync<IOException>(() => store.BindAudioAsync(original, replacement));
+            Assert.Equal(before, await File.ReadAllBytesAsync(metadata));
+            Assert.Equal("old transcript", await File.ReadAllTextAsync(Path.Combine(store.RootDirectory, original.Id, "transcript.srt")));
+            Assert.Equal("old audio", await File.ReadAllTextAsync(original.AudioPath!));
+        }
+    }
+
+    [Fact]
+    public async Task MetadataReplacementFailureRollsBackTranscript()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var store = new CourseProjectStore(Path.Combine(root, "projects"));
+        var original = (await store.CreateAsync()) with { Title = "original", Transcript = "old transcript" };
+        await store.SaveAsync(original);
+        var directory = Path.Combine(store.RootDirectory, original.Id);
+        var metadata = Path.Combine(directory, "project.json");
+        var bytes = await File.ReadAllBytesAsync(metadata);
+        using (var locked = new FileStream(metadata, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            await Assert.ThrowsAsync<IOException>(() => store.SaveAsync(original with { Title = "new", Transcript = "new transcript" }));
+            Assert.Equal("old transcript", await File.ReadAllTextAsync(Path.Combine(directory, "transcript.srt")));
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(metadata));
+        }
+        Assert.Equal("old transcript", (await store.LoadByIdAsync(original.Id))!.Transcript);
+    }
+    [Fact]
+    public async Task InterruptedProjectSaveRecoversOnNextLoad()
+    {
+        var store = new CourseProjectStore(Path.Combine(root, "projects"));
+        var original = (await store.CreateAsync()) with { Transcript = "old transcript" };
+        await store.SaveAsync(original);
+        var directory = Path.Combine(store.RootDirectory, original.Id);
+        var transaction = Path.Combine(directory, ".project-save"); Directory.CreateDirectory(transaction);
+        File.Move(Path.Combine(directory, "transcript.srt"), Path.Combine(transaction, "0.old"));
+        await File.WriteAllTextAsync(Path.Combine(directory, "transcript.srt"), "partially committed transcript");
+        await File.WriteAllTextAsync(Path.Combine(transaction, "journal.json"), """
+            [{"path":"transcript.srt","hadOriginal":true,"replacement":true},
+             {"path":"project.json","hadOriginal":true,"replacement":true}]
+            """);
+        Assert.Equal("old transcript", (await store.LoadByIdAsync(original.Id))!.Transcript);
+        Assert.False(Directory.Exists(transaction));
+    }
+
+    [Fact]
     public async Task FailedExportPreservesTheExistingArchive()
     {
         var store = new CourseProjectStore(Path.Combine(root, "projects"));

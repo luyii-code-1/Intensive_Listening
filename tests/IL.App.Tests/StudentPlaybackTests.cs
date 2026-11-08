@@ -10,6 +10,46 @@ namespace IL.App.Tests;
 
 public sealed class StudentPlaybackTests
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task OpeningAnIlpUsesTheFileVersionAndKeepsSavedProgress(int fileVersion)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il-open-file-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var seedFile = Path.Combine(root, "seed.ilp");
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "dart-course.ilp"), seedFile);
+            var library = Path.Combine(root, "library");
+            var seed = await new IlpImporter(Path.Combine(root, "seed")).ImportFileAsync(seedFile);
+            var creator = new IlpCreator();
+            var originalFile = Path.Combine(root, "original.ilp");
+            var incomingFile = Path.Combine(root, "incoming.ilp");
+            await creator.CreateAsync("原课程", seed.AudioPath, seed.TranscriptPath, originalFile, seed.Id, 2);
+            await creator.CreateAsync("文件中的课程", seed.AudioPath, seed.TranscriptPath, incomingFile, seed.Id, fileVersion);
+            var progress = new LessonProgressStore(Path.Combine(root, "progress.json"));
+            var player = new FakePlayer();
+            await using var vm = new StudentViewModel(() => player, library, progress, new AppSettingsStore(Path.Combine(root, "settings.json")));
+
+            await vm.OpenIlpFromFileAsync(originalFile);
+            await vm.SeekAsync(1.25);
+            await vm.TogglePlaybackCommand.ExecuteAsync(null);
+            Assert.True(vm.IsPlaying);
+
+            await vm.OpenIlpFromFileAsync(incomingFile);
+
+            Assert.Single(vm.Lessons);
+            Assert.Equal(fileVersion, vm.CurrentLesson!.Manifest.PackageVersion);
+            Assert.Equal("文件中的课程", vm.Title);
+            Assert.Equal(1.25, vm.PositionSeconds);
+            Assert.Equal(1250L, (await progress.LoadAsync())[seed.Id].PositionMs);
+            Assert.False(vm.IsPlaying);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Fact]
     public async Task SelectionNavigationPlaybackAndProgressUseOneState()
     {
@@ -81,13 +121,81 @@ public sealed class StudentPlaybackTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public async Task SentencePlaybackUsesConfirmedPlayerState()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il-play-state-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var library = Path.Combine(root, "library");
+            await new IlpImporter(library).ImportFileAsync(Path.Combine(AppContext.BaseDirectory, "fixtures", "dart-course.ilp"));
+            var fake = new FakePlayer { IgnorePlay = true };
+            await using var vm = new StudentViewModel(() => fake, library, new LessonProgressStore(Path.Combine(root, "progress.json")), new AppSettingsStore(Path.Combine(root, "settings.json")));
+            await vm.RefreshAsync(); await vm.OpenLessonAsync(vm.Lessons.Single());
+            await vm.PlaySelectedCueAsync(vm.Cues[0], false);
+            Assert.False(vm.IsPlaying);
+            fake.IgnorePlay = false;
+            await vm.PlaySelectedCueAsync(vm.Cues[0], false);
+            Assert.True(vm.IsPlaying);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task PlayerNotificationsCoalesceAndAutosaveKeepsPlaybackAvailable()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il-play-notify-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var library = Path.Combine(root, "library");
+            await new IlpImporter(library).ImportFileAsync(Path.Combine(AppContext.BaseDirectory, "fixtures", "dart-course.ilp"));
+            var pending = new List<Action>(); var fake = new FakePlayer();
+            await using var vm = new StudentViewModel(() => fake, library, new LessonProgressStore(Path.Combine(root, "progress.json")), new AppSettingsStore(Path.Combine(root, "settings.json")), pending.Add);
+            await vm.RefreshAsync(); await vm.OpenLessonAsync(vm.Lessons.Single());
+            await Task.Delay(5100);
+            var busyChanges = new List<bool>();
+            vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(vm.IsBusy)) busyChanges.Add(vm.IsBusy); };
+            for (var i = 0; i < 50; i++) fake.Notify();
+            Assert.Single(pending);
+            pending[0]();
+            Assert.DoesNotContain(true, busyChanges);
+            Assert.True(vm.CanPlay);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task OldSentencePauseCannotStopNewPlaybackQueuedAheadOfIt()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il-play-epoch-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            var library = Path.Combine(root, "library");
+            await new IlpImporter(library).ImportFileAsync(Path.Combine(AppContext.BaseDirectory, "fixtures", "dart-course.ilp"));
+            var fake = new FakePlayer();
+            await using var vm = new StudentViewModel(() => fake, library, new LessonProgressStore(Path.Combine(root, "progress.json")), new AppSettingsStore(Path.Combine(root, "settings.json")));
+            await vm.RefreshAsync(); await vm.OpenLessonAsync(vm.Lessons.Single());
+            await vm.PlaySelectedCueAsync(vm.Cues[0], true); await fake.SeekAsync(vm.Cues[0].Cue.End);
+            var gate = (SemaphoreSlim)typeof(StudentViewModel).GetField("_operations", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(vm)!;
+            await gate.WaitAsync(); Task next;
+            try { next = vm.PlaySelectedCueAsync(vm.Cues[1], false); fake.Notify(); }
+            finally { gate.Release(); }
+            await next; await gate.WaitAsync(); gate.Release();
+            Assert.True(fake.IsPlaying); Assert.True(vm.IsPlaying);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private sealed class FakePlayer : IAudioPlayer
     {
-        public int OpenCount;public bool FailOpen;public TimeSpan? LoopEnd;
+        public int OpenCount;public bool FailOpen; public bool IgnorePlay;public TimeSpan? LoopEnd;
         public TimeSpan Position{get;private set;}public TimeSpan Duration{get;set;}=TimeSpan.FromSeconds(5);public bool IsPlaying{get;private set;}public string? ErrorMessage=>null;public double PlaybackRate{get;set;}=1;public double Volume{get;set;}=1;
         public event EventHandler? StateChanged;
+        public void Notify() => StateChanged?.Invoke(this, EventArgs.Empty);
         public Task OpenAsync(string path,CancellationToken ct=default){OpenCount++;if(FailOpen)throw new IOException("native failure");Position=TimeSpan.Zero;return Task.CompletedTask;}
-        public Task PlayAsync(CancellationToken ct=default){IsPlaying=true;StateChanged?.Invoke(this,EventArgs.Empty);return Task.CompletedTask;}
+        public Task PlayAsync(CancellationToken ct=default){IsPlaying=!IgnorePlay;StateChanged?.Invoke(this,EventArgs.Empty);return Task.CompletedTask;}
         public Task PauseAsync(CancellationToken ct=default){IsPlaying=false;StateChanged?.Invoke(this,EventArgs.Empty);return Task.CompletedTask;}
         public Task StopAsync(CancellationToken ct=default){IsPlaying=false;Position=TimeSpan.Zero;return Task.CompletedTask;}
         public Task SeekAsync(TimeSpan target,CancellationToken ct=default){Position=target;return Task.CompletedTask;}

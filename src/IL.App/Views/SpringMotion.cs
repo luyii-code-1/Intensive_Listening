@@ -26,6 +26,7 @@ public sealed class SpringMotion
         }
     }
     private readonly Control _control;
+    private readonly bool _animateBasicSwitches;
     private readonly TransformGroup _group;
     private readonly TranslateTransform _translation = new();
     private readonly ScaleTransform _scale = new(1, 1);
@@ -35,9 +36,10 @@ public sealed class SpringMotion
     private long _generation;
     private bool _running;
     private TaskCompletionSource? _completion;
-    public SpringMotion(Control control)
+    public SpringMotion(Control control, bool animateBasicSwitches = false)
     {
         _control = control;
+        _animateBasicSwitches = animateBasicSwitches;
         control.RenderTransformOrigin = RelativePoint.Center;
         _group = new TransformGroup { Children = { _scale, _translation } };
         control.RenderTransform = _group;
@@ -56,7 +58,8 @@ public sealed class SpringMotion
         var completion = _completion;
         var reduced = FirstRunWizard.MotionReduced();
         _response = reduced ? .18 : response;
-        if (reduced) { Reset(_x, 0); Reset(_y, 0); Reset(_size, 1); }
+        if (reduced && (!_animateBasicSwitches || !MotionPreferences.ReducedMotion || FirstRunWizard.SystemMotionReduced()))
+        { Reset(_x, 0); Reset(_y, 0); Reset(_size, 1); }
         if (!_running)
         {
             if (TopLevel.GetTopLevel(_control) is not { } owner) { Set(opacity, x, y, scale); return completion.Task; }

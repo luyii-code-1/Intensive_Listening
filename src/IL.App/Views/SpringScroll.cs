@@ -14,15 +14,15 @@ internal sealed class SpringScroll
     private static readonly ConditionalWeakTable<ScrollViewer, SpringScroll> Motions = new();
     private readonly ScrollViewer _viewer;
     private readonly SpringScalar _x, _y;
-    private bool _applying, _moving, _wheelInstalled;
+    private bool _applying, _moving, _wheelInstalled, _wheelMoving, _playerScroll;
     private Vector _target;
     private long _generation;
     private Task _settled = Task.CompletedTask;
     private SpringScroll(ScrollViewer viewer)
     {
         _viewer = viewer;
-        _x = new(viewer, viewer.Offset.X, value => Apply(new(value, viewer.Offset.Y)));
-        _y = new(viewer, viewer.Offset.Y, value => Apply(new(viewer.Offset.X, value)));
+        _x = new(viewer, viewer.Offset.X, value => Apply(new(value, viewer.Offset.Y)), AnimationDisabled);
+        _y = new(viewer, viewer.Offset.Y, value => Apply(new(viewer.Offset.X, value)), AnimationDisabled);
         // Offset changes are synchronous; ScrollChanged is delivered later during layout,
         // when rounded/coerced offsets can otherwise cancel our own animation frames.
         viewer.PropertyChanged += (_, e) =>
@@ -34,6 +34,13 @@ internal sealed class SpringScroll
         viewer.AddHandler(InputElement.PointerPressedEvent, (_, _) => Stop(), RoutingStrategies.Tunnel);
     }
     public static SpringScroll For(ScrollViewer viewer) => Motions.GetValue(viewer, v => new(v));
+    public static SpringScroll ForPlayer(ScrollViewer viewer)
+    {
+        var scroll = For(viewer);
+        scroll._playerScroll = true;
+        return scroll;
+    }
+    private bool AnimationDisabled() => MotionPreferences.PerformanceMode || (!_playerScroll && MotionPreferences.ReducedMotion);
     private Vector Clamp(Vector target) => new(
         Math.Clamp(target.X, 0, Math.Max(0, _viewer.Extent.Width - _viewer.Viewport.Width)),
         Math.Clamp(target.Y, 0, Math.Max(0, _viewer.Extent.Height - _viewer.Viewport.Height)));
@@ -43,21 +50,24 @@ internal sealed class SpringScroll
         try { _viewer.Offset = Clamp(value); }
         finally { _applying = false; }
     }
-    public void Stop() { ++_generation; _moving = false; _x.Stop(); _y.Stop(); }
-    public Task To(Vector target)
+    public void Stop() { ++_generation; _moving = _wheelMoving = false; _x.Stop(); _y.Stop(); }
+    public Task To(Vector target) => To(target, wheel: false);
+    private Task To(Vector target, bool wheel)
     {
         target = Clamp(target);
         if (_moving && target == _target || !_moving && target == _viewer.Offset) return _settled;
         if (!_moving) { _x.Set(_viewer.Offset.X); _y.Set(_viewer.Offset.Y); }
         _target = target;
-        if (MotionPreferences.PerformanceMode || FirstRunWizard.MotionReduced()) { Stop(); Apply(target); return Task.CompletedTask; }
+        if (AnimationDisabled() || FirstRunWizard.SystemMotionReduced()) { Stop(); Apply(target); return Task.CompletedTask; }
         _moving = true;
-        return _settled = CompleteAsync(++_generation, _x.To(target.X, .42), _y.To(target.Y, .42));
+        _wheelMoving = wheel;
+        var response = _playerScroll && (wheel || MotionPreferences.ReducedMotion) ? .22 : .42;
+        return _settled = CompleteAsync(++_generation, _x.To(target.X, response), _y.To(target.Y, response));
     }
     private async Task CompleteAsync(long generation, Task x, Task y)
     {
         await Task.WhenAll(x, y);
-        if (_generation == generation) _moving = false;
+        if (_generation == generation) _moving = _wheelMoving = false;
     }
     public static void Reveal(Control control)
     {
@@ -99,13 +109,21 @@ internal sealed class SpringScroll
             {
                 if (e.Handled) return;
                 if (e.Source is Visual source && source.GetVisualAncestors().Prepend(source).OfType<ScrollViewer>().FirstOrDefault() != viewer) return;
-                // Logical lists express extent in items; physical content expresses it in pixels.
-                var logical = viewer.GetVisualDescendants().OfType<ILogicalScrollable>().FirstOrDefault(c => c.IsLogicalScrollEnabled);
-                var step = logical?.ScrollSize ?? new Size(48, 48);
+                // Player surfaces use pixel offsets. Other viewers may scroll in item units.
+                var step = motion._playerScroll ? new Size(120, 120) : viewer.GetVisualDescendants().OfType<ILogicalScrollable>()
+                    .FirstOrDefault(c => c.IsLogicalScrollEnabled)?.ScrollSize ?? new Size(48, 48);
+                var delta = e.Delta;
+                if (motion._playerScroll && delta.X == 0 && (e.KeyModifiers == KeyModifiers.Shift || viewer.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled))
+                    delta = new Vector(delta.Y, 0);
+                var precise = motion._playerScroll && (delta.X != Math.Truncate(delta.X) || delta.Y != Math.Truncate(delta.Y));
+                if (motion._playerScroll && motion._moving && (precise || !motion._wheelMoving)) motion.Stop();
                 var start = motion._moving ? motion._target : viewer.Offset;
-                var target = motion.Clamp(new(start.X - e.Delta.X * step.Width, start.Y - e.Delta.Y * step.Height));
+                var target = motion.Clamp(new(start.X - delta.X * step.Width, start.Y - delta.Y * step.Height));
                 if (target == start) return;
-                e.Handled = true; motion.To(target);
+                e.Handled = true;
+                // Apply fractional wheel deltas immediately so precision input follows the gesture.
+                if (precise) motion.Apply(target);
+                else motion.To(target, wheel: true);
             }, RoutingStrategies.Tunnel);
         });
     }

@@ -7,6 +7,30 @@ namespace IL.Core.Tests;
 public sealed class InstallationOnboardingTests
 {
     [Fact]
+    public void RecommendedSetupAppliesThePresetAndKeepsPersonalAppearance()
+    {
+        var settings = InstallationOnboarding.RecommendedSettings(new AppSettings
+        {
+            CloudServiceEnabled = true,
+            McpEnabled = true,
+            SkipOpeningPrompts = false,
+            CreateProjectOnAudioImport = false,
+            ThemeMode = "dark",
+        });
+
+        Assert.Equal(InstallationOnboarding.LicenseVersion, settings.EulaAcceptedVersion);
+        Assert.True(settings.FileAssociationEnabled);
+        Assert.True(settings.FileAssociationPrompted);
+        Assert.False(settings.CloudServiceEnabled);
+        Assert.False(settings.McpEnabled);
+        Assert.True(settings.TelemetryEnabled);
+        Assert.True(settings.TelemetryPrompted);
+        Assert.True(settings.SkipOpeningPrompts);
+        Assert.True(settings.CreateProjectOnAudioImport);
+        Assert.Equal("dark", settings.ThemeMode);
+    }
+
+    [Fact]
     public void UpgradeShowsWelcomeWhileNewOrResetDataKeepsFullSetupUntilCompleted()
     {
         var root = Path.Combine(Path.GetTempPath(), "il-onboarding-" + Guid.NewGuid().ToString("N"));

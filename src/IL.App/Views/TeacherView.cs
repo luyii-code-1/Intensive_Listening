@@ -108,7 +108,7 @@ public sealed class TeacherView : UserControl
         { _managedContent=body;Content=null;var host=new Grid{RowDefinitions=new RowDefinitions("Auto,*")};_managedNotice=WorkspaceUi.Text("该设置由您的组织管理",11);_managedNotice.Foreground=new SolidColorBrush(Color.Parse("#C49520"));_managedNotice.Margin=new Thickness(24,6);host.Children.Add(_managedNotice);Grid.SetRow(body,1);host.Children.Add(body);Content=host; }
         if(_managedContent is {} content){content.IsEnabled=IL.Core.Management.ManagedRuntime.Allows("authoring");content.Opacity=content.IsEnabled?1:.45;_managedNotice!.IsVisible=!content.IsEnabled;}
     }
-    public Task FlushDraftAsync() => RunAsync(SaveDraftAsync, false);
+    public Task FlushDraftAsync() => RunAsync(SaveDraftAsync, false, propagate: true);
     private async Task RefreshProjectsFromStoreAsync()
     {
         await _transcriptions.RestorePendingAsync(); await _vm.ReloadAsync(); RefreshProjects();
@@ -646,7 +646,19 @@ public sealed class TeacherView : UserControl
         return Task.CompletedTask;
     }
     private void ScheduleSave() { if (_loading || _agentMode || _vm.Project == null) return; MarkReviewEdited(); _autosave.Stop(); _autosave.Start(); }
-    private async Task SaveDraftAsync()
+    private Task _draftSaves = Task.CompletedTask;
+    private Task SaveDraftAsync()
+    {
+        var previous = _draftSaves;
+        return _draftSaves = SaveDraftAfterAsync(previous);
+    }
+    private async Task SaveDraftAfterAsync(Task previous)
+    {
+        // A failed autosave must not prevent a later explicit retry.
+        try { await previous; } catch (Exception error) when (error is not OutOfMemoryException) { }
+        await SaveDraftCoreAsync();
+    }
+    private async Task SaveDraftCoreAsync()
     {
         _autosave.Stop(); if (_vm.Project == null || _loading || _agentMode || _saving) return;
         _saving = true;
@@ -781,14 +793,14 @@ public sealed class TeacherView : UserControl
         try { await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Render); await action(); }
         finally { _busyOverlay.IsVisible = false; }
     }
-    private async Task RunAsync(Func<Task> action, bool enforce = true, [System.Runtime.CompilerServices.CallerMemberName] string operationName = "")
+    private async Task RunAsync(Func<Task> action, bool enforce = true, [System.Runtime.CompilerServices.CallerMemberName] string operationName = "", bool propagate = false)
     {
         using var measurement = IL.App.Services.InteractionPerformance.Measure("authoring." + operationName);
         await _operations.WaitAsync();
         var operation = Guid.NewGuid().ToString("N")[..8];
         IL.Core.Infrastructure.AppLog.Operation("authoring", $"操作开始 id={operation} action={action.Method.Name} project={_vm.Project?.Id}");
         try { if(enforce) IL.Core.Management.ManagedRuntime.Require("authoring"); await action(); IL.Core.Infrastructure.AppLog.Operation("authoring", $"操作完成 id={operation} projects={_vm.Projects.Count}"); }
-        catch (Exception ex) { WorkspaceToast.Show(this, "制作工程操作失败", ex.Message, true); IL.Core.Infrastructure.AppLog.Error("制作工程操作失败", ex); }
+        catch (Exception ex) { WorkspaceToast.Show(this, "制作工程操作失败", ex.Message, true); IL.Core.Infrastructure.AppLog.Error("制作工程操作失败", ex); if (propagate) throw; }
         finally { _operations.Release(); }
     }
 }

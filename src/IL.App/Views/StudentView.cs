@@ -26,11 +26,11 @@ public sealed class StudentView : UserControl
     private readonly StudentViewModel _vm;
     private readonly Grid _page = new() { RowDefinitions = new RowDefinitions("auto,*") };
     private readonly ContentControl _header = new();
-    private readonly WorkspaceContentHost _body = new() { [Grid.RowProperty] = 1 };
+    private readonly WorkspaceContentHost _body = new() { [Grid.RowProperty] = 1, AnimateBasicSwitches = true };
     private string? _bodyKey;
     private readonly StackPanel _transcriptContent = new() { Spacing = 10 };
     private readonly ScrollViewer _transcript = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-    private readonly WorkspaceContentHost _questions = new();
+    private readonly WorkspaceContentHost _questions = new() { AnimateBasicSwitches = true };
     private readonly StackPanel _lessons = new() { Spacing = 4 };
     private readonly SpringListCollection<Control> _lessonMotion;
     private Grid? _homeContent;
@@ -87,10 +87,11 @@ public sealed class StudentView : UserControl
         _transcript.SizeChanged += (_, _) => ScheduleRealization();
         _transcriptContent.SizeChanged += (_, _) => InvalidateCueGeometry();
         _transcriptContent.LayoutUpdated += (_, _) => { if (_cueGeometryDirty) ScheduleRealization(); };
-        _transcriptMotion = SpringScroll.For(_transcript);
+        _transcriptMotion = SpringScroll.ForPlayer(_transcript);
         AddHandler(PointerPressedEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Tunnel);
         AddHandler(PointerMovedEvent, (_, _) => RegisterInteraction(interruptScroll: false), RoutingStrategies.Tunnel);
-        AddHandler(PointerWheelChangedEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Tunnel);
+        AddHandler(PointerWheelChangedEvent, (_, _) => RegisterInteraction(interruptScroll: false), RoutingStrategies.Tunnel);
+        AddHandler(ScrollGestureEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Bubble, handledEventsToo: true);
         AddHandler(KeyDownEvent, (_, _) => RegisterInteraction(), RoutingStrategies.Tunnel);
         _page.Children.Add(_header); _page.Children.Add(_body);
         Content = _page;
@@ -308,6 +309,8 @@ public sealed class StudentView : UserControl
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var controls = new ScrollViewer { Content = BuildControls(), ClipToBounds = true,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        SpringScroll.ForPlayer(questionSpace);
+        SpringScroll.ForPlayer(controls);
         var grid = new Grid { RowDefinitions = new RowDefinitions("*,auto"), MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Stretch };
         grid.Children.Add(questionSpace); Grid.SetRow(controls, 1); grid.Children.Add(controls);
         grid.SizeChanged += (_, e) =>
@@ -341,7 +344,9 @@ public sealed class StudentView : UserControl
             {
                 var strip = new Grid { ColumnDefinitions = new ColumnDefinitions("auto,*"), Height = 44, Margin = new Thickness(0, 8, 0, 0) };
                 var label = Text("题目索引", 12); label.VerticalAlignment = VerticalAlignment.Center; label.Margin = new Thickness(0, 0, 12, 0); strip.Children.Add(label);
-                strip.Children.Add(new ScrollViewer { Content = _index, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, [Grid.ColumnProperty] = 1 }); stack.Children.Add(strip);
+                var indexScroll = new ScrollViewer { Content = _index, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, [Grid.ColumnProperty] = 1 };
+                SpringScroll.ForPlayer(indexScroll);
+                strip.Children.Add(indexScroll); stack.Children.Add(strip);
             }
         }
         return ManagedUi.Feature(new Grid { Children = { stack } },"playback");
@@ -375,7 +380,9 @@ public sealed class StudentView : UserControl
         { _questions.Content = new TextBlock { Text = "当前题目未设置", FontSize = 17, HorizontalAlignment = HorizontalAlignment.Center }; return; }
         var panel = new StackPanel { Spacing = 14 };
         foreach (var question in _vm.Questions) panel.Children.Add(QuestionTemplate(question));
-        _questions.Content = new ScrollViewer { Content = panel, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        var scroll = new ScrollViewer { Content = panel, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        SpringScroll.ForPlayer(scroll);
+        _questions.Content = scroll;
     }
     private Control QuestionTemplate(LessonQuestion question)
     {
@@ -812,12 +819,21 @@ public sealed class StudentView : UserControl
         dialog.Opened += (_, _) => input.Focus();
         return await dialog.ShowAsync(WorkspaceUi.Owner(this)) == FAContentDialogResult.Primary ? input.Text!.Trim() : null;
     }
-    public async Task ImportFileAsync(string file, bool standalone = false)
+    public async Task ImportFileAsync(string file, bool fromLaunch = false)
     {
-        if (_importing) return;
+        if (_importing)
+        {
+            if (fromLaunch) ShowNotice("正在导入文件", "请在当前导入完成后重新打开精听包。", true);
+            return;
+        }
         _importing = _handlingOperationStatus = true; BuildHeader();
         try
         {
+            if (fromLaunch)
+            {
+                await _vm.OpenIlpFromFileAsync(file);
+                return;
+            }
             IL.Core.Management.ManagedRuntime.Require("importIlp");
             var manifest = await _vm.ReadManifestAsync(file); var existing = _vm.Lessons.FirstOrDefault(l => l.Id == manifest.PackageUuid);
             if (existing is not null)
@@ -825,9 +841,7 @@ public sealed class StudentView : UserControl
                 if (existing.Lesson.Manifest.PackageVersion == manifest.PackageVersion)
                 {
                     var local = existing.Lesson.Manifest;
-                    if (local.AudioSha256 != manifest.AudioSha256 || local.TranscriptSha256 != manifest.TranscriptSha256 || local.Title != manifest.Title ||
-                        local.FormatVersion != manifest.FormatVersion || local.CreatorMachine != manifest.CreatorMachine || local.CreatorAgent != manifest.CreatorAgent ||
-                        !System.Text.Json.Nodes.JsonNode.DeepEquals(System.Text.Json.JsonSerializer.SerializeToNode(local.Exercises), System.Text.Json.JsonSerializer.SerializeToNode(manifest.Exercises)))
+                    if (StudentViewModel.ManifestDiffers(local, manifest))
                     {
                         if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "更新本地课程？", $"本地与文件均为版本 {manifest.PackageVersion}，内容或制作信息存在变化。\n本地：{local.CreatorDescription}\n文件：{manifest.CreatorDescription}", "更新课程")) return;
                         await ImportLessonAsync(file, true, noticeTitle: "课程已更新", noticeMessage: manifest.CreatorDescription);
@@ -838,7 +852,7 @@ public sealed class StudentView : UserControl
                 if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "发现课程的其他版本", $"本地版本 {existing.Lesson.Manifest.PackageVersion}，文件版本 {manifest.PackageVersion}。是否更新？\n本地：{existing.Lesson.Manifest.CreatorDescription}\n文件：{manifest.CreatorDescription}", "更新课程")) return;
                 await ImportLessonAsync(file, true, noticeTitle: "课程已更新", noticeMessage: "播放记录与挖空记录已保留。"); return;
             }
-            if (!standalone && !await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "导入精听包", $"{manifest.Title} · 版本 {manifest.PackageVersion}\n{manifest.CreatorDescription}", "导入")) return;
+            if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "导入精听包", $"{manifest.Title} · 版本 {manifest.PackageVersion}\n{manifest.CreatorDescription}", "导入")) return;
             var sameTitle = _vm.Lessons.FirstOrDefault(l => l.Title.Equals(manifest.Title, StringComparison.OrdinalIgnoreCase));
             if (sameTitle is not null)
             {
@@ -856,7 +870,12 @@ public sealed class StudentView : UserControl
             await ImportLessonAsync(file);
         }
         catch (IL.Core.Management.ManagedFeatureDeniedException ex) { ShowNotice("组织管理限制", ex.Message, true); }
-        catch (Exception ex) { _vm.Status = ex.Message; await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "无法导入", ex.Message, "完成"); }
+        catch (Exception ex)
+        {
+            _vm.Status = ex.Message;
+            if (fromLaunch) ShowNotice("无法打开精听包", ex.Message, true);
+            else await AppDialogs.ChooseAsync(WorkspaceUi.Owner(this), "无法导入", ex.Message, "完成");
+        }
         finally { _importing = _handlingOperationStatus = false; BuildHeader(); }
     }
 }

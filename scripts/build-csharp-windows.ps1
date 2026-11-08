@@ -1,9 +1,10 @@
-param([switch]$Publish, [ValidateSet("insider", "beta", "release")][string]$Channel = "insider", [string]$ReleaseTag)
+param([switch]$Publish, [switch]$ReuseVersion, [ValidateSet("insider", "beta", "release")][string]$Channel = "insider", [string]$ReleaseTag)
 $ErrorActionPreference = 'Stop'
 $env:DOTNET_ROOT = 'E:\dev\dotnet'
 $env:PATH = "$env:DOTNET_ROOT;$env:PATH"
 Set-Location (Join-Path $PSScriptRoot '..')
 $versionArguments = @('scripts/build_version.py', '--channel', $Channel)
+if ($ReuseVersion) { $versionArguments += '--reuse' }
 if ($ReleaseTag) { $versionArguments += @('--tag', $ReleaseTag) }
 & python @versionArguments
 if ($LASTEXITCODE -ne 0) { throw 'Build version preparation failed' }

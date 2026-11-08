@@ -37,7 +37,8 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     private IAudioPlayer? _player;
     private ImportedLesson? _lesson;
     private string? _audioPath, _playerSource;
-    private int _generation;
+    private int _generation, _playerUpdatePending, _playbackEpoch;
+    private bool _progressSavePending;
     private int? _preroll, _returnCue;
     private TimeSpan? _repeatEnd;
     private DateTimeOffset _lastProgressSave;
@@ -159,6 +160,29 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         catch (Exception ex) { Status = $"读取课库失败：{ex.Message}"; }
     }
     public Task<IlpManifest> ReadManifestAsync(string file) => _importer.ReadManifestAsync(file);
+
+    internal async Task OpenIlpFromFileAsync(string file)
+    {
+        IL.Core.Management.ManagedRuntime.Require("importIlp");
+        await PauseAsync(propagate: true);
+        var manifest = await ReadManifestAsync(file);
+        var existing = Lessons.FirstOrDefault(item => item.Id == manifest.PackageUuid);
+        if (existing is not null && existing.Lesson.Manifest.PackageVersion == manifest.PackageVersion &&
+            !ManifestDiffers(existing.Lesson.Manifest, manifest))
+        {
+            await OpenLessonAsync(existing);
+            if (_lesson?.Id != existing.Id) throw new IOException(Status);
+            return;
+        }
+        await ImportAndOpenAsync(file, replace: existing is not null, title: null, replacingLessonId: existing?.Id);
+    }
+
+    internal static bool ManifestDiffers(IlpManifest local, IlpManifest incoming) =>
+        local.AudioSha256 != incoming.AudioSha256 || local.TranscriptSha256 != incoming.TranscriptSha256 || local.Title != incoming.Title ||
+        local.Duration != incoming.Duration || local.AudioPath != incoming.AudioPath || local.FormatVersion != incoming.FormatVersion ||
+        local.CreatorMachine != incoming.CreatorMachine || local.CreatorAgent != incoming.CreatorAgent ||
+        !System.Text.Json.Nodes.JsonNode.DeepEquals(System.Text.Json.JsonSerializer.SerializeToNode(local.Exercises), System.Text.Json.JsonSerializer.SerializeToNode(incoming.Exercises));
+
     public async Task ExportLessonAsync(string id, string output)
     {
         IL.Core.Management.ManagedRuntime.Require("export");
@@ -171,12 +195,35 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         try
         {
             IL.Core.Management.ManagedRuntime.Require("importIlp");
-            var imported = await _importer.ImportFileAsync(file, replace, title);
-            await RefreshAsync();
-            SelectedLesson = Lessons.FirstOrDefault(x => x.Id == imported.Id);
-            await CurrentLoad;
+            await ImportAndOpenAsync(file, replace, title, replacingLessonId: null);
         }
         catch (Exception ex) { Status = $"导入失败：{ex.Message}"; }
+    }
+
+    private async Task ImportAndOpenAsync(string file, bool replace, string? title, string? replacingLessonId)
+    {
+        ImportedLesson? imported = null;
+        await RunAsync(async () =>
+        {
+            if (replacingLessonId is not null && _lesson?.Id == replacingLessonId && _playerSource is not null)
+            {
+                _switching = true;
+                try
+                {
+                    await _player!.SetLoopAsync(null, null);
+                    await _player.StopAsync();
+                    _playerSource = null;
+                    IsPlaying = false;
+                }
+                finally { _switching = false; }
+            }
+            imported = await _importer.ImportFileAsync(file, replace, title);
+        }, propagate: true);
+        if (imported is null) return;
+        await RefreshAsync(preservePlayback: true);
+        var item = Lessons.FirstOrDefault(x => x.Id == imported.Id) ?? throw new IOException("无法从课库读取已导入的课程");
+        await OpenLessonAsync(item);
+        if (!ReferenceEquals(SelectedLesson, item) || _lesson?.Id != item.Id) throw new IOException(Status);
     }
     public Task OpenAudioAsync(string file) => RunAsync(async () =>
     {
@@ -233,13 +280,14 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         await SeekCoreAsync(PlaybackNavigation.CueNavigationPosition(row.Cue), row.Index);
         if (pauseAfterSentence) _repeatEnd = row.Cue.End;
         await EnsurePlayerLoadedAsync();
-        await _player!.PlayAsync(); IsPlaying = true;
+        await _player!.PlayAsync(); IsPlaying = _player.IsPlaying;
         _returnCue = null; OnPropertyChanged(nameof(CanReturn));
     });
 
     [RelayCommand] private Task TogglePlaybackAsync() => RunAsync(async () =>
     {
         if (_audioPath is null) return;
+        ++_playbackEpoch;
         _repeatEnd = null;
         await EnsurePlayerLoadedAsync();
         if (_player!.IsPlaying)
@@ -255,7 +303,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
             if (SingleSentenceLoop && ActiveCue is { } cue && (PositionSeconds < cue.Cue.Start.TotalSeconds || PositionSeconds >= cue.Cue.End.TotalSeconds))
                 await SeekCoreAsync(PlaybackNavigation.CueSeekPosition(cue.Cue), cue.Index);
             await _player.PlayAsync();
-            IsPlaying = true;
+            IsPlaying = _player.IsPlaying;
             _returnCue = null; OnPropertyChanged(nameof(CanReturn));
         }
     });
@@ -298,7 +346,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         await SeekCoreAsync(PlaybackNavigation.CueNavigationPosition(row.Cue), row.Index);
         _repeatEnd = row.Cue.End;
         await EnsurePlayerLoadedAsync();
-        await _player!.PlayAsync(); IsPlaying = true;
+        await _player!.PlayAsync(); IsPlaying = _player.IsPlaying;
     });
     public Task SeekAsync(double seconds) => RunAsync(async () =>
     {
@@ -309,7 +357,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         SingleSentenceLoop = !SingleSentenceLoop && ActiveCue is not null;
         await ConfigureLoopAsync();
     });
-    partial void OnSingleSentenceLoopChanged(bool value) => _ = RunAsync(ConfigureLoopAsync);
+    partial void OnSingleSentenceLoopChanged(bool value) => _ = RunAsync(ConfigureLoopAsync, showBusy: false);
     partial void OnPlaybackRateChanged(double value)
     {
         try { if (_player is not null) _player.PlaybackRate = value; }
@@ -354,11 +402,24 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         else { if (!_revealedMaterials.Add(material.Id)) _revealedMaterials.Remove(material.Id); }
         PresentationChanged?.Invoke();
     }
-    public Task PauseAsync() => RunAsync(async () =>
+    public Task PauseAsync() => PauseAsync(propagate: false);
+
+    private Task PauseAsync(bool propagate) => RunAsync(async () =>
+    {
+        ++_playbackEpoch;
+        await PauseCoreAsync();
+    }, propagate: propagate);
+    private async Task PauseCoreAsync()
     {
         if (_playerSource is not null) await _player!.PauseAsync();
         IsPlaying = false; await SaveProgressAsync();
-    });
+    }
+    private Task PauseSentenceAsync(int epoch) => RunAsync(async () =>
+    {
+        if (epoch != _playbackEpoch) return;
+        ++_playbackEpoch;
+        await PauseCoreAsync();
+    }, showBusy: false);
     public async Task RemoveSelectedAsync()
     {
         var selected = SelectedLesson;
@@ -380,6 +441,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     private async Task SeekCoreAsync(TimeSpan target, int? index = null)
     {
         IL.Core.Management.ManagedRuntime.Require("playback");
+        ++_playbackEpoch;
         _repeatEnd = null; _preroll = index;
         UpdatePosition(target);
         NavigationRequested?.Invoke();
@@ -408,18 +470,32 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         }
         finally { _switching = false; }
     }
-    private void OnPlayerChanged(object? sender, EventArgs args) => _dispatch(() =>
+    private void OnPlayerChanged(object? sender, EventArgs args)
     {
-        if (_disposed || _switching || _playerSource is null) return;
-        IsPlaying = _player!.IsPlaying;
-        UpdatePosition(_player.Position);
-        if (_player.ErrorMessage is { } error) Status = error;
-        if (_repeatEnd is { } end && _player.Position >= end)
+        if (_disposed || _switching || !ReferenceEquals(sender, _player) || Interlocked.Exchange(ref _playerUpdatePending, 1) != 0) return;
+        var source = _playerSource;
+        var generation = _generation;
+        _dispatch(() =>
         {
-            _repeatEnd = null; _ = PauseAsync();
-        }
-        if (DateTimeOffset.UtcNow - _lastProgressSave >= TimeSpan.FromSeconds(5)) _ = RunAsync(SaveProgressAsync);
-    });
+            Interlocked.Exchange(ref _playerUpdatePending, 0);
+            if (generation != _generation || source != _playerSource) return;
+            if (_disposed || _switching || _playerSource is null) return;
+            IsPlaying = _player!.IsPlaying;
+            UpdatePosition(_player.Position);
+            if (_player.ErrorMessage is { } error) Status = error;
+            if (_repeatEnd is { } end && _player.Position >= end)
+            {
+                _repeatEnd = null; _ = PauseSentenceAsync(_playbackEpoch);
+            }
+            if (!_progressSavePending && DateTimeOffset.UtcNow - _lastProgressSave >= TimeSpan.FromSeconds(5)) _ = SaveProgressInBackgroundAsync();
+        });
+    }
+    private async Task SaveProgressInBackgroundAsync()
+    {
+        _progressSavePending = true;
+        try { await RunAsync(SaveProgressAsync, showBusy: false); }
+        finally { _progressSavePending = false; }
+    }
     private void UpdatePosition(TimeSpan position)
     {
         PositionSeconds = Math.Clamp(position.TotalSeconds, 0, DurationSeconds);
@@ -451,6 +527,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     });
     private async Task CloseMediaAsync()
     {
+        ++_playbackEpoch;
         await SaveProgressAsync();
         _switching = true;
         try
@@ -467,13 +544,13 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         }
         finally { _switching = false; }
     }
-    private async Task RunAsync(Func<Task> operation, [System.Runtime.CompilerServices.CallerMemberName] string operationName = "")
+    private async Task RunAsync(Func<Task> operation, [System.Runtime.CompilerServices.CallerMemberName] string operationName = "", bool showBusy = true, bool propagate = false)
     {
         using var measurement = InteractionPerformance.Measure("player." + operationName);
         await _operations.WaitAsync();
-        try { if (!_disposed) { IsBusy = true; await operation(); } }
-        catch (Exception ex) { Status = ex.Message; }
-        finally { IsBusy = false; _operations.Release(); }
+        try { if (!_disposed) { if (showBusy) IsBusy = true; await operation(); } }
+        catch (Exception ex) when (!propagate) { Status = ex.Message; }
+        finally { if (showBusy) IsBusy = false; _operations.Release(); }
     }
     private static string FormatTime(double seconds) => TimeSpan.FromSeconds(Math.Max(0, seconds)).ToString(seconds >= 3600 ? @"h\:mm\:ss" : @"mm\:ss");
     public async ValueTask DisposeAsync()

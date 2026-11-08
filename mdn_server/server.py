@@ -195,7 +195,7 @@ def validate_policy(policy: dict):
         raise ValueError("asrProvider 无效。")
     if "themeMode" in settings and settings["themeMode"] not in ("system", "light", "dark"):
         raise ValueError("themeMode 无效。")
-    for name, bounds in {"cloudTimeoutSeconds": (30, 1800), "cloudConcurrency": (1, 10), "transcriptFontSize": (14, 28), "transcriptBlurIntensity": (1, 8), "applicationFontWeight": (100, 1000)}.items():
+    for name, bounds in {"cloudTimeoutSeconds": (30, 1800), "cloudConcurrency": (1, 10), "transcriptFontSize": (14, 28), "transcriptBlurIntensity": (1, 20), "applicationFontWeight": (100, 1000)}.items():
         if name in settings and not bounds[0] <= settings[name] <= bounds[1]:
             raise ValueError(name + " 超出允许范围。")
     if policy.get("update") is not None:
@@ -282,7 +282,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                     conn.execute("INSERT OR IGNORE INTO update_tasks VALUES(?,?,?,?,?,?)", (update["id"], row["scope"], update["version"], update["mode"], row["revision"] / 1000000, store.encode(update)))
         initialize_updates(conn, store)
     cloud_management = CloudManagement(db, store)
-    app = FastAPI(title="Intensive Listening MDN", version="2.2.0", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="Intensive Listening MDN", version="2.2.1", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=not config.get("disable_ssl", False), same_site="strict", max_age=3600)
     template_directory = expand_web(root)
     templates = Jinja2Templates(directory=str(template_directory))
@@ -961,7 +961,7 @@ def main():
     args.data = args.data.resolve()
     path = args.data / "config.bin"
     store = SecretStore()
-    print("Intensive Listening MDN 2.2.0")
+    print("Intensive Listening MDN 2.2.1")
     print("数据目录：" + str(args.data))
     if args.init and path.exists():
         raise ValueError("已有配置，初始化不会覆盖。")

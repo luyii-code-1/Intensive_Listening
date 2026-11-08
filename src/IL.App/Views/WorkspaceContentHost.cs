@@ -11,6 +11,7 @@ public sealed class WorkspaceContentHost : Grid
     public static readonly StyledProperty<object?> ContentProperty = AvaloniaProperty.Register<WorkspaceContentHost, object?>(nameof(Content));
     public object? Content { get => GetValue(ContentProperty); set => SetValue(ContentProperty, value); }
     public bool AnimateChanges { get; set; } = true;
+    internal bool AnimateBasicSwitches { get; init; }
     private sealed record Page(ContentPresenter Presenter, SpringMotion Motion);
     private readonly Dictionary<object, Page> _pages = new();
     private Page? _current;
@@ -25,15 +26,15 @@ public sealed class WorkspaceContentHost : Grid
         var previous = _current; var generation = ++_generation;
         foreach (var page in _pages.Values.Where(p => p != previous).ToArray()) { page.Motion.Stop(); Children.Remove(page.Presenter); }
         if (Content is null) { if (previous != null) { previous.Motion.Stop(); Children.Remove(previous.Presenter); } _current = null; _pages.Clear(); return; }
+        var travel = FirstRunWizard.SystemMotionReduced() ? 0 : MotionPreferences.ReducedMotion ? (AnimateBasicSwitches ? 4 : 0) : 12;
         if (!_pages.TryGetValue(Content, out var incoming))
         {
             var presenter = new ContentPresenter { Content = Content, HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch, VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Stretch };
-            var motion = new SpringMotion(presenter);
-            motion.Set(0, y: FirstRunWizard.MotionReduced() ? 0 : 12);
+            var motion = new SpringMotion(presenter, AnimateBasicSwitches);
             _pages[Content] = incoming = new(presenter, motion);
         }
         if (previous != incoming && !Children.Contains(incoming.Presenter))
-            incoming.Motion.Set(0, y: FirstRunWizard.MotionReduced() ? 0 : 12);
+            incoming.Motion.Set(0, y: travel);
         _current = incoming;
         if (!Children.Contains(incoming.Presenter)) Children.Add(incoming.Presenter);
         incoming.Presenter.IsHitTestVisible = true;
@@ -44,7 +45,7 @@ public sealed class WorkspaceContentHost : Grid
             if (previous != null) { previous.Motion.Stop(); Children.Remove(previous.Presenter); }
             Prune(); return;
         }
-        if (previous != null) { previous.Presenter.IsHitTestVisible = false; _ = previous.Motion.To(0, y: -12); }
+        if (previous != null) { previous.Presenter.IsHitTestVisible = false; _ = previous.Motion.To(0, y: -travel); }
         _ = CompleteAsync(incoming, generation);
     }
     private async Task CompleteAsync(Page incoming, long generation)

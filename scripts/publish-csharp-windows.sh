@@ -15,6 +15,8 @@ if [[ "${OS:-}" == Windows_NT ]]; then
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-published-xaml.ps1 -RuntimeDirectory "$output"
 fi
 dotnet publish src/IL.Launcher/IL.Launcher.csproj -c Release -r win-x64 --self-contained true -o artifacts/build/launcher --nologo
+dotnet publish tools/IL.MdnRestore/IL.MdnRestore.csproj -c Release -r win-x64 --self-contained true -o artifacts/build/mdn-restore --nologo
+cp artifacts/build/mdn-restore/IL.MdnRestore.exe "$output/tools/IL.MdnRestore.exe"
 cp artifacts/version/build.json "$output/build-info.json"
 cp artifacts/build/launcher/lesson_player_launcher.exe "$output/tools/lesson_player_launcher.exe"
 ffmpeg="third_party/ffmpeg/ffmpeg.exe"
@@ -53,7 +55,7 @@ with zipfile.ZipFile('artifacts/native/AlibabaCloud_RUM_Windows.zip') as z:
     pathlib.Path(sys.argv[1],'alibabacloud_rum.dll').write_bytes(data)
 root=pathlib.Path(sys.argv[1])
 (root/'installation-id.txt').write_text(str(uuid.uuid4()))
-for relative in ['IL.App.exe','libvlc/win-x64/libvlc.dll','libvlc/win-x64/libvlccore.dll','tools/lesson_player_launcher.exe','ffmpeg.exe','assets/legal/eula_zh_cn.txt','assets/legal/privacy_zh_cn.txt']:
+for relative in ['IL.App.exe','libvlc/win-x64/libvlc.dll','libvlc/win-x64/libvlccore.dll','tools/lesson_player_launcher.exe','tools/IL.MdnRestore.exe','ffmpeg.exe','assets/legal/eula_zh_cn.txt','assets/legal/privacy_zh_cn.txt']:
     assert (root/relative).is_file(),f'Missing runtime dependency: {relative}'
 assert (root/'libvlc/win-x64/plugins').is_dir(),'Missing VLC plugins'
 manifest={str(p.relative_to(root)).replace('\\','/'):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and p.name!='manifest.json'}

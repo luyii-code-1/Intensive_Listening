@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Platform;
 using IL.Core.Infrastructure;
+using IL.App.Views;
 
 namespace IL.App.Services;
 
@@ -62,7 +63,16 @@ public sealed class DesktopResidence : IDisposable
     private async Task StopAsync(bool closeWindow)
     {
         _exiting = true;
-        try { await SaveAsync(); await _stop(); }
+        try { await _save(); }
+        catch (Exception error)
+        {
+            _exiting = false;
+            AppLog.Warning("保存失败，已取消退出", error);
+            Restore();
+            WorkspaceToast.Show(_window, "未退出应用", "草稿保存失败，请检查磁盘或文件占用后重试。" + error.Message, true);
+            return;
+        }
+        try { await _stop(); }
         catch (Exception error) { AppLog.Warning("退出时保存服务状态失败", error); }
         finally
         {

@@ -2,6 +2,21 @@ namespace IL.Core.Settings;
 
 public static class InstallationOnboarding
 {
+    public const string LicenseVersion = "2026-09-22";
+
+    public static AppSettings RecommendedSettings(AppSettings initial) => initial with
+    {
+        EulaAcceptedVersion = LicenseVersion,
+        FileAssociationEnabled = true,
+        FileAssociationPrompted = true,
+        CloudServiceEnabled = false,
+        McpEnabled = false,
+        TelemetryEnabled = true,
+        TelemetryPrompted = true,
+        SkipOpeningPrompts = true,
+        CreateProjectOnAudioImport = true,
+    };
+
     public static void Prepare(string root, bool hasPersonalSettings)
     {
         if (hasPersonalSettings) return;

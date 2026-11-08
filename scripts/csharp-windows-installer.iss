@@ -39,6 +39,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 LicenseFile=..\assets\legal\eula_zh_cn.txt
 [Files]
+Source: "{#ReleaseDirectory}\tools\IL.MdnRestore.exe"; Flags: dontcopy noencryption
 Source: "{#ReleaseDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Dirs]
 Name: "{app}"; BeforeInstall: VerifyDirectoryCleanup
@@ -68,9 +69,44 @@ begin
   Result := ExpandConstant('{param:MDNDATA|{localappdata}\Intensive Listening\data}');
 end;
 
+function RestoreMdnRequested: Boolean;
+var I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '--restoremdn') = 0 then Result := True;
+end;
+
+procedure RestoreMdnOnly;
+var Parameters, DataDirectory, Message: String;
+    ResultCode: Integer;
+begin
+  ExtractTemporaryFile('IL.MdnRestore.exe');
+  DataDirectory := ExpandConstant('{param:MDNDATA|}');
+  Parameters := '';
+  if DataDirectory <> '' then Parameters := '"' + DataDirectory + '"';
+  if not ExecAsOriginalUser(ExpandConstant('{tmp}\IL.MdnRestore.exe'), Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('无法启动集控状态清除工具。');
+  case ResultCode of
+    0: Message := '集控状态已清除。课程、工程、个人设置和设备 UUID 已保留。';
+    10: Message := '组织已锁定集控，无法清除。原有集控状态已保留。';
+    11: Message := '无法核验组织策略缓存，未清除集控状态。请联系组织管理员。';
+    12: Message := '请完全退出 Intensive Listening 后再清除集控状态。';
+  else
+    Message := '集控状态清除失败，请检查数据目录和访问权限。';
+  end;
+  Log(Message);
+  if not WizardSilent then MsgBox(Message, mbInformation, MB_OK);
+end;
+
 function InitializeSetup: Boolean;
 var Source, Target: String;
 begin
+  if RestoreMdnRequested then begin
+    Result := False;
+    RestoreMdnOnly;
+    Exit;
+  end;
   Result := True;
   Source := ExpandConstant('{src}\il_precfg.yaml');
   if FileExists(Source) then begin

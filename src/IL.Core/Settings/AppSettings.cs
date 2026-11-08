@@ -4,10 +4,12 @@ using IL.Core.Infrastructure;
 
 namespace IL.Core.Settings;
 
+public enum AnimationLevel { Full, Reduced, Off }
 public enum AsrProviderKind { Cloud, Local }
 public enum AsrServiceMode { Api, CloudService }
 public sealed record AppSettings
 {
+    public AnimationLevel AnimationLevel { get; init; } = AnimationLevel.Full;
     public bool PerformanceMode { get; init; }
     public bool DisableAnimationWaiting { get; init; } = true;
     public bool PerformanceAnalysisEnabled { get; init; } = true;
@@ -34,7 +36,7 @@ public sealed record AppSettings
     public bool SkipOpeningPrompts { get; init; } = true;
     public bool CreateProjectOnAudioImport { get; init; } = true;
     public int TranscriptFontSize { get; init; } = 18;
-    public const int MinTranscriptBlurIntensity = 1, MaxTranscriptBlurIntensity = 8;
+    public const int MinTranscriptBlurIntensity = 1, MaxTranscriptBlurIntensity = 20;
     public int TranscriptBlurIntensity { get; init; } = MaxTranscriptBlurIntensity;
     public IReadOnlyDictionary<PlayerShortcutAction, string> PlayerKeyBindings { get; init; } = DefaultPlayerBindings(new Dictionary<PlayerShortcutAction, string>());
     public bool DebugLogging { get; init; }
@@ -55,6 +57,8 @@ public sealed record AppSettings
     public bool NeedsOnboarding(string installationId) => EulaAcceptedVersion.Length == 0 || (!string.IsNullOrWhiteSpace(installationId) && CompletedInstallationId != installationId);
     public static AppSettings FromJson(JsonObject j) => new()
     {
+        AnimationLevel = String(j, "animationLevel", Bool(j, "performanceMode") ? "off" : "full") switch
+        { "reduced" => AnimationLevel.Reduced, "off" => AnimationLevel.Off, _ => AnimationLevel.Full },
         PerformanceMode = Bool(j, "performanceMode"),
         DisableAnimationWaiting = Bool(j, "disableAnimationWaiting", true),
         PerformanceAnalysisEnabled = Bool(j, "performanceAnalysisEnabled", true),

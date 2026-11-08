@@ -754,10 +754,10 @@ class ManagementTests(unittest.TestCase):
 
     def test_blur_policy_accepts_range_and_locks_shared_setting(self):
         csrf = self.login()
-        for value in (1, 8):
+        for value in (1, 8, 9, 20):
             self.assertEqual(self.save("all", {"settings":{"transcriptBlurIntensity":value}}, csrf).status_code, 200)
             self.assertEqual(self.client.get("/api/policy", headers=self.headers).json()["settings"]["transcriptBlurIntensity"], value)
-        for value in (0, 9):
+        for value in (0, 21):
             self.assertEqual(self.save("all", {"settings":{"transcriptBlurIntensity":value}}, csrf).status_code, 422)
         legacy = self.client.get("/api/policy", headers={"Authorization":"Bearer " + self.token}).json()
         self.assertNotIn("transcriptBlurIntensity", legacy["settings"])

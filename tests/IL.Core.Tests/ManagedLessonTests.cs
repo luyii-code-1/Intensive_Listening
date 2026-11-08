@@ -144,7 +144,7 @@ public sealed class ManagedLessonTests : IDisposable
         foreach (var value in new[] { AppSettings.MinTranscriptBlurIntensity, AppSettings.MaxTranscriptBlurIntensity })
         { await store.SaveAsync(AppSettings.Defaults() with { TranscriptBlurIntensity = value }); Assert.Equal(value, (await store.LoadAsync()).TranscriptBlurIntensity); }
         Assert.Equal(1, AppSettings.FromJson(new JsonObject { ["transcriptBlurIntensity"] = 0 }).TranscriptBlurIntensity);
-        Assert.Equal(8, AppSettings.FromJson(new JsonObject { ["transcriptBlurIntensity"] = 999 }).TranscriptBlurIntensity);
+        Assert.Equal(20, AppSettings.FromJson(new JsonObject { ["transcriptBlurIntensity"] = 999 }).TranscriptBlurIntensity);
     }
     public void Dispose() { _rsa.Dispose(); Directory.Delete(_root, true); }
 }

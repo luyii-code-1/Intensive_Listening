@@ -43,20 +43,9 @@ public sealed class CourseProjectStore(string? root=null)
         try
         {
         var directory=DirectoryFor(project.Id);Directory.CreateDirectory(directory);var destination=Path.Combine(directory,"audio"+Path.GetExtension(source).ToLowerInvariant());
-        if(!string.Equals(Path.GetFullPath(source),Path.GetFullPath(destination),OperatingSystem.IsWindows()?StringComparison.OrdinalIgnoreCase:StringComparison.Ordinal))
-        {
-            var temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
-            {
-                await using (var input=File.OpenRead(source))
-                await using (var output=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None))
-                    await input.CopyToAsync(output,ct);
-                ct.ThrowIfCancellationRequested(); File.Move(temporary,destination,true);
-            }
-            finally { TryDeleteTemporary(temporary); }
-        }
+        var replacementAudio = string.Equals(Path.GetFullPath(source), Path.GetFullPath(destination), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) ? null : source;
         var updated=project with{Title=project.Title=="未命名项目"?Path.GetFileNameWithoutExtension(source):project.Title,AudioPath=destination,AudioDuration=duration,Step=CourseProjectStep.Transcription,TranscriptionJobId=null,Transcript="",ReviewPhase=ReviewPhase.Grouping,Exercises=LessonExercises.Empty,AutomaticQuestionPlanApplied=false,AutoQuestionPlanDeferred=false,UpdatedAt=DateTimeOffset.Now};
-        await SaveCoreAsync(updated,ct);return updated;
+        await SaveCoreAsync(updated,ct,replacementAudio);return updated;
         }
         finally { _io.Release(); }
     }
@@ -75,20 +64,23 @@ public sealed class CourseProjectStore(string? root=null)
         }
         finally { _io.Release(); }
     }
-    private async Task SaveCoreAsync(CourseProject project,CancellationToken ct)
+    private async Task SaveCoreAsync(CourseProject project,CancellationToken ct,string? replacementAudio=null)
     {
         var directory=DirectoryFor(project.Id);Directory.CreateDirectory(directory);
-        var transcript = Path.Combine(directory,"transcript.srt"); var metadata = Path.Combine(directory,"project.json");
-        var suffix = "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
+        var changes = new List<(string Path, byte[]? Content)>
         {
-            await File.WriteAllTextAsync(transcript+suffix,project.Transcript,new UTF8Encoding(false),ct);
-            await File.WriteAllTextAsync(metadata+suffix,JsonSerializer.Serialize(project.ToMetadata(),JsonOptions),ct);
-            ct.ThrowIfCancellationRequested();
-            File.Move(transcript+suffix,transcript,true); File.Move(metadata+suffix,metadata,true);
+            ("transcript.srt", Encoding.UTF8.GetBytes(project.Transcript)),
+            ("project.json", JsonSerializer.SerializeToUtf8Bytes(project.ToMetadata(), JsonOptions))
+        };
+        Dictionary<string, string>? sources = null;
+        if (replacementAudio is not null)
+        {
+            var audioName = Path.GetFileName(project.AudioPath!);
+            changes.Add((audioName, null)); sources = new() { [audioName] = replacementAudio };
         }
-        finally { TryDeleteTemporary(transcript+suffix); TryDeleteTemporary(metadata+suffix); }
+        await Task.Run(() => RecoverableFileBatch.Apply(directory, ".project-save", changes, ct, sources), ct);
     }
+
     private static void TryDeleteTemporary(string path)
     {
         try { File.Delete(path); }
@@ -98,6 +90,8 @@ public sealed class CourseProjectStore(string? root=null)
     {
         try
         {
+            if (Directory.Exists(Path.Combine(directory, ".project-save")))
+                await Task.Run(() => RecoverableFileBatch.Recover(directory, ".project-save"), ct);
             var metadata=Path.Combine(directory,"project.json");if(!File.Exists(metadata))return null;
             using var json=JsonDocument.Parse(await File.ReadAllTextAsync(metadata,ct));var value=json.RootElement;
             if(!value.TryGetProperty("version",out var version)||version.GetInt32() is not (1 or 2))return null;
@@ -142,7 +136,7 @@ public sealed class CourseProjectStore(string? root=null)
             var comparison = OperatingSystem.IsWindows()?StringComparison.OrdinalIgnoreCase:StringComparison.Ordinal;
             if (output is FileStream writing && string.Equals(Path.GetFullPath(file),Path.GetFullPath(writing.Name),comparison) ||
                 destinationFile != null && string.Equals(Path.GetFullPath(file),Path.GetFullPath(destinationFile),comparison)) continue;
-            var relative=Path.GetRelativePath(directory,file).Replace('\\','/');if(relative is "project.json" or "transcript.srt")continue;
+            var relative=Path.GetRelativePath(directory,file).Replace('\\','/');if(relative.StartsWith(".project-save/",StringComparison.Ordinal))continue;if(relative is "project.json" or "transcript.srt")continue;
             if((File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)continue;
             await using var source=File.OpenRead(file);await using var entry=zip.CreateEntry("project/"+relative).Open();await source.CopyToAsync(entry,ct);
         }
@@ -154,9 +148,10 @@ public sealed class CourseProjectStore(string? root=null)
         {
             using var zip=ZipFile.OpenRead(source);var descriptor=zip.GetEntry("project-export.json")??throw new CourseProjectArchiveException("ZIP 中缺少工程描述文件");
             var metadataEntry=zip.GetEntry("project/project.json")??throw new CourseProjectArchiveException("ZIP 中缺少工程描述文件");
-            using var descriptorStream=descriptor.Open();using var descriptorJson=await JsonDocument.ParseAsync(descriptorStream,cancellationToken:ct);
+            await IL.Core.Ilp.ArchiveSafety.ValidateAsync(zip,2L*1024*1024*1024,ct);
+            using var descriptorStream=IL.Core.Ilp.ArchiveSafety.OpenRead(descriptor,2*1024*1024);using var descriptorJson=await JsonDocument.ParseAsync(descriptorStream,cancellationToken:ct);
             var desc=descriptorJson.RootElement;if(!desc.TryGetProperty("format",out var format)||format.GetString()!="intensive-listening-project"||!desc.TryGetProperty("version",out var version)||version.GetInt32()!=1)throw new CourseProjectArchiveException("工程 ZIP 版本不受支持");
-            using var metadataStream=metadataEntry.Open();using var metadata=await JsonDocument.ParseAsync(metadataStream,cancellationToken:ct);
+            using var metadataStream=IL.Core.Ilp.ArchiveSafety.OpenRead(metadataEntry,2*1024*1024);using var metadata=await JsonDocument.ParseAsync(metadataStream,cancellationToken:ct);
             var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);Directory.CreateDirectory(destination);
             foreach(var entry in zip.Entries)
             {
@@ -165,7 +160,8 @@ public sealed class CourseProjectStore(string? root=null)
                 if(relative.Contains('\\')||relative.Contains(':')||relative.StartsWith('/')||relative.Split('/').Any(p=>p is ".." or ".")||((entry.ExternalAttributes>>16)&0xf000)==0xa000)throw new CourseProjectArchiveException("工程 ZIP 包含不安全路径");
                 var output=Path.GetFullPath(Path.Combine(destination,relative));if(!output.StartsWith(destination+Path.DirectorySeparatorChar,StringComparison.Ordinal)||!seen.Add(output))throw new CourseProjectArchiveException("工程 ZIP 包含不安全路径");
                 if(entry.Name.Length==0){Directory.CreateDirectory(output);continue;}Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-                await using var input=entry.Open();await using var file=File.Create(output);await input.CopyToAsync(file,ct);
+                var textEntry=Path.GetExtension(relative).ToLowerInvariant() is ".srt" or ".txt" or ".json";
+                await using var input=IL.Core.Ilp.ArchiveSafety.OpenRead(entry,textEntry?2*1024*1024:2L*1024*1024*1024);await using var file=File.Create(output);await input.CopyToAsync(file,ct);
             }
             var transcriptFile=Path.Combine(destination,"transcript.srt");var project=CourseProject.FromMetadata(metadata.RootElement,File.Exists(transcriptFile)?await File.ReadAllTextAsync(transcriptFile,ct):"");
             var now=DateTimeOffset.Now;string? audio=null;if(project.HasAudio){audio=Path.Combine(destination,Path.GetFileName(project.AudioPath!));if(!File.Exists(audio))throw new CourseProjectArchiveException("工程 ZIP 缺少绑定的音频文件");}

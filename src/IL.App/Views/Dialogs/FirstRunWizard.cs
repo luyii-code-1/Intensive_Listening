@@ -31,6 +31,7 @@ internal sealed class FirstRunWizard : Border
     private IReadOnlyDictionary<PlayerShortcutAction, string> _bindings;
     private CancellationTokenSource? _transition;
     private Button? _licenseNext;
+    private StackPanel? _quickSetup;
     private WelcomeIntro? _intro;
     private int _visibleStep = -1;
     private bool _attached, _introduced;
@@ -183,8 +184,8 @@ internal sealed class FirstRunWizard : Border
     private void Next()
     {
         if ((_step == 1 || _welcomeOnly) && (!_accepted || !_privateAccepted)) return;
-        if (_welcomeOnly) { _finish(_initial with { EulaAcceptedVersion = _initial.EulaAcceptedVersion.Length == 0 ? "2026-09-22" : _initial.EulaAcceptedVersion }); return; }
-        if (_step == 7) { _finish(_initial with { EulaAcceptedVersion = "2026-09-22", FileAssociationEnabled = _association, FileAssociationPrompted = true, McpEnabled = _mcp, SkipOpeningPrompts = _skip, CreateProjectOnAudioImport = _createProject, TelemetryEnabled = _telemetry, TelemetryPrompted = true, TranscriptFontSize = _font, ThemeMode = _theme, PlayerKeyBindings = _bindings, CloudApiKey = _key.Trim(), CloudServiceEnabled = _cloudEnabled, AsrServiceMode = _useCloudAsr ? AsrServiceMode.CloudService : AsrServiceMode.Api }); return; }
+        if (_welcomeOnly) { _finish(_initial with { EulaAcceptedVersion = _initial.EulaAcceptedVersion.Length == 0 ? InstallationOnboarding.LicenseVersion : _initial.EulaAcceptedVersion }); return; }
+        if (_step == 7) { _finish(_initial with { EulaAcceptedVersion = InstallationOnboarding.LicenseVersion, FileAssociationEnabled = _association, FileAssociationPrompted = true, McpEnabled = _mcp, SkipOpeningPrompts = _skip, CreateProjectOnAudioImport = _createProject, TelemetryEnabled = _telemetry, TelemetryPrompted = true, TranscriptFontSize = _font, ThemeMode = _theme, PlayerKeyBindings = _bindings, CloudApiKey = _key.Trim(), CloudServiceEnabled = _cloudEnabled, AsrServiceMode = _useCloudAsr ? AsrServiceMode.CloudService : AsrServiceMode.Api }); return; }
         _step++; Render();
     }
     private CheckBox Consent(string document, string text, bool value, Action<bool> set)
@@ -216,7 +217,18 @@ internal sealed class FirstRunWizard : Border
             case 1:
                 body = Page("同意许可条款", "请先阅读并确认用户协议与隐私说明。");
                 body.Children.Add(Consent("用户协议", _agreement, _accepted, value => _accepted = value));
-                body.Children.Add(Consent("隐私说明", _privacy, _privateAccepted, value => _privateAccepted = value)); break;
+                body.Children.Add(Consent("隐私说明", _privacy, _privateAccepted, value => _privateAccepted = value));
+                var recommended = new Button { Content = "我是老师/学生，一键使用推荐设置", Name = "OobeQuickSetup", HorizontalAlignment = HorizontalAlignment.Center };
+                recommended.Classes.Add("accent");
+                recommended.Click += (_, _) =>
+                {
+                    if (_step == 1 && _accepted && _privateAccepted) _finish(InstallationOnboarding.RecommendedSettings(_initial));
+                };
+                _quickSetup = new StackPanel { IsVisible = _accepted && _privateAccepted, Spacing = 6, Margin = new Thickness(0, 16, 0, 0) };
+                _quickSetup.Children.Add(recommended);
+                _quickSetup.Children.Add(CenterText("推荐设置会开启匿名数据分析，可稍后在设置中调整。", 12));
+                body.Children.Add(_quickSetup);
+                break;
             case 2:
                 body = Page("基本设置", "选择文件打开方式、制作接口和播放习惯。");
                 body.Children.Add(Card("open_file", "关联 .ilp 文件", "双击精听包即可在应用中打开。", Toggle(_association, value => _association = value)));
@@ -364,11 +376,16 @@ internal sealed class FirstRunWizard : Border
         if (current is not null) { Normalize(current); _page.Children.Add(current); }
     }
     private void UpdateGate()
-    { if (_licenseNext is not null) _licenseNext.IsEnabled = _accepted && _privateAccepted; }
-
-    internal static bool MotionReduced()
     {
-        if (MotionPreferences.PerformanceMode) return true;
+        var accepted = _accepted && _privateAccepted;
+        if (_licenseNext is not null) _licenseNext.IsEnabled = accepted;
+        if (_quickSetup is not null) _quickSetup.IsVisible = accepted;
+    }
+
+    internal static bool MotionReduced() => MotionPreferences.ReducedMotion || SystemMotionReduced();
+
+    internal static bool SystemMotionReduced()
+    {
         if (ReducedMotionOverride is { } preference) return preference();
         if (OperatingSystem.IsWindows()) return SystemParametersInfo(0x1042, 0, out var enabled, 0) && !enabled;
         if (OperatingSystem.IsMacOS())

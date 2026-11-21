@@ -16,7 +16,39 @@ public static class AppLog
         else LiveDiagnostics.Record("INFO", category, message);
     }
     public static void Notice(string title,string message,bool isWarning=false,bool isError=false) { if (isError || Regex.IsMatch(title,"失败|无法|错误|未完成|未更新")) Error($"{title}: {message}"); else if (isWarning || Regex.IsMatch(title,"警告|未绑定")) Warning($"{title}: {message}"); }
-    public static async Task WriteAsync(string level,string message,Exception? exception=null,string category="app") { var entry=LiveDiagnostics.Record(level,category,message+(exception is null ? "" : "\n"+exception)); await Gate.WaitAsync(); try { await File.AppendAllTextAsync(Path.Combine(DirectoryPath,$"{entry.Time:yyyy-MM-dd}.log"),entry+"\n"); } catch (Exception e) when(e is IOException or UnauthorizedAccessException) { } finally { Gate.Release(); } }
-    public static async Task<long> ClearAsync() { if (!DebugEnabled) await RuntimeDiagnostics.Completion; await Gate.WaitAsync(); try { long size=0; foreach(var path in Directory.EnumerateFiles(DirectoryPath,"*.log")) { if (DebugEnabled && string.Equals(path,RuntimeDiagnostics.SessionLogPath,StringComparison.OrdinalIgnoreCase)) continue; size+=new FileInfo(path).Length; File.Delete(path); } return size; } finally { Gate.Release(); } }
+    public static async Task WriteAsync(string level, string message, Exception? exception = null, string category = "app")
+    {
+        var entry = LiveDiagnostics.Record(level, category, message + (exception is null ? "" : "\n" + exception));
+        await Gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await Task.Run(() => LogFileStorage.Append(Path.Combine(DirectoryPath, $"{entry.Time:yyyy-MM-dd}.log"), entry.ToString())).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        finally { Gate.Release(); }
+    }
+
+    public static async Task<long> ClearAsync()
+    {
+        if (!DebugEnabled) await RuntimeDiagnostics.Completion.ConfigureAwait(false);
+        await Gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var directory = DirectoryPath;
+            return await Task.Run(() => LogFileStorage.WithDirectoryLock(directory, () =>
+            {
+                long size = 0;
+                foreach (var file in new DirectoryInfo(directory).EnumerateFiles("*.log"))
+                {
+                    if (DebugEnabled && string.Equals(file.FullName, RuntimeDiagnostics.SessionLogPath, StringComparison.OrdinalIgnoreCase)) continue;
+                    var length = file.Length;
+                    file.Delete();
+                    size += length;
+                }
+                return size;
+            })).ConfigureAwait(false);
+        }
+        finally { Gate.Release(); }
+    }
     public static void Install() { AppDomain.CurrentDomain.UnhandledException += (_,e)=>Error(e.ExceptionObject.ToString()??"Unhandled exception",e.ExceptionObject as Exception); TaskScheduler.UnobservedTaskException += (_,e)=>Error(e.Exception.Message,e.Exception); }
 }

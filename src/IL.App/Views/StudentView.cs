@@ -748,7 +748,17 @@ public sealed class StudentView : UserControl
     private async Task PickLessonAsync()
     {
         var owner = WorkspaceUi.Owner(this);
-        var list = new ListBox { ItemsSource = _vm.Lessons, ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<LessonListItem>((item, _) => WorkspaceUi.Stack(Text(item!.Title), Text($"{FormatTime(item.Lesson.Manifest.Duration)} · {item.Lesson.Cues.Count} 句", 12))), Height = 360, Width = 420 };
+        var list = new ListBox { ItemsSource = _vm.Lessons, ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<LessonListItem>((item, _) =>
+        {
+            var duration = FormatTime(item!.Lesson.Manifest.Duration);
+            var detail = Text(duration, 12);
+            detail.AttachedToVisualTree += async (_, _) =>
+            {
+                var count = await item.GetCueCountAsync();
+                detail.Text = count.HasValue ? $"{duration} · {count} 句" : $"{duration} · 字幕无法读取";
+            };
+            return WorkspaceUi.Stack(Text(item.Title), detail);
+        }), Height = 360, Width = 420 };
         var dialog = AppDialogs.Create(owner, "打开课程", list, 468); dialog.CloseButtonText = "关闭";
         list.SelectionChanged += async (_, _) => { if (list.SelectedItem is LessonListItem lesson) { dialog.Hide(); await _vm.OpenLessonAsync(lesson); } };
         await dialog.ShowAsync(owner);

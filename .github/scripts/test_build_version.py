@@ -47,6 +47,15 @@ class BuildVersionTests(unittest.TestCase):
             with patch.object(version, 'github', return_value=current):
                 self.assertEqual(('20261021', 1), version.ci_stamp('release'))
 
+    def test_ci_waits_for_day_listing_to_include_current_run(self):
+        current = dict(id=40, workflow_id=1, created_at='2026-10-20T16:10:00Z', display_title='Desktop insider')
+        previous = dict(current, id=39)
+        replies = [current, {'workflow_runs': [previous]}, {'workflow_runs': [current, previous]}]
+        with patch.dict(version.os.environ, GITHUB_REPOSITORY='owner/repo', GITHUB_RUN_ID='40'):
+            with patch.object(version, 'github', side_effect=replies), patch.object(version.time, 'sleep') as sleep:
+                self.assertEqual(('20261021', 2), version.ci_stamp())
+                sleep.assert_called_once_with(1)
+
     def test_prepare_and_reuse_preserve_build_identity(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)

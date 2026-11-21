@@ -50,9 +50,14 @@ internal static class Program
         if (watch >= 0) return CrashMonitor.WatchAsync(args[watch + 1]).GetAwaiter().GetResult();
         var report = Array.IndexOf(args, "--crash-report");
         if (report >= 0) { CrashMonitor.SetReportPath(args[report + 1]); return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args); }
-        using var instance = OperatingSystem.IsWindows() && !args.Contains("--standalone") ? SingleInstanceSession.Acquire(SingleInstanceSession.ApplicationName) : null;
-        if (OperatingSystem.IsWindows() && !args.Contains("--standalone") && instance == null)
-            return SingleInstanceSession.NotifyAsync(SingleInstanceSession.ApplicationName, args).GetAwaiter().GetResult() ? 0 : 1;
+        var instanceName = OperatingSystem.IsWindows() ? SingleInstanceSession.ApplicationName : null;
+        using var instance = instanceName is null ? null : SingleInstanceSession.Acquire(instanceName);
+        if (instanceName is not null && instance is null)
+        {
+            // A repeated standalone launch brings the current lesson back with its playback intact.
+            var activation = args.Contains("--standalone") ? Array.Empty<string>() : args;
+            return SingleInstanceSession.NotifyAsync(instanceName, activation).GetAwaiter().GetResult() ? 0 : 1;
+        }
         Instance = instance;
         CrashMonitor.Start();
         try

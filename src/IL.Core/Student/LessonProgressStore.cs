@@ -15,13 +15,13 @@ public sealed class LessonProgressStore(string? path = null)
     private string FilePath => path ?? Path.Combine(AppDirectories.DataDirectory(), "lesson_progress.json");
     public async Task<Dictionary<string, LessonProgress>> LoadAsync(CancellationToken ct = default)
     {
-        if (!File.Exists(FilePath)) return [];
         try
         {
             using var json = JsonDocument.Parse(await File.ReadAllTextAsync(FilePath, ct));
             var root = json.RootElement;
             if (!root.TryGetProperty("version", out var version) || !version.TryGetInt32(out var number) || number != 1
-                || !root.TryGetProperty("records", out var records) || records.ValueKind != JsonValueKind.Array) return [];
+                || !root.TryGetProperty("records", out var records) || records.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("学习记录格式或版本无法识别。");
             var result = new Dictionary<string, LessonProgress>();
             foreach (var record in records.EnumerateArray())
             {
@@ -42,7 +42,12 @@ public sealed class LessonProgressStore(string? path = null)
             }
             return result;
         }
-        catch (Exception ex) when (ex is JsonException or IOException or InvalidOperationException) { return []; }
+        catch (FileNotFoundException) { return []; }
+        catch (DirectoryNotFoundException) { return []; }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            throw new InvalidDataException("学习记录格式无法识别。", ex);
+        }
     }
     public async Task SaveAsync(IReadOnlyDictionary<string, LessonProgress> records, CancellationToken ct = default)
     {

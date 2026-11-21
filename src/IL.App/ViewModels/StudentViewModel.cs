@@ -10,11 +10,20 @@ using IL.Core.Student;
 
 namespace IL.App.ViewModels;
 
-public sealed record LessonListItem(ImportedLesson Lesson)
+public sealed class LessonListItem(LessonRef lesson)
 {
+    public LessonRef Lesson { get; } = lesson;
     public string Id => Lesson.Id;
     public string Title => Lesson.Manifest.Title;
     public string Detail => $"{Lesson.Manifest.Duration:mm\\:ss} · v{Lesson.Manifest.PackageVersion}";
+    private Task<int?>? _cueCount;
+    public Task<int?> GetCueCountAsync() => _cueCount ??= ReadCueCountAsync();
+
+    private async Task<int?> ReadCueCountAsync()
+    {
+        try { return await IlpLibrary.ReadCueCountAsync(Lesson); }
+        catch (Exception ex) when (ex is IlpException or IOException or UnauthorizedAccessException) { return null; }
+    }
 }
 public sealed record CueRow(int Index, SrtCue Cue)
 {
@@ -32,6 +41,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     private readonly AppSettingsStore _settings;
     private readonly SemaphoreSlim _operations = new(1, 1);
     private Dictionary<string, LessonProgress> _progress = [];
+    private bool _progressLoaded;
     private HashSet<string> _revealed = [];
     private readonly HashSet<string> _revealedMaterials = [], _hiddenMaterials = [];
     private IAudioPlayer? _player;
@@ -98,12 +108,13 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         var item = value;
         SelectLesson(item);
     }
-    private void SelectLesson(LessonListItem? item)
+    private void SelectLesson(LessonListItem? item, string? expectedFingerprint = null)
     {
         var generation = ++_generation;
         CurrentLoad = RunAsync(async () =>
         {
             if (generation != _generation) return;
+            if (item is not null) await EnsureProgressLoadedAsync();
             await CloseMediaAsync();
             if (item is null) { Title = "精听"; return; }
             _switching = true;
@@ -111,6 +122,8 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
             {
                 var lesson = await _library.LoadByIdAsync(item.Id) ?? throw new IOException("课程文件缺失或完整性校验失败");
                 if (generation != _generation) return;
+                if (expectedFingerprint is not null && lesson.Manifest.ContentFingerprint() != expectedFingerprint)
+                    throw new IOException("本地课程内容已变更，请刷新云端课程。");
                 _lesson = lesson; _audioPath = lesson.AudioPath;
                 Title = lesson.Manifest.Title;
                 DurationSeconds = lesson.Manifest.Duration.TotalSeconds;
@@ -136,30 +149,39 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
             }
             catch
             {
-                await CloseMediaAsync();
+                await CloseMediaAsync(saveProgress: false);
                 throw;
             }
             finally { _switching = false; OnPropertyChanged(nameof(CanPlay)); }
-        });
+        }, propagate: expectedFingerprint is not null);
     }
 
     public async Task RefreshAsync(bool preservePlayback = false)
     {
+        string? progressError = null;
         try
         {
-            await SaveProgressAsync();
-            _progress = await _progressStore.LoadAsync();
+            await RunAsync(async () =>
+            {
+                await EnsureProgressLoadedAsync();
+                await SaveProgressAsync();
+            }, showBusy: false, propagate: true);
+        }
+        catch (Exception ex) { progressError = $"读取或保存学习记录失败：{ex.Message}"; }
+        try
+        {
             var id = SelectedLesson?.Id;
-            var loaded = await _library.LoadAsync();
+            var loaded = await _library.LoadIndexAsync();
             if (preservePlayback) _clearingSelection = true;
             try { Lessons.Clear(); foreach (var lesson in loaded.Lessons) Lessons.Add(new(lesson)); SelectedLesson = Lessons.FirstOrDefault(x => x.Id == id); }
             finally { _clearingSelection = false; }
             if (!preservePlayback) await CurrentLoad;
             if (loaded.Issues.Count > 0) Status = $"{loaded.Issues.Count} 个课程无法读取";
+            if (progressError is not null) Status = progressError;
         }
         catch (Exception ex) { Status = $"读取课库失败：{ex.Message}"; }
     }
-    public Task<IlpManifest> ReadManifestAsync(string file) => _importer.ReadManifestAsync(file);
+    public Task<IlpManifest> ReadManifestAsync(string file) => _importer.PreviewManifestAsync(file);
 
     internal async Task OpenIlpFromFileAsync(string file)
     {
@@ -217,7 +239,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
                 }
                 finally { _switching = false; }
             }
-            imported = await _importer.ImportFileAsync(file, replace, title);
+            imported = await Task.Run(() => _importer.ImportFileAsync(file, replace, title));
         }, propagate: true);
         if (imported is null) return;
         await RefreshAsync(preservePlayback: true);
@@ -264,6 +286,15 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     {
         if (ReferenceEquals(SelectedLesson, item)) SelectLesson(item);
         else SelectedLesson = item;
+        return CurrentLoad;
+    }
+
+    public Task OpenCloudCopyAsync(LessonListItem item, string expectedFingerprint)
+    {
+        _clearingSelection = true;
+        try { SelectedLesson = item; }
+        finally { _clearingSelection = false; }
+        SelectLesson(item, expectedFingerprint);
         return CurrentLoad;
     }
 
@@ -426,6 +457,7 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         if (selected is null) return;
         await RunAsync(async () =>
         {
+            await EnsureProgressLoadedAsync();
             await CloseMediaAsync();
             await _library.RemoveAsync(selected.Id);
             _progress.Remove(selected.Id);
@@ -435,7 +467,14 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
     }
     public async Task RemoveByIdAsync(string id)
     {
-        await RunAsync(async () => { await _library.RemoveAsync(id); _progress.Remove(id); await _progressStore.SaveAsync(_progress); });
+        await RunAsync(async () =>
+        {
+            await EnsureProgressLoadedAsync();
+            if (_lesson?.Id == id) await CloseMediaAsync();
+            await _library.RemoveAsync(id);
+            _progress.Remove(id);
+            await _progressStore.SaveAsync(_progress);
+        });
         await RefreshAsync();
     }
     private async Task SeekCoreAsync(TimeSpan target, int? index = null)
@@ -504,6 +543,13 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         var active = _preroll ?? PlaybackNavigation.ActiveCueIndexForPosition(_lesson?.Cues ?? [], position);
         ActiveCue = active >= 0 && active < Cues.Count ? Cues[active] : null;
     }
+    private async Task EnsureProgressLoadedAsync()
+    {
+        if (_progressLoaded) return;
+        _progress = await _progressStore.LoadAsync();
+        _progressLoaded = true;
+    }
+
     private async Task SaveProgressAsync()
     {
         if (_lesson is null) return;
@@ -525,10 +571,10 @@ public partial class StudentViewModel : ObservableObject, IAsyncDisposable
         _progress[lessonId] = previous with { SelectedAnswers = answers, RevealedAnswers = shown };
         await SaveProgressAsync();
     });
-    private async Task CloseMediaAsync()
+    private async Task CloseMediaAsync(bool saveProgress = true)
     {
         ++_playbackEpoch;
-        await SaveProgressAsync();
+        if (saveProgress) await SaveProgressAsync();
         _switching = true;
         try
         {

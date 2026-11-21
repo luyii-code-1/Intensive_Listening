@@ -198,7 +198,7 @@ public sealed class CloudAuthoringView : UserControl
             if (format == "ilp")
             {
                 var importer = new IlpImporter(_services.LibraryDirectory);
-                var manifest = await importer.ReadManifestAsync(file, ct);
+                var manifest = await importer.PreviewManifestAsync(file, ct);
                 var existing = await new IlpLibrary(_services.LibraryDirectory).FindByUuidAsync(manifest.PackageUuid, ct);
                 if (existing is null || await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "替换本地精听包？", "课库中已有相同课程。文件已保存，是否替换课库中的版本？", "替换"))
                     await Task.Run(() => importer.ImportFileAsync(file, existing is not null, ct: ct), ct);

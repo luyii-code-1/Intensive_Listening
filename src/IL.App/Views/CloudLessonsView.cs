@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Collections.Specialized;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -25,8 +26,12 @@ public sealed class CloudLessonsView : UserControl
     private readonly Dictionary<string, LocalCopy> _copies = new();
     private CloudPlayableList? _listing;
     private string? _accountId, _downloading;
-    private bool _loading;
-    private sealed record LocalCopy(string Version, string PackageUuid);
+    private bool _loading, _renderQueued;
+    internal sealed record LocalCopy(string Version, string PackageUuid, string? Fingerprint = null)
+    {
+        public bool Matches(IlpManifest manifest) =>
+            string.Equals(PackageUuid, manifest.PackageUuid, StringComparison.OrdinalIgnoreCase) && Fingerprint == manifest.ContentFingerprint();
+    }
 
     public CloudLessonsView(AppServices services)
     {
@@ -40,14 +45,26 @@ public sealed class CloudLessonsView : UserControl
         AttachedToVisualTree += async (_, _) =>
         {
             services.CloudAccount.Changed += AccountChanged;
+            services.Student.Lessons.CollectionChanged += LibraryChanged;
             _session = new(); await ReloadAsync();
         };
         DetachedFromVisualTree += (_, _) =>
         {
             services.CloudAccount.Changed -= AccountChanged;
+            services.Student.Lessons.CollectionChanged -= LibraryChanged;
             _session?.Cancel();
         };
         IsVisible = services.CloudAccount.Enabled;
+    }
+    private void LibraryChanged(object? sender, NotifyCollectionChangedEventArgs args)
+    {
+        if (_renderQueued) return;
+        _renderQueued = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _renderQueued = false;
+            if (_session?.IsCancellationRequested == false && _downloading is null) Render();
+        });
     }
     private void AccountChanged() => Dispatcher.UIThread.Post(async () =>
     {
@@ -90,10 +107,12 @@ public sealed class CloudLessonsView : UserControl
         foreach (var item in _listing.Items)
         {
             var copy = _copies.GetValueOrDefault(item.Id);
-            var local = copy is null ? null : _services.Student.Lessons.FirstOrDefault(l => l.Id == copy.PackageUuid);
-            var ready = local is not null && copy!.Version == item.Version;
-            var action = ready ? "打开" : local is not null ? "下载更新" : "下载";
-            var detail = ready ? $"已下载 · 版本 {local!.Lesson.Manifest.PackageVersion}" : local is not null ? "云端有新版本" : "云端课程";
+            var local = copy is null ? null : _services.Student.Lessons.FirstOrDefault(l => string.Equals(l.Id, copy.PackageUuid, StringComparison.OrdinalIgnoreCase));
+            var matches = local is not null && copy!.Matches(local.Lesson.Manifest);
+            var ready = matches && copy!.Version == item.Version;
+            var action = ready ? "打开" : matches ? "下载更新" : "下载";
+            var detail = ready ? $"已下载 · 版本 {local!.Lesson.Manifest.PackageVersion}" : matches ? "云端有新版本"
+                : local is null ? "云端课程" : copy!.Fingerprint is null ? "旧下载记录待核对 · 可从最近课程打开本地副本" : "本地内容已更改 · 可从最近课程打开本地副本";
             var glyph = new ContentControl { Content = WorkspaceUi.Icon(ready ? "music_note" : "cloud", 22), Width = 28, VerticalAlignment = VerticalAlignment.Center };
             var caption = WorkspaceUi.Text(detail, 12);
             var info = new StackPanel { Margin = new Thickness(12, 0), Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Children = { WorkspaceUi.Text(item.Title, 14, true), caption } };
@@ -105,7 +124,7 @@ public sealed class CloudLessonsView : UserControl
             {
                 if (ready && local is not null)
                 {
-                    try { ManagedRuntime.Require("playback"); _services.Student.SelectedLesson = local; await _services.Student.CurrentLoad; }
+                    try { ManagedRuntime.Require("playback"); await _services.Student.OpenCloudCopyAsync(local, copy!.Fingerprint!); }
                     catch (Exception error) { WorkspaceToast.Show(this, "无法打开课程", error.Message, true); }
                     return;
                 }
@@ -116,15 +135,17 @@ public sealed class CloudLessonsView : UserControl
     }
     private async Task DownloadAsync(CloudPlayableItem item, Button button, ContentControl glyph, TextBlock caption, TextBlock hint)
     {
-        if (_downloading is not null || !_services.CloudAccount.IsSignedIn) return;
+        if (_downloading is not null || !_services.CloudAccount.IsSignedIn || _accountId is null) return;
         if (!ManagedRuntime.Allows("importIlp")) { caption.Text = "该功能由您的组织管理。"; return; }
+        var account = _accountId;
+        var indexPath = IndexPath;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_session?.Token ?? default);
         if (!await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "下载云端课程", $"此次下载需要 {_listing!.DownloadCredits:0.##} 积分；未完成下载的重试沿用原授权。", "下载")) return;
+        if (deadline.IsCancellationRequested || account != _accountId || _downloading is not null) return;
         _downloading = item.Id; _refresh.IsEnabled = button.IsEnabled = false;
         var ring = new FAProgressRing { IsActive = true, IsIndeterminate = false, Minimum = 0, Maximum = 100, Width = 24, Height = 24 };
         glyph.Content = ring; hint.Text = "下载中";
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_session?.Token ?? default);
         deadline.CancelAfter(TimeSpan.FromMinutes(10));
-        var account = _accountId;
         try
         {
             var progress = new Progress<CloudTransferProgress>(p =>
@@ -139,14 +160,27 @@ public sealed class CloudLessonsView : UserControl
             if (account != _accountId || !_services.CloudAccount.IsSignedIn) return;
             ManagedRuntime.Require("importIlp");
             var importer = new IlpImporter(_services.LibraryDirectory);
-            var manifest = await importer.ReadManifestAsync(file, deadline.Token);
-            if (_services.Student.CurrentLesson?.Id == manifest.PackageUuid)
+            var manifest = await importer.PreviewManifestAsync(file, deadline.Token);
+            var existing = await new IlpLibrary(_services.LibraryDirectory).FindByUuidAsync(manifest.PackageUuid, deadline.Token);
+            var installedFingerprint = existing?.Manifest.ContentFingerprint();
+            if (existing is not null && installedFingerprint != manifest.ContentFingerprint() &&
+                _copies.GetValueOrDefault(item.Id)?.Matches(existing.Manifest) != true &&
+                !await AppDialogs.ConfirmAsync(WorkspaceUi.Owner(this), "替换本地课程？", $"本地课库已有「{existing.Manifest.Title}」（版本 {existing.Manifest.PackageVersion}）。是否替换为「{manifest.Title}」（版本 {manifest.PackageVersion}）？", "替换课程"))
+            {
+                Render();
+                return;
+            }
+            deadline.Token.ThrowIfCancellationRequested();
+            if (string.Equals(_services.Student.CurrentLesson?.Id, manifest.PackageUuid, StringComparison.OrdinalIgnoreCase))
                 throw new IOException("请先返回播放首页，再更新正在打开的课程。");
-            var lesson = await Task.Run(() => importer.ImportFileAsync(file, replaceExisting: true, ct: deadline.Token), deadline.Token);
-            _copies[item.Id] = new(item.Version, lesson.Manifest.PackageUuid);
-            Directory.CreateDirectory(Path.GetDirectoryName(IndexPath)!);
-            await File.WriteAllTextAsync(IndexPath + ".tmp", JsonSerializer.Serialize(_copies), deadline.Token);
-            File.Move(IndexPath + ".tmp", IndexPath, true);
+            var lesson = await Task.Run(() => importer.ImportFileAsync(file, replaceExisting: existing is not null, ct: deadline.Token,
+                expectedExistingFingerprint: installedFingerprint), deadline.Token);
+            deadline.Token.ThrowIfCancellationRequested();
+            if (account != _accountId || !_services.CloudAccount.IsSignedIn) return;
+            _copies[item.Id] = new(item.Version, lesson.Manifest.PackageUuid, lesson.Manifest.ContentFingerprint());
+            Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
+            await File.WriteAllTextAsync(indexPath + ".tmp", JsonSerializer.Serialize(_copies), deadline.Token);
+            File.Move(indexPath + ".tmp", indexPath, true);
             await _services.CloudFiles.CompleteDownloadAsync(item, deadline.Token);
             await _services.Student.RefreshAsync(preservePlayback: true);
             Render();

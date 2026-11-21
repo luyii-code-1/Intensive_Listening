@@ -15,11 +15,36 @@ try
     var id=Encoding.ASCII.GetString(footer,32,48).TrimEnd('\0');if(id.Length==0||id.Any(c=>!char.IsAsciiLetterOrDigit(c)&&c is not '-' and not '_'))throw new InvalidDataException("课程标识无效");
     var root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Intensive Listening","standalone",id);
     var runtime=Path.Combine(root,"runtime");var app=Path.Combine(runtime,"IL.App.exe");
-    if(!File.Exists(app)||!File.Exists(Path.Combine(runtime,"lesson.ilp")))
+    Directory.CreateDirectory(runtime);
+    var ready = Path.Combine(runtime, ".extracted-v2");
+    using (var extraction = new Mutex(false, @"Local\IntensiveListening.Extract." + id.ToLowerInvariant()))
     {
-        Directory.CreateDirectory(root);var zip=Path.Combine(root,"payload.zip");
-        input.Position=(long)offset;using(var target=File.Create(zip)){var buffer=new byte[1024*1024];var remaining=(long)length;while(remaining>0){var n=input.Read(buffer,0,(int)Math.Min(buffer.Length,remaining));if(n==0)throw new EndOfStreamException();target.Write(buffer,0,n);remaining-=n;}}
-        ZipFile.ExtractToDirectory(zip,runtime,true);File.Delete(zip);
+        try { extraction.WaitOne(); } catch (AbandonedMutexException) { }
+        try
+        {
+            if (!File.Exists(ready) || !File.Exists(app) || !File.Exists(Path.Combine(runtime, "lesson.ilp")))
+            {
+                File.Delete(ready);
+                var zip = Path.Combine(root, "payload.zip");
+                input.Position = (long)offset;
+                using (var target = File.Create(zip))
+                {
+                    var buffer = new byte[1024 * 1024];
+                    var remaining = (long)length;
+                    while (remaining > 0)
+                    {
+                        var count = input.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                        if (count == 0) throw new EndOfStreamException();
+                        target.Write(buffer, 0, count);
+                        remaining -= count;
+                    }
+                }
+                ZipFile.ExtractToDirectory(zip, runtime, true);
+                File.Delete(zip);
+                File.WriteAllText(ready, string.Empty);
+            }
+        }
+        finally { extraction.ReleaseMutex(); }
     }
     var info=new ProcessStartInfo(app){UseShellExecute=false,WorkingDirectory=runtime};info.ArgumentList.Add("--standalone");info.ArgumentList.Add(Path.Combine(runtime,"lesson.ilp"));
     info.Environment["ILP_STANDALONE_DATA"]=Path.Combine(root,"data");

@@ -53,13 +53,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File mdn_server/build-windows.ps1
 
 ## 版本
 
-- 唯一数值来源：`Directory.Build.props` 的 `DesktopBaseVersion`（当前 `2.2.0`）。
+- 唯一数值来源：`Directory.Build.props` 的 `DesktopBaseVersion`（当前 `2.2.2`）。
 - `scripts/build_version.py` 生成 `artifacts/version/build.json` 与 `BuildVersion.props`；后者被 props 自动 import。**不要手改生成文件**，也不要提交 `artifacts/`。
 - 渠道：
-  - Release → `2.2.0`（标签 `v2.2.0`）
-  - 日常 → `2.2.0 Insider Preview MMDD N`（`2.2.0-insider.YYYYMMDD.N`）
-  - Pre-Release → `2.2.0 Beta MMDD`（`2.2.0-beta.YYYYMMDD`）
-- 界面显示不带 `v`；Git 标签、更新签名保留原始串。产物名用 `artifactVersion`（如 `2.2.0-Insider-Preview-1023-2`）。
+  - Release → `2.2.2`（标签 `v2.2.2`）
+  - 日常 → `2.2.2 Insider Preview MMDD N`（`2.2.2-insider.YYYYMMDD.N`）
+  - Pre-Release → `2.2.2 Beta MMDD`（`2.2.2-beta.YYYYMMDD`）
+- 界面显示不带 `v`；Git 标签、更新签名保留原始串。产物名用 `artifactVersion`（如 `2.2.2-Insider-Preview-1023-2`）。
 - `AppBuildInfo.Version`（三段）、`UpdateVersion`（完整身份）、`DisplayVersion`（界面）分别用于协议、更新比较和显示。
 - 仍有手写版本常量：`AppDirectories`、`CrashReports`、`AppPrivateApiServer`（两处）、`AppTelemetry` 默认值、`AppBuildInfo` 兜底、`mdn_server/server.py`。改基础版本时同步这些位置。
 - 版本解析器（`ManagedVersion`、`mdn_server/desktop_version.py`）接受带 `v` 前缀与旧四段数值；桌面构建链只接受三段 base。

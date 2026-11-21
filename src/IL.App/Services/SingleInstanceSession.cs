@@ -16,7 +16,12 @@ public sealed class SingleInstanceSession : IDisposable
     private readonly Queue<string[]> _pending = new();
     private readonly Task _listener;
     private Action<string[]>? _activate;
-    public static string ApplicationName => "IntensiveListening.2." + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(AppDirectories.DataDirectory().ToLowerInvariant())))[..16];
+    public static string ApplicationName => NameForDataDirectory(AppDirectories.DataDirectory());
+    internal static string NameForDataDirectory(string directory)
+    {
+        var path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)).ToLowerInvariant();
+        return "IntensiveListening.2." + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path)))[..16];
+    }
     private SingleInstanceSession(Mutex mutex, string name)
     { _mutex = mutex; _name = name; _listener = Task.Run(ListenAsync); }
     public static SingleInstanceSession? Acquire(string name)

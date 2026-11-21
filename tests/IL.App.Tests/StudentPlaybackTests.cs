@@ -10,6 +10,33 @@ namespace IL.App.Tests;
 
 public sealed class StudentPlaybackTests
 {
+    [Fact]
+    public async Task OpeningCloudCopyRechecksContentAfterTheLibraryWasListed()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il-cloud-copy-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var source = Path.Combine(root, "course.ilp");
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "dart-course.ilp"), source);
+            var library = Path.Combine(root, "library");
+            var importer = new IlpImporter(library);
+            var original = await importer.ImportFileAsync(source);
+            var player = new FakePlayer();
+            await using var vm = new StudentViewModel(() => player, library, new LessonProgressStore(Path.Combine(root, "progress.json")),
+                new AppSettingsStore(Path.Combine(root, "settings.json")));
+            await vm.RefreshAsync();
+            var item = Assert.Single(vm.Lessons);
+            var fingerprint = original.Manifest.ContentFingerprint();
+            await importer.ImportFileAsync(source, true, "同 ID 的替换版本");
+
+            await Assert.ThrowsAsync<IOException>(() => vm.OpenCloudCopyAsync(item, fingerprint));
+            Assert.Null(vm.CurrentLesson);
+            Assert.Equal(0, player.OpenCount);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(2)]

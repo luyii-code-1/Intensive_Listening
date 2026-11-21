@@ -45,6 +45,23 @@ public sealed class TeacherView : UserControl
     private readonly ObservableCollection<ListBoxItem> _projectItems = [];
     private readonly SpringListCollection<ListBoxItem> _projectMotion;
     private readonly ListBox _projectList = new() { Background = Brushes.Transparent };
+    private sealed class TranscriptionRow(CourseProject project, TextBlock status, ProgressBar progress, TranscriptionJob? current)
+    {
+        private TranscriptionJob? _current = current;
+        public void Update(TranscriptionJob? job)
+        {
+            if (ReferenceEquals(_current, job)) return;
+            _current = job;
+            status.Text = ProjectStatus(project, job);
+            progress.IsVisible = job?.Status == TranscriptionJobStatus.Running;
+            if (job is { Status: TranscriptionJobStatus.Running }) progress.Value = (job.Fraction ?? 0) * 100;
+        }
+    }
+    private readonly Dictionary<string, TranscriptionRow> _transcriptionRows = [];
+    private QueueRefreshSubscription? _queueRefresh;
+    private TranscriptionJob? _stageJob;
+    private TextBlock? _jobMessage, _jobPercentage;
+    private ProgressBar? _jobProgress;
     private readonly TextBox _title = WorkspaceUi.Input(hint: "项目名称");
     private readonly TextBox _transcript = WorkspaceUi.Input(hint: "字幕内容", multiline: true);
     private readonly Grid _editor = new();
@@ -96,8 +113,17 @@ public sealed class TeacherView : UserControl
         _autosave.Tick += async (_, _) => { _autosave.Stop(); await RunAsync(SaveDraftAsync, false); };
         _projectList.SelectionChanged += async (_, _) => { if (!_loading && _projectList.SelectedItem is ListBoxItem { Tag: string id }) await OpenProjectAsync(id); };
         SizeChanged += (_, _) => ApplyResponsiveLayout();
-        AttachedToVisualTree += (_, _) => { _owner = TopLevel.GetTopLevel(this) as Window; _queue.Changed += QueueChanged; };
-        DetachedFromVisualTree += async (_, _) => { _queue.Changed -= QueueChanged; _autosave.Stop(); await RunAsync(SaveDraftAsync, false); };
+        AttachedToVisualTree += (_, _) =>
+        {
+            _owner = TopLevel.GetTopLevel(this) as Window;
+            _queueRefresh ??= new(_queue, RefreshTranscriptionProgress);
+            RefreshTranscriptionProgress();
+        };
+        DetachedFromVisualTree += async (_, _) =>
+        {
+            _queueRefresh?.Dispose(); _queueRefresh = null;
+            _autosave.Stop(); await RunAsync(SaveDraftAsync, false);
+        };
     }
     public Task RefreshAsync() => RunAsync(RefreshProjectsFromStoreAsync, false);
     private Control? _managedContent;
@@ -217,9 +243,8 @@ public sealed class TeacherView : UserControl
         var createLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; createLabel.Children.Add(WorkspaceUi.Icon("add")); createLabel.Children.Add(WorkspaceUi.Text("新建项目")); create.Content = createLabel; _projectCommands.Children.Add(create);
         var settings = WorkspaceUi.IconButton("settings", "设置", () => { _openSettings(); return Task.CompletedTask; }); settings.Classes.Add("subtle"); ToolTip.SetTip(settings, "设置"); _projectCommands.Children.Add(settings);
     }
-    private string ProjectStatus(CourseProject project)
+    private static string ProjectStatus(CourseProject project, TranscriptionJob? job)
     {
-        var job = project.TranscriptionJobId is string id ? _queue.JobById(id) : null;
         return job?.Status switch
         {
             TranscriptionJobStatus.Running or TranscriptionJobStatus.Queued => $"正在转写 {Math.Round(Math.Clamp(job.Fraction ?? 0, 0, 1) * 100)}%",
@@ -227,17 +252,42 @@ public sealed class TeacherView : UserControl
             _ => project.Step switch { CourseProjectStep.Audio => "等待音频", CourseProjectStep.Transcription => "等待转写", CourseProjectStep.Review => "待审阅", _ => "已完成" }
         };
     }
-    private void QueueChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(() => { RefreshProjects(); if (_vm.Project is { HasTranscript: false, HasAudio: true }) BuildStage(); });
+    private void RefreshTranscriptionProgress()
+    {
+        foreach (var (id, row) in _transcriptionRows) row.Update(_queue.JobById(id));
+        if (_vm.Project is not { Step: CourseProjectStep.Transcription, HasTranscript: false, HasAudio: true } project) return;
+        var current = project.TranscriptionJobId is string jobId ? _queue.JobById(jobId) : null;
+        if (ReferenceEquals(current, _stageJob)) return;
+        if (current?.Id != _stageJob?.Id || current?.Status != _stageJob?.Status || current?.Duplicate != _stageJob?.Duplicate)
+        {
+            BuildStage();
+            return;
+        }
+        _stageJob = current;
+        if (current is null) return;
+        if (_jobMessage is not null) _jobMessage.Text = current.Message;
+        var percent = (current.Fraction ?? 0) * 100;
+        if (_jobProgress is not null) _jobProgress.Value = percent;
+        if (_jobPercentage is not null) _jobPercentage.Text = $"{Math.Round(percent)}%";
+    }
     private void RefreshProjects()
     {
         IL.Core.Infrastructure.AppLog.Operation("projects", $"刷新项目列表 count={_vm.Projects.Count} selected={_vm.Project?.Id} ids={string.Join(',', _vm.Projects.Select(p => p.Id))}");
         _loading = true;
+        _transcriptionRows.Clear();
         _projectMotion.Update(_vm.Projects.Select(p =>
         {
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 4) };
             var title = WorkspaceUi.Text(p.Title); title.TextWrapping = TextWrapping.NoWrap; title.TextTrimming = TextTrimming.CharacterEllipsis;
-            var details = WorkspaceUi.Stack(title, WorkspaceUi.Text(ProjectStatus(p), 12)); details.Spacing = 3;
-            if (p.TranscriptionJobId is string id && _queue.JobById(id) is { Status: TranscriptionJobStatus.Running } job) details.Children.Add(new ProgressBar { Height = 4, Value = (job.Fraction ?? 0) * 100 });
+            var job = p.TranscriptionJobId is string id ? _queue.JobById(id) : null;
+            var status = WorkspaceUi.Text(ProjectStatus(p, job), 12);
+            var details = WorkspaceUi.Stack(title, status); details.Spacing = 3;
+            if (p.TranscriptionJobId is string jobId)
+            {
+                var progress = new ProgressBar { Height = 4, Value = (job?.Fraction ?? 0) * 100, IsVisible = job?.Status == TranscriptionJobStatus.Running };
+                details.Children.Add(progress);
+                _transcriptionRows[jobId] = new(p, status, progress, job);
+            }
             row.Children.Add(details); var remove = WorkspaceUi.IconButton("delete", "删除项目", () => RunAsync(() => DeleteProjectAsync(p))); remove.Classes.Add("subtle"); remove.Padding = new Thickness(6); remove.Margin = new Thickness(8, 0, 0, 0); ToolTip.SetTip(remove, "删除项目"); Grid.SetColumn(remove, 1); row.Children.Add(remove);
             return (p.Id, (Control)row);
         }));
@@ -276,6 +326,9 @@ public sealed class TeacherView : UserControl
     }
     private void BuildStage()
     {
+        _stageJob = null;
+        _jobMessage = _jobPercentage = null;
+        _jobProgress = null;
         var key = $"{_vm.Project?.Id}|{_vm.Project?.Step}|{_vm.Project?.ReviewPhase}|{_overview}|{_manual}|{string.Join(',', _expandedRepeats.Order())}|{string.Join(',', _vm.Project?.Exercises.EffectiveMaterials.Select(m => m.Id) ?? [])}";
         _stage.AnimateChanges = key != _stageKey; _stageKey = key;
         if (_vm.Project is not { } p)
@@ -301,9 +354,11 @@ public sealed class TeacherView : UserControl
         if (p.Step == CourseProjectStep.Transcription && !p.HasTranscript)
         {
             var job = p.TranscriptionJobId is string id ? _queue.JobById(id) : null;
+            _stageJob = job;
             var actions = WorkspaceUi.Button(job?.Status == TranscriptionJobStatus.Failed ? "重新生成字幕" : "自动生成字幕", () => RunAsync(TranscribeAsync), true); actions.IsEnabled = job?.IsActive != true;
             var replace = WorkspaceUi.Button("更换录音", () => RunAsync(BindAudioAsync)); replace.IsEnabled = job?.Status != TranscriptionJobStatus.Running;
-            var body = WorkspaceUi.Stack(WorkspaceUi.Text("将录音中的对话自动整理成逐句字幕。如果已经有字幕文件，也可以直接导入。", 13)); if (job != null) body.Children.Add(WorkspaceUi.Text(job.Message));
+            var body = WorkspaceUi.Stack(WorkspaceUi.Text("将录音中的对话自动整理成逐句字幕。如果已经有字幕文件，也可以直接导入。", 13));
+            if (job != null) body.Children.Add(_jobMessage = WorkspaceUi.Text(job.Message));
             if (job is { Status: TranscriptionJobStatus.AwaitingDecision, Duplicate: { } duplicate })
             {
                 body.Children.Add(WorkspaceUi.Text($"“{duplicate.ExistingTitle}”已使用这段音频。确认后可继续本次转写。", 12));
@@ -314,8 +369,9 @@ public sealed class TeacherView : UserControl
             if (job?.Status == TranscriptionJobStatus.Running)
             {
                 var progress = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,Auto"), ClipToBounds = true };
-                progress.Children.Add(new ProgressBar { Value = (job.Fraction ?? 0) * 100, Height = 4, MinWidth = 0, VerticalAlignment = VerticalAlignment.Center });
-                var percent = WorkspaceUi.Text($"{Math.Round((job.Fraction ?? 0) * 100)}%", 12); Grid.SetColumn(percent, 2); progress.Children.Add(percent); body.Children.Add(progress);
+                progress.Children.Add(_jobProgress = new ProgressBar { Value = (job.Fraction ?? 0) * 100, Height = 4, MinWidth = 0, VerticalAlignment = VerticalAlignment.Center });
+                _jobPercentage = WorkspaceUi.Text($"{Math.Round((job.Fraction ?? 0) * 100)}%", 12);
+                Grid.SetColumn(_jobPercentage, 2); progress.Children.Add(_jobPercentage); body.Children.Add(progress);
             }
             if (job?.Status == TranscriptionJobStatus.AwaitingDecision)
                 body.Children.Add(WorkspaceUi.Row(WorkspaceUi.Button("导入已有字幕", () => RunAsync(ImportSrtAsync)), replace));

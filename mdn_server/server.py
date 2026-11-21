@@ -282,7 +282,7 @@ def create_app(root: Path, config: dict, store: SecretStore | None = None, diagn
                     conn.execute("INSERT OR IGNORE INTO update_tasks VALUES(?,?,?,?,?,?)", (update["id"], row["scope"], update["version"], update["mode"], row["revision"] / 1000000, store.encode(update)))
         initialize_updates(conn, store)
     cloud_management = CloudManagement(db, store)
-    app = FastAPI(title="Intensive Listening MDN", version="2.2.1", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="Intensive Listening MDN", version="2.2.2", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=not config.get("disable_ssl", False), same_site="strict", max_age=3600)
     template_directory = expand_web(root)
     templates = Jinja2Templates(directory=str(template_directory))
@@ -961,7 +961,7 @@ def main():
     args.data = args.data.resolve()
     path = args.data / "config.bin"
     store = SecretStore()
-    print("Intensive Listening MDN 2.2.1")
+    print("Intensive Listening MDN 2.2.2")
     print("数据目录：" + str(args.data))
     if args.init and path.exists():
         raise ValueError("已有配置，初始化不会覆盖。")

@@ -11,6 +11,70 @@ public sealed class StudentAnswerProgressTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "il-answer-progress-" + Guid.NewGuid().ToString("N"));
     public StudentAnswerProgressTests() => Directory.CreateDirectory(_root);
+    [Theory]
+    [InlineData("{")]
+    [InlineData("{\"version\":2,\"records\":[]}")]
+    public async Task UnreadableProgressSurvivesOpenDeleteAndExitUntilAValidBaselineIsAvailable(string damaged)
+    {
+        var library = Path.Combine(_root, "library");
+        var package = Path.Combine(_root, "course.ilp");
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "dart-course.ilp"), package);
+        var course = await new IlpImporter(library).ImportFileAsync(package);
+        var path = Path.Combine(_root, "lesson_progress.json");
+        var store = new LessonProgressStore(path);
+        var settings = new AppSettingsStore(Path.Combine(_root, "settings.json"));
+        await File.WriteAllTextAsync(path, damaged);
+        await using (var vm = new StudentViewModel(() => new FakePlayer(), library, store, settings))
+        {
+            await vm.RefreshAsync();
+            Assert.Contains("学习记录", vm.Status);
+            await vm.OpenLessonAsync(vm.Lessons.Single());
+            Assert.Null(vm.CurrentLesson);
+            await vm.RemoveByIdAsync(course.Id);
+            Assert.Single(vm.Lessons);
+        }
+        Assert.Equal(damaged, await File.ReadAllTextAsync(path));
+
+        await using var retry = new StudentViewModel(() => new FakePlayer(), library, store, settings);
+        await retry.RefreshAsync();
+        var question = course.Manifest.Exercises.Questions.First(q => q.Options.Count >= 2);
+        await store.SaveAsync(new Dictionary<string, LessonProgress>
+        {
+            [course.Id] = new(course.Id, 1500, null, new HashSet<string>()) { SelectedAnswers = new Dictionary<string, int> { [question.Id] = 1 } },
+            ["another-course"] = new("another-course", 4500, null, new HashSet<string>())
+        });
+        await retry.OpenLessonAsync(retry.Lessons.Single());
+        Assert.Equal(1.5, retry.PositionSeconds);
+        Assert.Equal(1, retry.ProgressFor(course.Id)!.SelectedAnswers[question.Id]);
+        Assert.Equal(4500L, (await store.LoadAsync())["another-course"].PositionMs);
+    }
+
+    [Fact]
+    public async Task OpenRetriesTemporarilyLockedProgressAndPreservesOtherLessons()
+    {
+        var library = Path.Combine(_root, "library");
+        var package = Path.Combine(_root, "course.ilp");
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "dart-course.ilp"), package);
+        var course = await new IlpImporter(library).ImportFileAsync(package);
+        var path = Path.Combine(_root, "lesson_progress.json");
+        var store = new LessonProgressStore(path);
+        await store.SaveAsync(new Dictionary<string, LessonProgress>
+        {
+            [course.Id] = new(course.Id, 1500, null, new HashSet<string>()),
+            ["second"] = new("second", 6500, null, new HashSet<string>())
+        });
+        await using var vm = new StudentViewModel(() => new FakePlayer(), library, store,
+            new AppSettingsStore(Path.Combine(_root, "settings.json")));
+        using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            await vm.RefreshAsync();
+            Assert.Contains("学习记录", vm.Status);
+        }
+        await vm.OpenLessonAsync(vm.Lessons.Single());
+        Assert.Equal(1.5, vm.PositionSeconds);
+        Assert.Equal(6500L, (await store.LoadAsync())["second"].PositionMs);
+    }
+
     [Fact]
     public async Task AnswersSurvivePlaybackSavesLibraryRefreshAndCourseReopening()
     {

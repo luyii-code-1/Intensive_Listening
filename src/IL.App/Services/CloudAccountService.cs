@@ -11,10 +11,9 @@ public sealed class CloudAccountService : IDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private readonly SemaphoreSlim _operations = new(1, 1);
     private readonly ICloudTokenStore _credentials;
-    private readonly CloudApiTransport _api;
     private readonly string _statePath;
     private CancellationTokenSource? _login;
-    private bool _busy, _disposed, _reauthRequired;
+    private bool _busy, _disposed, _reauthRequired, _identityVerified;
     private sealed record State(string? SessionId, ManagedCloudAccount? Account,
         Dictionary<string, ManagedCloudReceipt> Receipts, Dictionary<string, string> PendingRevocations);
     private State _state = new(null, null, [], []);
@@ -26,20 +25,21 @@ public sealed class CloudAccountService : IDisposable
     public string? ErrorCode { get; private set; }
     public bool IsBusy => _busy;
     public bool Enabled { get; private set; }
-    public bool IsSignedIn => Enabled && Authentication.HasCredentials && _state.Account is not null && !_reauthRequired;
+    private bool HasVerifiedSession => _identityVerified && Authentication.HasCredentials && !_reauthRequired;
+    public bool IsSignedIn => Enabled && HasVerifiedSession;
     public bool AccountLocked => ManagedRuntime.IsManaged && ManagedRuntime.Policy.CloudService.LockAccount;
-    public bool CanAuthorize => Enabled && !_busy && (!AccountLocked || !Authentication.HasCredentials || _reauthRequired);
+    public bool CanAuthorize => Enabled && !_busy && (!AccountLocked || !HasVerifiedSession);
     public bool CanSignOut => !_busy && !AccountLocked && _state.SessionId is not null;
     public ManagedCloudSnapshot ManagementSnapshot => new(ManagedRuntime.Policy.Revision, Enabled,
-        _login is not null ? "authorizing" : _reauthRequired ? "reauthRequired" : Authentication.HasCredentials && _state.Account is not null ? "signedIn" : "signedOut",
+        _login is not null ? "authorizing" : _reauthRequired ? "reauthRequired" : HasVerifiedSession ? "signedIn" : "signedOut",
         Enabled ? Connection : "disabled",
-        Authentication.HasCredentials && !_reauthRequired && _login is null ? _state.Account : null,
-        Authentication.HasCredentials && !_reauthRequired && _login is null ? _state.SessionId : null, ErrorCode);
+        HasVerifiedSession && _login is null ? _state.Account : null,
+        HasVerifiedSession && _login is null ? _state.SessionId : null, ErrorCode);
 
     public CloudAccountService(string? dataDirectory = null, ICloudTokenStore? credentials = null, HttpClient? http = null)
     {
         _credentials = credentials ?? new CloudCredentialStore();
-        Authentication = new(_credentials, http); Authentication.ConnectivityChanged += ConnectivityChanged; _api = new(Authentication, http);
+        Authentication = new(_credentials, http); Authentication.ConnectivityChanged += ConnectivityChanged;
         _statePath = Path.Combine(dataDirectory ?? AppDirectories.DataDirectory(), "cloud-account.bin");
         if (File.Exists(_statePath))
             try { _state = JsonSerializer.Deserialize<State>(ManagedSecretStore.Load(_statePath), ManagedPolicy.Json) ?? _state; }
@@ -65,7 +65,17 @@ public sealed class CloudAccountService : IDisposable
             await Authentication.RestoreAsync(_lifetime.Token);
             if (Authentication.HasCredentials)
             {
-                await ReadIdentityAsync(_lifetime.Token);
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+                deadline.CancelAfter(TimeSpan.FromSeconds(30));
+                var user = await Authentication.GetUserAsync(deadline.Token);
+                try { _state = SaveIdentity(user, newGeneration: false); }
+                catch (CloudAuthenticationException error) when (error.Code == "account_locked")
+                {
+                    await Authentication.SignOutAsync(CancellationToken.None);
+                    throw;
+                }
+                _identityVerified = true;
+                _reauthRequired = false;
                 Status = "已登录 Intensive Listening 云服务"; Connection = "connected"; ErrorCode = null;
             }
             else { Status = ManagedRuntime.Policy.CloudService.RequireLogin ? "您的组织要求登录云服务。" : "未登录 Intensive Listening 云服务"; Connection = "connected"; }
@@ -74,20 +84,31 @@ public sealed class CloudAccountService : IDisposable
         catch (Exception error) { Present(error); }
         finally { _busy = false; _operations.Release(); Notify(); }
     }
-    private async Task ReadIdentityAsync(CancellationToken ct, bool newGeneration = false)
+    private State SaveIdentity(CloudUser user, bool newGeneration)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(TimeSpan.FromSeconds(30));
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(CloudAuthClient.Server, "api/v1/auth/me"));
-        using var response = await _api.SendAsync(request, deadline.Token); response.EnsureSuccessStatusCode();
-        var user = JsonSerializer.Deserialize<CloudUser>(await response.Content.ReadAsStringAsync(deadline.Token), new JsonSerializerOptions(JsonSerializerDefaults.Web))
-            ?? throw new CloudAuthenticationException("identity", "云账号信息无效。");
         if (AccountLocked && _state.Account is { } bound && bound.Id != user.Id)
-        {
-            await Authentication.SignOutAsync(CancellationToken.None);
             throw new CloudAuthenticationException("account_locked", "您的组织已锁定原账号，请使用原账号授权。");
-        }
-        _state = _state with { SessionId = newGeneration ? Guid.NewGuid().ToString("D") : _state.SessionId ?? Guid.NewGuid().ToString("D"), Account = new(user.Id, user.Email, user.Name) };
-        _reauthRequired = false; Save();
+        var session = newGeneration || _state.Account?.Id != user.Id ? null : _state.SessionId;
+        var next = _state with { SessionId = session ?? Guid.NewGuid().ToString("D"), Account = new(user.Id, user.Email, user.Name) };
+        ManagedSecretStore.Save(_statePath, JsonSerializer.Serialize(next, ManagedPolicy.Json));
+        return next;
+    }
+
+    internal async Task CompleteAuthorizationAsync(CloudAuthorizationRequest request, Uri callback, CancellationToken ct)
+    {
+        State? verified = null;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        await Authentication.CompleteLoginAsync(request, callback, deadline.Token, user =>
+        {
+            // Persist the new generation before replacing credentials. After an interrupted write,
+            // restoration verifies the stored token's owner before exposing a session.
+            verified = SaveIdentity(user, newGeneration: true);
+            _identityVerified = false;
+        });
+        _state = verified!;
+        _identityVerified = true;
+        _reauthRequired = false;
     }
     public async Task LoginAsync()
     {
@@ -101,14 +122,10 @@ public sealed class CloudAccountService : IDisposable
             await using var callback = new CloudLoopbackCallback();
             Status = "请在浏览器中登录并允许授权…"; Notify();
             Process.Start(new ProcessStartInfo(callback.Request.BrowserUri(Environment.MachineName).AbsoluteUri) { UseShellExecute = true });
-            await Authentication.CompleteLoginAsync(callback.Request, await callback.WaitAsync(login.Token), login.Token);
-            var previous = _state;
-            // Identity checking retains the bound account; a successful authorization starts a fresh credential generation.
-            try { await ReadIdentityAsync(login.Token, newGeneration: true); }
-            catch { _state = previous; throw; }
+            await CompleteAuthorizationAsync(callback.Request, await callback.WaitAsync(login.Token), login.Token);
             Status = "已登录 Intensive Listening 云服务"; Connection = "connected"; ErrorCode = null;
         }
-        catch (Exception error) { Present(error); }
+        catch (Exception error) { Present(error, invalidateSession: !HasVerifiedSession); }
         finally { _login = null; _busy = false; _operations.Release(); Notify(); }
     }
     public void CancelLogin() => _login?.Cancel();
@@ -161,6 +178,7 @@ public sealed class CloudAccountService : IDisposable
         try { await Authentication.SignOutAsync(CancellationToken.None); if (token is not null) await Authentication.RevokeRefreshTokenAsync(token, CancellationToken.None); }
         catch (Exception error) when (error is HttpRequestException or OperationCanceledException or CloudAuthenticationException { Code: "revocation_failed" }) { revoked = false; }
         _state = _state with { SessionId = null, Account = null };
+        _identityVerified = false;
         if (revoked) _state.PendingRevocations.Remove(operation);
         _state.Receipts[operation] = new("completed", revoked ? "revoked" : "pending");
         _reauthRequired = false; ErrorCode = null; Connection = Enabled ? "connected" : "disabled";
@@ -191,13 +209,13 @@ public sealed class CloudAccountService : IDisposable
         else if (IsSignedIn) Status = "已登录 Intensive Listening 云服务";
         Notify();
     }
-    private void Present(Exception error)
+    private void Present(Exception error, bool invalidateSession = true)
     {
         ErrorCode = error is CloudAuthenticationException ? "authorization" : error is HttpRequestException or OperationCanceledException ? "network" : "credentialStore";
         Connection = !Enabled ? "disabled" : ErrorCode == "network" ? "offline" : "error";
-        if (error is CloudAuthenticationException) _reauthRequired = true;
+        if (invalidateSession && error is CloudAuthenticationException) _reauthRequired = true;
         Status = error is CloudAuthenticationException ? error.Message : error is OperationCanceledException ? "授权已取消或连接超时，可重试。" : error is HttpRequestException ? "暂时无法连接云服务，请稍后重试。" : "无法访问系统凭据，请稍后重试。";
     }
     private void Notify() { if (!_disposed) Changed?.Invoke(); }
-    public void Dispose() { _disposed = true; _lifetime.Cancel(); Authentication.ConnectivityChanged -= ConnectivityChanged; _api.Dispose(); Authentication.Dispose(); }
+    public void Dispose() { _disposed = true; _lifetime.Cancel(); Authentication.ConnectivityChanged -= ConnectivityChanged; Authentication.Dispose(); }
 }

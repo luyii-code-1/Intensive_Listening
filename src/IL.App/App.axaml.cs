@@ -21,9 +21,9 @@ public partial class App : Application
                 desktop.MainWindow = window;
                 await ((MainWindow)window).InitializeBackgroundAsync();
             });
-            if (OperatingSystem.IsWindows() && window is MainWindow main && !Program.Arguments.Contains("--standalone"))
+            if (OperatingSystem.IsWindows() && window is MainWindow main)
             {
-                desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                if (!Program.Arguments.Contains("--standalone")) desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 Program.Instance?.SetActivationHandler(args => Dispatcher.UIThread.Post(async () => await main.ActivateFromLaunchAsync(args)));
             }
         }

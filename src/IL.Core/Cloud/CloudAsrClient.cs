@@ -8,6 +8,7 @@ namespace IL.Core.Cloud;
 
 public sealed record CloudAsrTask(string Id, string State, JsonElement? Progress, decimal PriceCredits, decimal HeldCredits, decimal ChargedCredits, JsonElement? Error);
 public sealed class CloudAsrCancelledException : OperationCanceledException { }
+public sealed class CloudAsrFailedAfterCancellationException() : Exception("云端任务已失败，费用按服务端终态结算。");
 public sealed class CloudAsrWaitingInterruptedException(string message, Exception? inner = null) : Exception(message, inner);
 public sealed class CloudAsrCompletedAfterCancellationException(string transcript) : Exception
 {
@@ -75,21 +76,43 @@ public sealed class CloudAsrClient : IDisposable
         catch (CloudAsrCancelledException) { throw; }
         catch (OperationCanceledException) when (ct.IsCancellationRequested && userCancellation())
         {
-            if (session?.TaskId is null) throw;
+            if (session is null || path is null) throw;
             try
             {
-                var task = await SendAsync<CloudAsrTask>(HttpMethod.Post, "asr/tasks/" + Uri.EscapeDataString(session.TaskId) + "/cancel", null, null, CancellationToken.None);
-                settled(task.ChargedCredits);
-                if (task.State == "succeeded") throw new CloudAsrCompletedAfterCancellationException(await ResultAsync(task.Id, CancellationToken.None));
-                if (task.State != "cancelled" && task.State != "failed") throw new AsrException("取消尚未确认，请重试查询原任务。");
-                if (path is not null) File.Delete(path);
+                await CancelSessionAsync(session, path, settled, CancellationToken.None);
             }
             catch (CloudAsrCompletedAfterCancellationException) { throw; }
+            catch (CloudAsrFailedAfterCancellationException) { throw; }
             catch (Exception error) { throw new CloudAsrWaitingInterruptedException("取消尚未确认，重试可查询原任务。费用以服务端终态为准。", error); }
-            throw;
+            throw new CloudAsrCancelledException();
         }
         catch (Exception error) when (session is not null && (error is OperationCanceledException or HttpRequestException))
         { throw new CloudAsrWaitingInterruptedException("等待已中断。云端任务保留，重试可继续查询。", error); }
+    }
+    public async Task CancelAsync(string localJobId, Action<decimal> settled, CancellationToken ct = default)
+    {
+        var user = await SendAsync<User>(HttpMethod.Get, "auth/me", null, null, ct);
+        var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(user.Id + ":" + localJobId)));
+        var path = Path.Combine(_root, identity + ".json");
+        if (!File.Exists(path)) throw new CloudAsrWaitingInterruptedException("当前账号找不到原任务的本地会话，请使用提交任务的账号重试。");
+        var session = JsonSerializer.Deserialize<Session>(await File.ReadAllTextAsync(path, ct), Json)
+            ?? throw new InvalidDataException("云端会话记录无效。");
+        await CancelSessionAsync(session, path, settled, ct);
+    }
+    private async Task CancelSessionAsync(Session session, string path, Action<decimal> settled, CancellationToken ct)
+    {
+        if (session.TaskId is null)
+        {
+            var accepted = await SendAsync<CloudAsrTask>(HttpMethod.Post, "asr/tasks", JsonContent.Create(new { audioAssetId = session.AssetId }), session.OperationId, ct);
+            session = session with { TaskId = accepted.Id };
+            await SaveAsync(path, session);
+        }
+        var task = await SendAsync<CloudAsrTask>(HttpMethod.Post, $"asr/tasks/{Uri.EscapeDataString(session.TaskId)}/cancel", null, null, ct);
+        if (task.State is "succeeded" or "failed" or "cancelled") settled(task.ChargedCredits);
+        if (task.State == "succeeded") throw new CloudAsrCompletedAfterCancellationException(await ResultAsync(task.Id, ct));
+        if (task.State is not ("cancelled" or "failed")) throw new CloudAsrWaitingInterruptedException("取消尚未确认，请重试查询原任务。");
+        File.Delete(path);
+        if (task.State == "failed") throw new CloudAsrFailedAfterCancellationException();
     }
     private async Task<string> ResultAsync(string id, CancellationToken ct) =>
         (await SendAsync<Result>(HttpMethod.Get, "asr/tasks/" + Uri.EscapeDataString(id) + "/result", null, null, ct)).Transcript;

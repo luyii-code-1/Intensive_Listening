@@ -67,7 +67,7 @@ public sealed class ManagedLessonReceiver : IDisposable
                     await downloader.VerifyAsync(file, item, _stop.Token);
                     if (_configuration() != configuration || !_policy().Lessons.Contains(item)) continue;
                     var importer = new IlpImporter(_library);
-                    var manifest = await Task.Run(() => importer.ReadManifestAsync(file, _stop.Token), _stop.Token);
+                    var manifest = await Task.Run(() => importer.PreviewManifestAsync(file, _stop.Token), _stop.Token);
                     if (!string.Equals(manifest.PackageUuid, item.PackageUuid, StringComparison.OrdinalIgnoreCase) || manifest.PackageVersion != item.PackageVersion) throw new InvalidOperationException("精听包清单与下发描述不一致。");
                     if (await IsInUse(item.PackageUuid))
                     { deferred++; Set($"{item.Title}：等待当前课程退出后更新"); await ReportAsync("deferred", "正在使用课程，退出后自动更新"); continue; }

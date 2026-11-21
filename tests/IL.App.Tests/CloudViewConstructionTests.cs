@@ -1,6 +1,8 @@
 using Avalonia.Controls;
 using IL.App.Services;
 using IL.App.Views;
+using IL.Core.Ilp;
+using System.Text.Json;
 using Xunit;
 
 namespace IL.App.Tests;
@@ -11,6 +13,18 @@ public sealed class CloudViewConstructionCollection { }
 [Collection("Cloud view construction")]
 public sealed class CloudViewConstructionTests
 {
+    [Fact]
+    public void DownloadRecordRequiresTheInstalledContentAndAcceptsLegacyIndex()
+    {
+        var manifest = IlpManifest.FromBytes(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "fixtures", "dart-manifest.json")));
+        var record = new CloudLessonsView.LocalCopy("cloud-v1", manifest.PackageUuid, manifest.ContentFingerprint());
+        Assert.True(record.Matches(IlpManifest.FromBytes(manifest.ToBytes())));
+        Assert.False(record.Matches(manifest with { Title = "替换课程" }));
+        var legacy = JsonSerializer.Deserialize<CloudLessonsView.LocalCopy>(JsonSerializer.Serialize(new { record.Version, record.PackageUuid }));
+        Assert.NotNull(legacy);
+        Assert.False(legacy.Matches(manifest));
+    }
+
     [Fact]
     public async Task CloudViewsConstructWithOneParentForTheirContent()
     {

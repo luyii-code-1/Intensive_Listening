@@ -28,6 +28,7 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
     private bool _closing, _paneExpanded = true, _teacherLoaded;
     private bool _openingTeacher;
     private int _destination, _settingsBack;
+    private int _queueBadgeCount;
     private string? _openedAudioPath;
     private FAContentDialog? _taskDialog;
     private readonly SpringScalar _paneMotion;
@@ -154,7 +155,18 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
             await ExitAsync();
         };
         SizeChanged+=(_,_)=>UpdatePane();
-        _services.Queue.Changed+=(_,_)=>Dispatcher.UIThread.Post(UpdatePane);
+        if (!standalone)
+        {
+            var queueRefresh = new QueueRefreshSubscription(_services.Queue, () =>
+            {
+                var count = _services.Queue.Jobs.Count(job => job.IsActive);
+                if (count == _queueBadgeCount) return;
+                _queueBadgeCount = count;
+                if (_paneExpanded && ClientSize.Width >= 1200)
+                    NavigationContent(QueueButton, "sync", "转写任务", true, false, count);
+            });
+            Closed += (_, _) => queueRefresh.Dispose();
+        }
         Navigate(0);
         if(standalone){NavigationPane.IsVisible=false;ShellGrid.ColumnDefinitions[0].Width=new GridLength(0);Width=1120;}
         void BackgroundFault(CrashReport report) => Dispatcher.UIThread.Post(async () =>
@@ -424,7 +436,8 @@ public partial class MainWindow : FluentAvalonia.UI.Windowing.FAAppWindow
         NavigationContent(StudentButton,"play","播放",expanded,_destination==0);
         NavigationContent(TeacherButton,"education","制作",expanded,_destination==1);
         NavigationContent(SettingsButton,"settings","设置",expanded,_destination==2);
-        NavigationContent(QueueButton,"sync","转写任务",expanded,false,_services.Queue.Jobs.Count(j=>j.IsActive));
+        _queueBadgeCount = _services.Queue.Jobs.Count(job => job.IsActive);
+        NavigationContent(QueueButton,"sync","转写任务",expanded,false,_queueBadgeCount);
     }
     private static void NavigationContent(Button button,string icon,string label,bool expanded,bool selected,int count=0)
     {

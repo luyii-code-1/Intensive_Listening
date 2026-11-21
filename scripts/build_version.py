@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 import xml.etree.ElementTree as ET
 
 CHINA = timezone(timedelta(hours=8))
@@ -46,11 +47,18 @@ def ci_stamp(channel="insider"):
     query = start.strftime("%Y-%m-%dT%H:%M:%SZ") + ".." + end.strftime("%Y-%m-%dT%H:%M:%SZ")
     ids = set()
     page = 1
+    retries = 0
     while True:
         runs = github(f"repos/{repo}/actions/workflows/{current['workflow_id']}/runs?created={query}&per_page=100&page={page}")["workflow_runs"]
         ids.update(r["id"] for r in runs if r["id"] <= int(run_id) and r.get("display_title") == "Desktop insider" and
                    datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")).astimezone(CHINA).date() == stamp.date())
         if len(runs) < 100:
+            # The individual run can be readable before GitHub indexes it in the day listing.
+            if int(run_id) not in ids and retries < 5:
+                time.sleep(2 ** retries)
+                retries += 1
+                page = 1
+                continue
             break
         page += 1
     if int(run_id) not in ids:

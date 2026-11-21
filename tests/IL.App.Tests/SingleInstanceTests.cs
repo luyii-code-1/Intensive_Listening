@@ -5,6 +5,17 @@ namespace IL.App.Tests;
 
 public sealed class SingleInstanceTests
 {
+    [Fact]
+    public void StandaloneInstanceFollowsTheCourseDataDirectory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "Intensive Listening");
+        var course = Path.Combine(root, "standalone", "one_v1", "data");
+        var name = SingleInstanceSession.NameForDataDirectory(course);
+        Assert.Equal(name, SingleInstanceSession.NameForDataDirectory(Path.Combine(course, ".")));
+        Assert.NotEqual(name, SingleInstanceSession.NameForDataDirectory(Path.Combine(root, "standalone", "two_v1", "data")));
+        Assert.NotEqual(name, SingleInstanceSession.NameForDataDirectory(Path.Combine(root, "data")));
+    }
+
     // A mutex must be acquired and released on the same thread.
 #pragma warning disable xUnit1031
     [Fact]

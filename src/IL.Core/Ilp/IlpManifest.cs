@@ -27,6 +27,8 @@ public sealed partial record IlpManifest(int FormatVersion, string Title, TimeSp
         sha256 = new Dictionary<string, string> { [AudioPath] = AudioSha256, [TranscriptPath] = TranscriptSha256 }
     }, JsonOptions);
 
+    public string ContentFingerprint() => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(ToBytes()));
+
     public static IlpManifest FromBytes(byte[] bytes)
     {
         if (bytes.Length > 256 * 1024) throw new IlpException(IlpError.InvalidManifest, "manifest.json 过大");

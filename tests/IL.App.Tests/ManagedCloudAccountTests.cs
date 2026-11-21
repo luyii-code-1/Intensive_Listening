@@ -10,6 +10,81 @@ namespace IL.App.Tests;
 public sealed class ManagedCloudAccountTests
 {
     [Fact]
+    public async Task FailedIdentityLookupKeepsThePreviousGrantAndRestartVerifiesItBeforePublishing()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "il-cloud-reauth-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var handler = new AccountSwitchHandler();
+            using var http = new HttpClient(handler);
+            var credentials = new Tokens { Token = "refresh-A" };
+            var authorization = new CloudAuthorizationRequest(new Uri("http://127.0.0.1:49152/callback"));
+            var state = authorization.BrowserUri("Desktop").Query.Split('&').Single(field => field.StartsWith("state="));
+            var callback = new Uri(authorization.RedirectUri + "?code=switch&" + state);
+            string? firstSession;
+            using (var account = new CloudAccountService(root, credentials, http))
+            {
+                await account.ApplyEnabledAsync(true);
+                firstSession = account.ManagementSnapshot.SessionId;
+                handler.IdentityUnavailable = true;
+                await Assert.ThrowsAsync<HttpRequestException>(() => account.CompleteAuthorizationAsync(authorization, callback, default));
+                Assert.True(account.IsSignedIn);
+                Assert.Equal("A", account.ManagementSnapshot.Account!.Id);
+                Assert.Equal(firstSession, account.ManagementSnapshot.SessionId);
+                Assert.Equal("refresh-A", credentials.Token);
+                Assert.Equal("access-A", await account.Authentication.GetAccessTokenAsync());
+            }
+            using var restart = new CloudAccountService(root, credentials, http);
+            await restart.ApplyEnabledAsync(true);
+            Assert.False(restart.IsSignedIn);
+            Assert.Null(restart.ManagementSnapshot.Account);
+            handler.IdentityUnavailable = false;
+            await restart.RestoreAsync();
+            Assert.Equal(firstSession, restart.ManagementSnapshot.SessionId);
+            await restart.CompleteAuthorizationAsync(authorization, callback, default);
+            var secondSession = restart.ManagementSnapshot.SessionId;
+            Assert.NotEqual(firstSession, secondSession);
+            Assert.Equal("B", restart.ManagementSnapshot.Account!.Id);
+            Assert.Equal("refresh-B", credentials.Token);
+            using var afterSwitch = new CloudAccountService(root, credentials, http);
+            await afterSwitch.ApplyEnabledAsync(true);
+            Assert.Equal(secondSession, afterSwitch.ManagementSnapshot.SessionId);
+            Assert.Equal("B", afterSwitch.ManagementSnapshot.Account!.Id);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private sealed class AccountSwitchHandler : HttpMessageHandler
+    {
+        public bool IdentityUnavailable;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            object body;
+            switch (request.RequestUri!.AbsolutePath)
+            {
+                case "/connect/token":
+                    var form = await request.Content!.ReadAsStringAsync(ct);
+                    var id = form.Contains("grant_type=authorization_code") || form.Contains("refresh-B") ? "B" : "A";
+                    body = new { access_token = "access-" + id, refresh_token = "refresh-" + id, token_type = "Bearer", expires_in = 900 };
+                    break;
+                case "/api/v1/auth/me":
+                    if (IdentityUnavailable) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+                    var owner = request.Headers.Authorization!.Parameter == "access-A" ? "A" : "B";
+                    body = new { id = owner, email = owner + "@example.invalid", name = owner, slots = 1, emailVerified = true };
+                    break;
+                case "/connect/revoke":
+                    body = new { };
+                    break;
+                default:
+                    throw new InvalidOperationException("Unexpected endpoint");
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+        }
+    }
+
+    [Fact]
     public async Task WindowsLogoutCommandIsSessionBoundAndReplayDoesNotLogoutNewAccount()
     {
         if (!OperatingSystem.IsWindows()) return;

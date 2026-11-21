@@ -85,6 +85,39 @@ public sealed class CloudAsrProxyTests
     }
 
     [Fact]
+    public async Task CancelInterruptedBatchConfirmsOriginalSubmissionWithoutAudio()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "il-proxy-restore-" + Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(root, "cloud-asr-proxy", Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("user:job"))));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "session.json");
+            await File.WriteAllTextAsync(path, """{"audioHash":"hash","operationId":"original","segments":[]}""");
+            using var http = new HttpClient(new Handler(request =>
+            {
+                switch (request.RequestUri!.AbsolutePath)
+                {
+                    case "/connect/token": return Json(new { access_token = "access", refresh_token = "refresh", token_type = "Bearer", expires_in = 900 });
+                    case "/api/v1/auth/me": return Json(new { id = "user" });
+                    case "/api/v1/asr/proxy/batches":
+                        Assert.Equal("original", request.Headers.GetValues("Idempotency-Key").Single());
+                        return Json(new { id = "original-batch", state = "queued" });
+                    case "/api/v1/asr/proxy/batches/original-batch/cancel": return Json(new { id = "original-batch", state = "cancelled", chargedCredits = 0m });
+                    default: throw new InvalidOperationException("Unexpected endpoint");
+                }
+            }));
+            using var auth = new CloudAuthClient(new Tokens(), http);
+            using var client = new CloudAsrProxyClient(auth, root, http);
+            decimal? credits = null;
+            await client.CancelAsync("job", value => credits = value);
+            Assert.Equal(0m, credits);
+            Assert.False(File.Exists(path));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task CancellationStopsAutomaticReconnect()
     {
         var root = Path.Combine(Path.GetTempPath(), "il-proxy-cancel-" + Guid.NewGuid().ToString("N"));

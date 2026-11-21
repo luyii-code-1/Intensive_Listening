@@ -58,26 +58,37 @@ public sealed class DesktopCloudAsrTests
         Assert.Equal(0m, fixture.Charged);
     }
 
-    [Fact]
-    public async Task RestoredQueueWaitsForRemoteCancellationAndDoesNotResumeIt()
+    [Theory]
+    [InlineData("desktop-asr-v2")]
+    [InlineData("{\"provider\":\"il-cloud-service-v1\",\"protocol\":\"proxy-batch-v1\"}")]
+    [InlineData("{\"provider\":\"il-cloud-service-v1\"}")]
+    public async Task RestoredQueueWaitsForRemoteCancellationAndDoesNotResumeIt(string profile)
     {
         var root = Path.Combine(Path.GetTempPath(), "asr-cancel-queue-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
         try
         {
             var store = new IL.Core.Transcription.QueueStore(Path.Combine(root, "queue.json"));
             await store.SaveAsync([new("job", "audio", "missing.mp3", IL.Core.Transcription.TranscriptionJobStatus.Interrupted,
-                IL.Core.Transcription.TranscriptionStage.Recognizing, "断线", DateTimeOffset.Now, CacheProfile: "desktop-asr-v2")]);
+                IL.Core.Transcription.TranscriptionStage.Recognizing, "断线", DateTimeOffset.Now, CacheProfile: profile)]);
             await using var queue = new IL.Core.Transcription.TranscriptionQueue((_, _, _, _) => throw new InvalidOperationException("Must not restart transcription"),
                 _ => Task.FromResult<IL.Core.Transcription.DuplicateMatch?>(null), store, new IL.Core.Transcription.SrtRecognitionCache(Path.Combine(root, "cache")), () => "desktop-asr-v2");
             var confirmed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var calls = 0;
             queue.CancelRemoteJob = _ => { calls++; return confirmed.Task; };
-            await queue.RestoreAsync(); queue.Cancel("job", userInitiated: true);
+            await queue.RestoreAsync();
+            Assert.True(queue.JobById("job")!.CanCancel);
+            Assert.False(queue.JobById("job")!.CanDelete);
+            Assert.Throws<InvalidOperationException>(() => queue.Delete("job"));
+            queue.Cancel("job", userInitiated: true);
             Assert.Equal(IL.Core.Transcription.TranscriptionJobStatus.Interrupted, queue.JobById("job")!.Status);
             queue.Cancel("job", userInitiated: true); queue.Retry("job"); queue.ResumeInterrupted();
+            Assert.Throws<InvalidOperationException>(() => queue.Delete("job"));
+            queue.ClearFinished();
             Assert.Equal(1, calls); Assert.Equal(IL.Core.Transcription.TranscriptionJobStatus.Interrupted, queue.JobById("job")!.Status);
             confirmed.SetResult(); await queue.WaitForIdleAsync();
             Assert.Equal(IL.Core.Transcription.TranscriptionJobStatus.Canceled, queue.JobById("job")!.Status);
+            queue.Delete("job");
+            Assert.Null(queue.JobById("job"));
         }
         finally { Directory.Delete(root, true); }
     }

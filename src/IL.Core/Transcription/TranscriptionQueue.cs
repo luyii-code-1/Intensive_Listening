@@ -18,6 +18,11 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     private readonly HashSet<string> userCancellations = [];
     public bool WasUserCancelled(string id) { lock (sync) return userCancellations.Contains(id); }
     public void SetChargedCredits(string id, decimal credits) => Update(id, job => job with { ChargedCredits = credits }, true);
+    public Task MarkCloudSessionAsync(string id)
+    {
+        Update(id, job => job with { CloudRunStarted = true }, true);
+        return FlushAsync();
+    }
     public event EventHandler? Changed;
     public event Action<TranscriptionJob,bool>? Completed;
     public IReadOnlyList<TranscriptionJob> Jobs {get{lock(sync)return jobs.ToArray();}}
@@ -32,7 +37,7 @@ public sealed class TranscriptionQueue : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(disposed,this);id=jobId??$"{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{++sequence}";
             if(jobs.Any(j=>j.Id==id))throw new InvalidOperationException("任务 ID 已存在。");
-            jobs.Insert(0,new(id,title,audioPath,TranscriptionJobStatus.Queued,TranscriptionStage.Queued,"等待前面的任务完成。",DateTimeOffset.Now,projectId,CacheProfile:resolveCacheProfile(),AudioDuration:audioDuration));PersistLocked();
+            jobs.Insert(0,new(id,title,audioPath,TranscriptionJobStatus.Queued,TranscriptionStage.Queued,"等待前面的任务完成。",DateTimeOffset.Now,projectId,CacheProfile:resolveCacheProfile(),AudioDuration:audioDuration) { CloudRunStarted = false });PersistLocked();
         }
         Notify();Pump();return id;
     }
@@ -43,31 +48,49 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     }
     public void Cancel(string id, bool userInitiated = false)
     {
-        var job=JobById(id);if(job==null||job.IsTerminal)return;
-        if (userInitiated) { lock (sync) userCancellations.Add(id); }
-        if (userInitiated && job.Status != TranscriptionJobStatus.Running && job.CacheProfile?.Contains("desktop-asr-v2", StringComparison.Ordinal) == true && CancelRemoteJob is not null)
+        lock (sync)
         {
-            lock (sync)
+            var index = jobs.FindIndex(j => j.Id == id);
+            if (disposed || index < 0) return;
+            var job = jobs[index];
+            if (job.IsTerminal || remoteCancellations.Contains(id)) return;
+            if (userInitiated) userCancellations.Add(id);
+            if (job.Status == TranscriptionJobStatus.Running && running.TryGetValue(id, out var cancellation))
             {
-                if (running.TryGetValue(id, out var activeCancellation)) { activeCancellation.Cancel(); return; }
-                if (!remoteCancellations.Add(id)) return;
-                var task = CancelRemoteAsync(id); executions.Add(task);
-                _ = task.ContinueWith(done => { lock (sync) executions.Remove(done); }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                jobs[index] = job with { Message = "正在取消。" };
+                cancellation.Cancel();
             }
-            return;
+            else if (job.IsCloudServiceJob && job.CloudRunStarted != false)
+            {
+                if (userInitiated)
+                {
+                    remoteCancellations.Add(id);
+                    var task = CancelRemoteAsync(id);
+                    executions.Add(task);
+                    _ = task.ContinueWith(done => { lock (sync) executions.Remove(done); }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                    return;
+                }
+                jobs[index] = job with { Status = TranscriptionJobStatus.Interrupted, Message = "云端任务等待恢复。" };
+            }
+            else jobs[index] = job with { Status = TranscriptionJobStatus.Canceled, Duplicate = null, Fraction = null, FinishedAt = DateTimeOffset.Now, Message = "任务已取消。" };
+            PersistLocked();
         }
-        if(job.Status==TranscriptionJobStatus.Running){Update(id,j=>j with{Message="正在取消。"});lock(sync)if(running.TryGetValue(id,out var cancellation))cancellation.Cancel();}
-        else{Update(id,j=>j with{Status=TranscriptionJobStatus.Canceled,Duplicate=null,Fraction=null,FinishedAt=DateTimeOffset.Now,Message="任务已取消。"},true);Trim();Pump();}
+        Notify(); Trim(); Pump();
     }
     private async Task CancelRemoteAsync(string id)
     {
         Update(id, j => j with { Status = TranscriptionJobStatus.Interrupted, Message = "正在向服务器确认取消。" }, true);
         try
         {
-            await CancelRemoteJob!(id);
-            if (!disposed) Update(id, j => j with { Status = TranscriptionJobStatus.Canceled, Fraction = null, FinishedAt = DateTimeOffset.Now, Message = "云端任务已取消。" }, true);
+            var cancel = CancelRemoteJob ?? throw new InvalidOperationException("云端转写服务不可用。");
+            await cancel(id);
+            if (!disposed) Update(id, j => j with { Status = TranscriptionJobStatus.Canceled, Fraction = null, FinishedAt = DateTimeOffset.Now, Message = "云端任务已取消。", CloudRunStarted = false }, true);
         }
         catch (CloudAsrCompletedAfterCancellationException completed) { if (!disposed) Complete(id, completed.Transcript, false); }
+        catch (CloudAsrFailedAfterCancellationException error)
+        {
+            if (!disposed) Update(id, j => j with { Status = TranscriptionJobStatus.Failed, Fraction = null, FinishedAt = DateTimeOffset.Now, Message = error.Message }, true);
+        }
         catch (Exception error)
         {
             if (!disposed) Update(id, j => j with { Status = TranscriptionJobStatus.Interrupted, Message = "云端取消尚未确认，请重试取消。" + error.Message }, true);
@@ -77,12 +100,19 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     }
     public void Retry(string id)
     {
-        lock (sync) if (remoteCancellations.Contains(id)) return;
-        var job=JobById(id);if(job==null||job.Status is not (TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted))return;
-        if (job.Status == TranscriptionJobStatus.Failed && job.Srt is not null && job.AudioMd5 is not null && job.CacheProfile is not null)
-            cache.Invalidate(job.AudioMd5, job.CacheProfile);
-        lock (sync) userCancellations.Remove(id);
-        Update(id,j=>j with{Status=TranscriptionJobStatus.Queued,Stage=TranscriptionStage.Queued,Message="等待前面的任务完成。",Fraction=null,StartedAt=null,FinishedAt=null,Duplicate=null,Srt=null,SrtConsumed=false,ErrorDetails=null},true);Pump();
+        lock (sync)
+        {
+            var index = jobs.FindIndex(job => job.Id == id);
+            if (disposed || index < 0 || remoteCancellations.Contains(id)) return;
+            var job = jobs[index];
+            if (job.Status is not (TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted)) return;
+            if (job.Status == TranscriptionJobStatus.Failed && job.Srt is not null && job.AudioMd5 is not null && job.CacheProfile is not null)
+                cache.Invalidate(job.AudioMd5, job.CacheProfile);
+            userCancellations.Remove(id);
+            jobs[index] = job with { Status = TranscriptionJobStatus.Queued, Stage = TranscriptionStage.Queued, Message = "等待前面的任务完成。", Fraction = null, StartedAt = null, FinishedAt = null, Duplicate = null, Srt = null, SrtConsumed = false, ErrorDetails = null, ChargedCredits = null };
+            PersistLocked();
+        }
+        Notify(); Pump();
     }
     public void MarkSrtConsumed(string id)=>Update(id,j=>j with{SrtConsumed=true,Srt=null},true);
     public void FailSrtBinding(string id, string reason)
@@ -102,7 +132,16 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     public void Remove(string id){if(JobById(id)?.IsTerminal==true)Delete(id);}
     public void Delete(string id)
     {
-        lock(sync){if(running.TryGetValue(id,out var cancellation))cancellation.Cancel();jobs.RemoveAll(j=>j.Id==id);PersistLocked();}Notify();Pump();
+        lock(sync)
+        {
+            var job = jobs.FirstOrDefault(j => j.Id == id);
+            if (job is null) return;
+            if (!job.CanDelete) throw new InvalidOperationException("请先取消云端任务并等待服务器确认。");
+            if (running.TryGetValue(id, out var cancellation)) cancellation.Cancel();
+            jobs.Remove(job);
+            PersistLocked();
+        }
+        Notify();Pump();
     }
     public void ClearFinished(){lock(sync){jobs.RemoveAll(j=>j.IsTerminal);PersistLocked();}Notify();}
     public async Task RestoreAsync(CancellationToken ct=default)
@@ -157,10 +196,12 @@ public sealed class TranscriptionQueue : IAsyncDisposable
                 var hash=await HashAsync(job.AudioPath,(done,total)=>Update(id,j=>j with{Fraction=total==0?0.05:done/(double)total*0.05,BytesDone=done,BytesTotal=total}),ct);
                 Update(id,j=>j with{Sha256=hash.Sha256,AudioMd5=hash.Md5,CacheProfile=j.CacheProfile??resolveCacheProfile()});job=JobById(id);if(job==null)return;
             }
-            ct.ThrowIfCancellationRequested();var profile=job.CacheProfile??resolveCacheProfile();var srt=await cache.ReadAsync(job.AudioMd5!,profile,ct);
+            ct.ThrowIfCancellationRequested();var profile=job.CacheProfile??resolveCacheProfile();
+            var resumingCloudSession = job.IsCloudServiceJob && job.CloudRunStarted != false;
+            var srt = resumingCloudSession ? null : await cache.ReadAsync(job.AudioMd5!,profile,ct);
             if(srt!=null){Complete(id,srt,true);return;}
             DuplicateMatch? duplicate=null;
-            if(!job.DuplicateApproved)
+            if(!resumingCloudSession && !job.DuplicateApproved)
             {
                 var other=Jobs.FirstOrDefault(j=>j.Id!=id&&j.Sha256==job.Sha256&&j.Status is not (TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled or TranscriptionJobStatus.Interrupted)&&(j.Status!=TranscriptionJobStatus.Completed||!string.IsNullOrWhiteSpace(j.Srt)));
                 duplicate=other==null?await resolveDuplicate(job.Sha256!):new(DuplicateCase.SharedAudioJob,string.IsNullOrEmpty(other.Title)?"未命名任务":other.Title,JobId:other.Id);
@@ -182,12 +223,26 @@ public sealed class TranscriptionQueue : IAsyncDisposable
             AppLog.Warning($"云端转写等待中断 id={id}", interrupted);
             if (!disposed) Update(id, j => j with { Status=TranscriptionJobStatus.Interrupted, Fraction=null, Message=interrupted.Message, ErrorDetails=details }, true);
         }
-        catch(OperationCanceledException){if(!disposed)Update(id,j=>j with{Status=TranscriptionJobStatus.Canceled,Fraction=null,FinishedAt=DateTimeOffset.Now,Message="任务已取消。"},true);}
+        catch(OperationCanceledException error)
+        {
+            if (!disposed) Update(id, j => j.IsCloudServiceJob && j.CloudRunStarted != false && error is not CloudAsrCancelledException
+                ? j with { Status = TranscriptionJobStatus.Interrupted, Fraction = null, Message = "云端任务等待确认，可重试取消。" }
+                : j with { Status = TranscriptionJobStatus.Canceled, Fraction = null, FinishedAt = DateTimeOffset.Now, Message = "任务已取消。", CloudRunStarted = false }, true);
+        }
         catch(Exception ex)
         {
             var details = CrashReportStore.Redact($"转写任务 {id}\n阶段：{JobById(id)?.Stage}\n时间：{DateTimeOffset.Now:O}\n{ex}");
             AppLog.Error($"转写任务失败 id={id}", ex);
-            if(!disposed)Update(id,j=>j with{Status=TranscriptionJobStatus.Failed,Fraction=null,FinishedAt=DateTimeOffset.Now,Message=CrashReportStore.Redact(ex is AsrException?ex.Message:"转写失败："+ex.GetBaseException().Message),ErrorDetails=details},true);
+            if(!disposed)Update(id,j=>
+            {
+                var unsettled = j.IsCloudServiceJob && j.CloudRunStarted != false && j.ChargedCredits is null;
+                return j with
+                {
+                    Status = unsettled ? TranscriptionJobStatus.Interrupted : TranscriptionJobStatus.Failed,
+                    FinishedAt = unsettled ? null : DateTimeOffset.Now, Fraction = null, ErrorDetails = details,
+                    Message = CrashReportStore.Redact(ex is AsrException ? ex.Message : "转写失败：" + ex.GetBaseException().Message)
+                };
+            },true);
         }
         finally{lock(sync)running.Remove(id);cancellation.Dispose();Trim();Pump();}
     }
@@ -218,8 +273,29 @@ public sealed class TranscriptionQueue : IAsyncDisposable
     public static TimeSpan? EstimateProcessingTime(TimeSpan? duration)=>duration>TimeSpan.Zero?TimeSpan.FromMilliseconds(Math.Clamp(duration.Value.TotalMilliseconds*0.35,20000,3600000)):null;
     private static async Task<(string Md5,string Sha256)> HashAsync(string path,Action<long,long> progress,CancellationToken ct)
     {
-        await using var file=File.OpenRead(path);using var md5=IncrementalHash.CreateHash(HashAlgorithmName.MD5);using var sha=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);var buffer=new byte[128*1024];long done=0;int read;
-        while((read=await file.ReadAsync(buffer,ct))>0){md5.AppendData(buffer.AsSpan(0,read));sha.AppendData(buffer.AsSpan(0,read));done+=read;progress(done,file.Length);}
+        await using var file = File.OpenRead(path);
+        using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[128 * 1024];
+        var length = file.Length;
+        var minimumAdvance = Math.Max(1L, length / 100);
+        var nextReportAt = Environment.TickCount64;
+        long done = 0, reported = 0;
+        int read;
+        while ((read = await file.ReadAsync(buffer, ct)) > 0)
+        {
+            md5.AppendData(buffer.AsSpan(0, read));
+            sha.AppendData(buffer.AsSpan(0, read));
+            done += read;
+            var now = Environment.TickCount64;
+            if (done < length && done - reported >= minimumAdvance && now >= nextReportAt)
+            {
+                progress(done, length);
+                reported = done;
+                nextReportAt = now + 150;
+            }
+        }
+        progress(done, length);
         return (Convert.ToHexString(md5.GetHashAndReset()).ToLowerInvariant(),Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant());
     }
     public async ValueTask DisposeAsync()

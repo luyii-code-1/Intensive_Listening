@@ -17,6 +17,12 @@ public sealed record TranscriptionJob(string Id,string Title,string AudioPath,Tr
     string? Sha256=null,string? AudioMd5=null,string? CacheProfile=null,DuplicateMatch? Duplicate=null,bool DuplicateApproved=false,TimeSpan? AudioDuration=null,
     DateTimeOffset? StartedAt=null,DateTimeOffset? FinishedAt=null,string? Srt=null,bool SrtConsumed=false,string? ErrorDetails=null, decimal? ChargedCredits=null)
 {
+    // Older queue files have no submission marker. Treat their cloud sessions as recoverable.
+    public bool? CloudRunStarted { get; init; }
     public bool IsTerminal=>Status is TranscriptionJobStatus.Completed or TranscriptionJobStatus.Failed or TranscriptionJobStatus.Canceled;
     public bool IsActive=>Status is TranscriptionJobStatus.Queued or TranscriptionJobStatus.Running or TranscriptionJobStatus.AwaitingDecision;
+    public bool IsCloudServiceJob => CacheProfile?.Contains("il-cloud-service-v1", StringComparison.Ordinal) == true ||
+        CacheProfile?.Contains("desktop-asr-v2", StringComparison.Ordinal) == true;
+    public bool CanCancel => IsActive || IsCloudServiceJob && Status == TranscriptionJobStatus.Interrupted;
+    public bool CanDelete => !IsCloudServiceJob || IsTerminal;
 }

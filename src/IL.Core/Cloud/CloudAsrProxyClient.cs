@@ -39,11 +39,11 @@ public sealed class CloudAsrProxyClient : IDisposable
         return config;
     }
     public async Task<string> RunAsync(string localJobId, string audio, IProgress<AsrProgress>? progress, CancellationToken ct,
-        Func<bool> userCancellation, Action<decimal> settled, Func<Task<bool>>? confirmForcedCuts = null)
+        Func<bool> userCancellation, Action<decimal> settled, Func<Task<bool>>? confirmForcedCuts = null, Func<Task>? sessionReady = null)
     {
         for (var attempt = 0; ; attempt++)
         {
-            try { return await RunOnceAsync(localJobId, audio, progress, ct, userCancellation, settled, confirmForcedCuts); }
+            try { return await RunOnceAsync(localJobId, audio, progress, ct, userCancellation, settled, confirmForcedCuts, sessionReady); }
             catch (Exception error) when (attempt < 2 && !ct.IsCancellationRequested && IsNetworkInterruption(error))
             {
                 AppLog.Warning($"云端转写连接中断，准备恢复原任务 job={localJobId} retry={attempt + 1}", error);
@@ -57,7 +57,7 @@ public sealed class CloudAsrProxyClient : IDisposable
         error is CloudAsrWaitingInterruptedException { InnerException: HttpRequestException or OperationCanceledException };
 
     private async Task<string> RunOnceAsync(string localJobId, string audio, IProgress<AsrProgress>? progress, CancellationToken ct,
-        Func<bool> userCancellation, Action<decimal> settled, Func<Task<bool>>? confirmForcedCuts)
+        Func<bool> userCancellation, Action<decimal> settled, Func<Task<bool>>? confirmForcedCuts, Func<Task>? sessionReady)
     {
         await _gate.WaitAsync(ct);
         Session? session = null; string? directory = null;
@@ -94,6 +94,7 @@ public sealed class CloudAsrProxyClient : IDisposable
                 session = new(hash, Guid.NewGuid().ToString("N"), null, manifest.ToArray());
                 await SaveAsync(statePath, session);
             }
+            if (sessionReady is not null) await sessionReady();
             CloudProxyBatch batch;
             if (session.BatchId is null)
             {
@@ -136,18 +137,15 @@ public sealed class CloudAsrProxyClient : IDisposable
         catch (CloudAsrCancelledException) { throw; }
         catch (OperationCanceledException) when (ct.IsCancellationRequested && userCancellation())
         {
-            if (session?.BatchId is null || directory is null) throw;
+            if (session is null || directory is null) throw;
             try
             {
-                var batch = await SendAsync<CloudProxyBatch>(HttpMethod.Post, $"asr/proxy/batches/{Uri.EscapeDataString(session.BatchId)}/cancel", null, null, CancellationToken.None);
-                settled(batch.ChargedCredits);
-                if (batch.State == "succeeded") throw new CloudAsrCompletedAfterCancellationException(await ReadResultAsync(batch, session, directory, progress, CancellationToken.None));
-                if (Active(batch)) throw new CloudAsrWaitingInterruptedException("取消尚未确认，重试可查询原整单。");
-                File.Delete(Path.Combine(directory, "session.json"));
+                await CancelSessionAsync(session, directory, settled, CancellationToken.None);
             }
             catch (CloudAsrCompletedAfterCancellationException) { throw; }
+            catch (CloudAsrFailedAfterCancellationException) { throw; }
             catch (Exception error) { throw new CloudAsrWaitingInterruptedException("取消结果暂未确认，重试可继续查询原整单。", error); }
-            throw;
+            throw new CloudAsrCancelledException();
         }
         catch (CloudApiException) when (session?.BatchId is not null && directory is not null)
         {
@@ -166,6 +164,38 @@ public sealed class CloudAsrProxyClient : IDisposable
             throw new CloudAsrWaitingInterruptedException(reason + state, error);
         }
         finally { _gate.Release(); }
+    }
+    public async Task CancelAsync(string localJobId, Action<decimal> settled, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var user = await SendAsync<User>(HttpMethod.Get, "auth/me", null, null, ct);
+            var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(user.Id + ":" + localJobId)));
+            var directory = Path.Combine(_root, identity);
+            var path = Path.Combine(directory, "session.json");
+            if (!File.Exists(path)) throw new CloudAsrWaitingInterruptedException("当前账号找不到原任务的本地会话，请使用提交任务的账号重试。");
+            var session = JsonSerializer.Deserialize<Session>(await File.ReadAllTextAsync(path, ct), Json)
+                ?? throw new InvalidDataException("云端会话记录无效。");
+            await CancelSessionAsync(session, directory, settled, ct);
+        }
+        finally { _gate.Release(); }
+    }
+    private async Task CancelSessionAsync(Session session, string directory, Action<decimal> settled, CancellationToken ct)
+    {
+        var path = Path.Combine(directory, "session.json");
+        if (session.BatchId is null)
+        {
+            var accepted = await SendAsync<CloudProxyBatch>(HttpMethod.Post, "asr/proxy/batches", JsonContent.Create(new { segments = session.Segments, language = "en" }, options: Json), session.OperationId, ct);
+            session = session with { BatchId = accepted.Id };
+            await SaveAsync(path, session);
+        }
+        var batch = await SendAsync<CloudProxyBatch>(HttpMethod.Post, $"asr/proxy/batches/{Uri.EscapeDataString(session.BatchId)}/cancel", null, null, ct);
+        if (batch.State is "succeeded" or "failed" or "cancelled") settled(batch.ChargedCredits);
+        if (batch.State == "succeeded") throw new CloudAsrCompletedAfterCancellationException(await ReadResultAsync(batch, session, directory, null, ct));
+        if (batch.State is not ("cancelled" or "failed")) throw new CloudAsrWaitingInterruptedException("取消尚未确认，重试可查询原整单。");
+        File.Delete(path);
+        if (batch.State == "failed") throw new CloudAsrFailedAfterCancellationException();
     }
     private Task<CloudProxyBatch> BatchAsync(string id, CancellationToken ct) => SendAsync<CloudProxyBatch>(HttpMethod.Get, "asr/proxy/batches/" + Uri.EscapeDataString(id), null, null, ct);
     private static bool Active(CloudProxyBatch batch) => batch.State is "queued" or "running";

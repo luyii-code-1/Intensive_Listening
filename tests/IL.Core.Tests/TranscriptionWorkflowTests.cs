@@ -30,6 +30,25 @@ public sealed class TranscriptionWorkflowTests : IDisposable
         Assert.Contains("connection reset marker",job.ErrorDetails);
         await queue.FlushAsync();var restored=Assert.Single(await Store.LoadAsync());Assert.Equal(job.ErrorDetails,restored.ErrorDetails);
     }
+    [Fact]
+    public async Task FingerprintReportsFinalByteCountWithBoundedIntermediateUpdates()
+    {
+        var path = Path.Combine(root, "large.wav");
+        const long length = 32L * 1024 * 1024;
+        using (var file = File.Create(path)) file.SetLength(length);
+        await using var queue = Queue((_, _, _, _) => Task.FromResult("SRT"));
+        var samples = new System.Collections.Concurrent.ConcurrentDictionary<long, byte>();
+        queue.Changed += (_, _) =>
+        {
+            if (queue.JobById("large") is { Stage: TranscriptionStage.Fingerprinting, BytesDone: > 0 } job)
+                samples.TryAdd(job.BytesDone, 0);
+        };
+        queue.Enqueue("Large", path, jobId: "large");
+        await queue.WaitForIdleAsync();
+        Assert.Contains(length, samples.Keys);
+        Assert.InRange(samples.Count, 1, 101);
+        Assert.Equal(TranscriptionJobStatus.Completed, queue.JobById("large")!.Status);
+    }
     [Fact] public async Task RunsFifoCachesAndConsumesCompletedTranscript()
     {
         var calls=new List<string>();var releases=new Queue<TaskCompletionSource<string>>();

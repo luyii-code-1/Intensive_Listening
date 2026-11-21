@@ -3,21 +3,37 @@ namespace IL.Core.Ilp;
 public sealed record LibraryEntryIssue(string Id, string Message);
 public sealed record LibraryLoadResult(IReadOnlyList<ImportedLesson> Lessons, IReadOnlyList<LibraryEntryIssue> Issues);
 public sealed record LessonRef(string Id, string DirectoryPath, IlpManifest Manifest);
+public sealed record LibraryIndex(IReadOnlyList<LessonRef> Lessons, IReadOnlyList<LibraryEntryIssue> Issues);
 
 public sealed class IlpLibrary(string directory)
 {
-    public async Task<IReadOnlyList<LessonRef>> ScanManifestsAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<LessonRef>> ScanManifestsAsync(CancellationToken ct = default) =>
+        (await ScanAsync(checkFiles: false, ct)).Lessons;
+
+    public Task<LibraryIndex> LoadIndexAsync(CancellationToken ct = default) =>
+        ScanAsync(checkFiles: true, ct);
+
+    private async Task<LibraryIndex> ScanAsync(bool checkFiles, CancellationToken ct)
     {
-        if (!Directory.Exists(directory)) return [];
+        if (!Directory.Exists(directory)) return new([], []);
         var found = new List<LessonRef>();
+        var issues = new List<LibraryEntryIssue>();
         foreach (var path in Directory.EnumerateDirectories(directory))
         {
-            if (Path.GetFileName(path).StartsWith('.') || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) continue;
-            try { found.Add(new(Path.GetFileName(path), path, IlpManifest.FromBytes(await File.ReadAllBytesAsync(Path.Combine(path, "manifest.json"), ct)))); }
-            catch (IlpException) { }
-            catch (IOException) { }
+            var id = Path.GetFileName(path);
+            if (id.StartsWith('.') || checkFiles && !Guid.TryParseExact(id, "D", out _)) continue;
+            try
+            {
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) continue;
+                var manifest = IlpManifest.FromBytes(await File.ReadAllBytesAsync(Path.Combine(path, "manifest.json"), ct));
+                if (checkFiles && (!File.Exists(Path.Combine(path, manifest.AudioPath)) || !File.Exists(Path.Combine(path, manifest.TranscriptPath))))
+                    throw new IlpException(IlpError.MissingFile, "课程音频或字幕文件缺失");
+                found.Add(new(id, path, manifest));
+            }
+            catch (IlpException ex) { issues.Add(new(id, ex.Message)); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { issues.Add(new(id, "课程文件无法读取")); }
         }
-        return found.OrderBy(x => x.Manifest.Title, StringComparer.OrdinalIgnoreCase).ToArray();
+        return new(found.OrderBy(x => x.Manifest.Title, StringComparer.OrdinalIgnoreCase).ToArray(), issues);
     }
     public async Task<LessonRef?> FindByAudioSha256Async(string hash, CancellationToken ct = default) => (await ScanManifestsAsync(ct)).FirstOrDefault(x => x.Manifest.AudioSha256 == hash);
     public async Task<LessonRef?> FindByUuidAsync(string uuid, CancellationToken ct = default) => (await ScanManifestsAsync(ct)).FirstOrDefault(x => string.Equals(x.Manifest.PackageUuid, uuid, StringComparison.OrdinalIgnoreCase));
@@ -62,7 +78,21 @@ public sealed class IlpLibrary(string directory)
         var transcript = Path.Combine(path, manifest.TranscriptPath);
         if (!File.Exists(audio) || !File.Exists(transcript)) throw new IlpException(IlpError.MissingFile, "课程音频或字幕文件缺失");
         if (verifyAudio) await FileHashing.VerifySha256Async(audio, manifest.AudioSha256, ct);
-        await FileHashing.VerifySha256Async(transcript, manifest.TranscriptSha256, ct);
-        return new(id, path, manifest, SrtParser.Parse(await File.ReadAllBytesAsync(transcript, ct), manifest.Duration));
+        return new(id, path, manifest, await ReadTranscriptAsync(transcript, manifest, ct));
+    }
+
+    public static async Task<int> ReadCueCountAsync(LessonRef lesson, CancellationToken ct = default) =>
+        (await ReadTranscriptAsync(Path.Combine(lesson.DirectoryPath, lesson.Manifest.TranscriptPath), lesson.Manifest, ct)).Count;
+
+    private static async Task<IReadOnlyList<SrtCue>> ReadTranscriptAsync(string path, IlpManifest manifest, CancellationToken ct)
+    {
+        await using var stream = File.OpenRead(path);
+        var length = stream.Length;
+        if (length > IlpImporter.MaximumTranscriptBytes) throw new IlpException(IlpError.InvalidTranscript, "课程字幕过大");
+        var contents = new byte[(int)length];
+        await stream.ReadExactlyAsync(contents.AsMemory(), ct).ConfigureAwait(false);
+        if (Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(contents)) != manifest.TranscriptSha256)
+            throw new IlpException(IlpError.HashMismatch, "字幕 SHA-256 校验失败");
+        return SrtParser.Parse(contents, manifest.Duration);
     }
 }

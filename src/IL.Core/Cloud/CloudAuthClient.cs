@@ -62,7 +62,8 @@ public sealed class CloudAuthClient : IDisposable
 
     private static CloudAuthenticationException AuthorizationUnavailable() => new("authorization_unavailable", "客户端登录服务暂未就绪，请稍后重试。");
 
-    public async Task CompleteLoginAsync(CloudAuthorizationRequest request, Uri callback, CancellationToken ct = default)
+    public async Task CompleteLoginAsync(CloudAuthorizationRequest request, Uri callback, CancellationToken ct = default,
+        Action<CloudUser>? prepareIdentity = null)
     {
         var code = request.ReadCode(callback);
         await _gate.WaitAsync(ct);
@@ -71,7 +72,7 @@ public sealed class CloudAuthClient : IDisposable
             using var response = await _http.PostAsync(new Uri(Server, "connect/token"), new FormUrlEncodedContent(
                 new Dictionary<string, string> { ["grant_type"] = "authorization_code", ["client_id"] = ClientId,
                     ["code"] = code, ["redirect_uri"] = request.RedirectUri.AbsoluteUri, ["code_verifier"] = request.Verifier }), ct);
-            await AcceptTokenAsync(response, ct);
+            await AcceptTokenAsync(response, ct, isRefresh: false, prepareIdentity: prepareIdentity);
         }
         finally { _gate.Release(); }
     }
@@ -88,7 +89,7 @@ public sealed class CloudAuthClient : IDisposable
             {
                 using var response = await _http.PostAsync(new Uri(Server, "connect/token"), new FormUrlEncodedContent(
                     new Dictionary<string, string> { ["grant_type"] = "refresh_token", ["client_id"] = ClientId, ["refresh_token"] = _refreshToken }), ct);
-                await AcceptTokenAsync(response, ct);
+                await AcceptTokenAsync(response, ct, isRefresh: true);
             }
             catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException
                 || error is CloudAuthenticationException { Code: "invalid_token_response" })
@@ -145,7 +146,32 @@ public sealed class CloudAuthClient : IDisposable
         _loaded = true;
     }
 
-    private async Task AcceptTokenAsync(HttpResponseMessage response, CancellationToken ct)
+    public async Task<CloudUser> GetUserAsync(CancellationToken ct = default)
+    {
+        var access = await GetAccessTokenAsync(ct);
+        try { return await ReadUserAsync(access, ct); }
+        catch (CloudAuthenticationException error) when (error.Code == "login_required")
+        {
+            await InvalidateAsync(access, CancellationToken.None);
+            throw;
+        }
+    }
+
+    private async Task<CloudUser> ReadUserAsync(string access, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(Server, "api/v1/auth/me"));
+        request.Headers.Authorization = new("Bearer", access);
+        using var response = await _http.SendAsync(request, ct);
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+            throw new CloudAuthenticationException("login_required", "登录已失效，请重新授权 Intensive Listening 云服务。");
+        response.EnsureSuccessStatusCode();
+        var user = JsonSerializer.Deserialize<CloudUser>(await response.Content.ReadAsStringAsync(ct), JsonSerializerOptions.Web);
+        if (string.IsNullOrWhiteSpace(user?.Id)) throw new CloudAuthenticationException("identity", "云账号信息无效。");
+        return user;
+    }
+
+    private async Task AcceptTokenAsync(HttpResponseMessage response, CancellationToken ct, bool isRefresh,
+        Action<CloudUser>? prepareIdentity = null)
     {
         if (!response.IsSuccessStatusCode)
         {
@@ -160,7 +186,7 @@ public sealed class CloudAuthClient : IDisposable
                 }
                 catch (JsonException) { }
             }
-            if (invalid) await ClearCoreAsync();
+            if (invalid && isRefresh) await ClearCoreAsync();
             throw new CloudAuthenticationException(invalid ? "login_required" : "token_request_failed",
                 invalid ? "登录已失效，请重新授权 Intensive Listening 云服务。" : "Intensive Listening 云服务 登录请求失败，请稍后重试。");
         }
@@ -173,15 +199,26 @@ public sealed class CloudAuthClient : IDisposable
             || !body.TryGetProperty("expires_in", out var expires) || expires.ValueKind != JsonValueKind.Number
             || !expires.TryGetInt32(out var seconds) || seconds is <= 0 or > 86400)
             throw new CloudAuthenticationException("invalid_token_response", "Intensive Listening 云服务 返回的登录信息无效。");
-        // Once the server rotates a refresh token, finish saving it even if the user cancels.
         var rotated = refresh.GetString()!;
+        var accessToken = access.GetString()!;
+        if (prepareIdentity is not null)
+        {
+            try { prepareIdentity(await ReadUserAsync(accessToken, ct)); }
+            catch
+            {
+                try { await RevokeRefreshTokenAsync(rotated, CancellationToken.None); }
+                catch (Exception error) when (error is HttpRequestException or OperationCanceledException or CloudAuthenticationException) { }
+                throw;
+            }
+        }
+        // Finish persisting a verified grant or rotated refresh token even if the caller cancels.
         _refreshToken = rotated;
         _accessToken = null;
         _loaded = true;
         try { await _store.WriteAsync(rotated, CancellationToken.None); }
         catch { await ClearCoreAsync(); throw; }
         _loaded = HasCredentials = true;
-        _accessToken = access.GetString();
+        _accessToken = accessToken;
         DeviceId = body.TryGetProperty("device_id", out var device) && device.ValueKind == JsonValueKind.String ? device.GetString() : null;
         _expiresAt = DateTimeOffset.UtcNow.AddSeconds(seconds);
     }

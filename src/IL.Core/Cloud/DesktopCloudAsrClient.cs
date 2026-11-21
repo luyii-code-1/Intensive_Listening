@@ -22,7 +22,7 @@ public sealed class DesktopCloudAsrClient : IDisposable
     { _api = new(authentication, http); _root = Path.Combine(dataDirectory, "desktop-cloud-asr-v2"); }
 
     public async Task<string> RunAsync(string localJobId, string audio, IProgress<AsrProgress>? progress,
-        CancellationToken ct, Func<bool> userCancellation, Action<decimal> settled)
+        CancellationToken ct, Func<bool> userCancellation, Action<decimal> settled, Func<Task>? sessionReady = null)
     {
         await _gate.WaitAsync(ct);
         Session? session = null; string? path = null;
@@ -40,6 +40,7 @@ public sealed class DesktopCloudAsrClient : IDisposable
                 session = new(null, Guid.NewGuid().ToString("N"), null, hash);
                 await SaveAsync(path, session);
             }
+            if (sessionReady is not null) await sessionReady();
             if (session.AssetId is null)
             {
                 progress?.Report(new(AsrStage.Uploading, Detail: "正在准备上传完整音频。"));
@@ -111,7 +112,7 @@ public sealed class DesktopCloudAsrClient : IDisposable
         catch (CloudAsrCancelledException) { throw; }
         catch (CloudApiException error) when (session is { TaskId: null } && path != null && error.Code is "upload" or "upload_expired" or "upload_hash" or "asset")
         {
-            File.Delete(path);
+            await SaveAsync(path, new Session(null, Guid.NewGuid().ToString("N"), null, session.Sha256));
             throw new CloudAsrWaitingInterruptedException("上传会话已失效，重试将重新上传完整音频。", error);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested && userCancellation())
@@ -131,19 +132,21 @@ public sealed class DesktopCloudAsrClient : IDisposable
                     session = session with { TaskId = accepted.Id }; if (path != null) await SaveAsync(path, session);
                 }
                 var task = await SendAsync<DesktopAsrTask>(HttpMethod.Post, "asr/tasks/" + Uri.EscapeDataString(session.TaskId) + "/cancel", null, null, CancellationToken.None);
-                settled(task.ChargedCredits);
+                if (task.State is "succeeded" or "cancelled" or "failed") settled(task.ChargedCredits);
                 if (task.State == "succeeded") throw new CloudAsrCompletedAfterCancellationException(await ResultAsync(task.Id, CancellationToken.None));
                 if (task.State != "cancelled" && task.State != "failed") throw new AsrException("取消尚未确认，请重试查询原任务。");
                 if (path is not null && task.State == "cancelled") File.Delete(path);
                 if (path is not null && task.State == "failed")
                 {
                     session = session with { RetryKey = Guid.NewGuid().ToString("N") }; await SaveAsync(path, session);
+                    throw new CloudAsrFailedAfterCancellationException();
                 }
             }
             catch (CloudAsrCancelledException) { throw; }
+            catch (CloudAsrFailedAfterCancellationException) { throw; }
             catch (CloudAsrCompletedAfterCancellationException) { throw; }
             catch (Exception error) { throw new CloudAsrWaitingInterruptedException("取消尚未确认，重试可查询原任务。费用以服务端终态为准。", error); }
-            throw;
+            throw new CloudAsrCancelledException();
         }
         catch (Exception error) when (session is not null && (error is OperationCanceledException or HttpRequestException or IOException))
         { throw new CloudAsrWaitingInterruptedException("等待已中断。云端任务保留，重试可继续查询。", error); }
@@ -164,11 +167,12 @@ public sealed class DesktopCloudAsrClient : IDisposable
             var user = await SendAsync<User>(HttpMethod.Get, "auth/me", null, null, ct);
             var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(user.Id + ":" + localJobId)));
             var path = Path.Combine(_root, identity + ".json");
-            if (!File.Exists(path)) return;
-            var session = JsonSerializer.Deserialize<Session>(await File.ReadAllTextAsync(path, ct), Json);
-            if (session?.AssetId is null)
+            if (!File.Exists(path)) throw new CloudAsrWaitingInterruptedException("当前账号找不到原任务的本地会话，请使用提交任务的账号重试。");
+            var session = JsonSerializer.Deserialize<Session>(await File.ReadAllTextAsync(path, ct), Json)
+                ?? throw new InvalidDataException("云端会话记录无效。");
+            if (session.AssetId is null)
             {
-                if (session?.UploadId != null) await SendAsync<JsonElement>(HttpMethod.Delete, "asr/desktop/uploads/" + session.UploadId, null, null, ct);
+                if (session.UploadId != null) await SendAsync<JsonElement>(HttpMethod.Delete, "asr/desktop/uploads/" + session.UploadId, null, null, ct);
                 File.Delete(path); return;
             }
             if (session.TaskId is null)
@@ -178,11 +182,15 @@ public sealed class DesktopCloudAsrClient : IDisposable
                 session = session with { TaskId = accepted.Id }; await SaveAsync(path, session);
             }
             var task = await SendAsync<DesktopAsrTask>(HttpMethod.Post, $"asr/tasks/{session.TaskId}/cancel", null, null, ct);
-            settled(task.ChargedCredits);
+            if (task.State is "succeeded" or "cancelled" or "failed") settled(task.ChargedCredits);
             if (task.State == "succeeded") throw new CloudAsrCompletedAfterCancellationException(await ResultAsync(task.Id, ct));
             if (task.State is not ("cancelled" or "failed")) throw new CloudAsrWaitingInterruptedException("取消尚未确认，云端任务记录保留。");
             if (task.State == "cancelled") File.Delete(path);
-            else await SaveAsync(path, session with { RetryKey = Guid.NewGuid().ToString("N") });
+            else
+            {
+                await SaveAsync(path, session with { RetryKey = Guid.NewGuid().ToString("N") });
+                throw new CloudAsrFailedAfterCancellationException();
+            }
         }
         finally { _gate.Release(); }
     }

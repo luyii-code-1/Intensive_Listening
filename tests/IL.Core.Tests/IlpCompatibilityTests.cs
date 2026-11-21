@@ -80,6 +80,53 @@ public sealed class IlpCompatibilityTests : IDisposable
     }
 
     [Fact]
+    public async Task IndexReadsMetadataAndFullLoadVerifiesTranscript()
+    {
+        var lesson = await new IlpImporter(_root).ImportFileAsync(Fixture("dart-course.ilp"));
+        var library = new IlpLibrary(_root);
+        var entry = Assert.Single((await library.LoadIndexAsync()).Lessons);
+        Assert.Equal(lesson.Cues.Count, await IlpLibrary.ReadCueCountAsync(entry));
+        await File.WriteAllTextAsync(lesson.TranscriptPath, "changed");
+        Assert.Equal(lesson.Id, Assert.Single((await library.LoadIndexAsync()).Lessons).Id);
+        Assert.Null(await library.LoadByIdAsync(lesson.Id));
+        File.Delete(lesson.TranscriptPath);
+        var index = await library.LoadIndexAsync();
+        Assert.Empty(index.Lessons);
+        Assert.Equal(lesson.Id, Assert.Single(index.Issues).Id);
+    }
+
+    [Fact]
+    public async Task PreviewingCurrentManifestDefersMediaVerificationUntilImport()
+    {
+        var importer = new IlpImporter(_root);
+        var source = Fixture("dart-course.ilp");
+        var manifest = await importer.ReadManifestAsync(source);
+        using (var archive = ZipFile.Open(source, ZipArchiveMode.Update))
+        {
+            archive.GetEntry(manifest.AudioPath)!.Delete();
+            using var output = archive.CreateEntry(manifest.AudioPath).Open();
+            output.Write([1, 2, 3]);
+        }
+        Assert.Equal(manifest.PackageUuid, (await importer.PreviewManifestAsync(source)).PackageUuid);
+        var error = await Assert.ThrowsAsync<IlpException>(() => importer.ImportFileAsync(source));
+        Assert.Equal(IlpError.HashMismatch, error.Code);
+        Assert.Empty((await new IlpLibrary(_root).LoadIndexAsync()).Lessons);
+    }
+
+    [Fact]
+    public async Task ConfirmedReplacementChecksTheInstalledCopyAtCommit()
+    {
+        var importer = new IlpImporter(_root);
+        var source = Fixture("dart-course.ilp");
+        var original = await importer.ImportFileAsync(source);
+        var expected = original.Manifest.ContentFingerprint();
+        var replacement = await importer.ImportFileAsync(source, true, "另一个版本", expectedExistingFingerprint: expected);
+        await Assert.ThrowsAsync<IOException>(() => importer.ImportFileAsync(source, true, expectedExistingFingerprint: expected));
+        var current = await new IlpLibrary(_root).LoadByIdAsync(original.Id);
+        Assert.Equal(replacement.Manifest.ContentFingerprint(), current!.Manifest.ContentFingerprint());
+    }
+
+    [Fact]
     public async Task CSharpExportsCompatiblePackage()
     {
         var imported = await new IlpImporter(Path.Combine(_root, "library")).ImportFileAsync(Fixture("dart-course.ilp"));

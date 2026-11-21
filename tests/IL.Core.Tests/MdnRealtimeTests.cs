@@ -14,6 +14,33 @@ namespace IL.Core.Tests;
 public sealed class MdnRealtimeTests
 {
     [Fact]
+    public async Task RegistrationOutageUsesPollingIntervalAndLogsOnceUntilRecovery()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "il-mdn-outage-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var server = new Peer { RejectRegistration = true };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "il_mdn_config.yaml"), $"schema_version: 1\norganization_name: Test\nserver_url: {server.Url}\nenrollment_token: test-token\ndisable_ssl: true\npoll_seconds: 60\n");
+            await using var client = new MdnClient(root, "2.2.2");
+            var start = LiveDiagnostics.LatestSequence;
+            client.Start();
+            await Until(() => client.LastConnectionError != null, deadline.Token);
+            await Assert.ThrowsAsync<HttpRequestException>(() => client.SynchronizeAsync(deadline.Token));
+            await Task.Delay(1500, deadline.Token); // A waiting websocket must not wake registration every second.
+            Assert.Equal(2, server.RegistrationRequests);
+            var warnings = LiveDiagnostics.Snapshot().Where(e => e.Sequence > start && e.Level == "WARN" && e.Message.StartsWith("集控", StringComparison.Ordinal));
+            Assert.Single(warnings);
+            server.RejectRegistration = false;
+            await client.SynchronizeAsync(deadline.Token);
+            Assert.Contains(LiveDiagnostics.Snapshot(), e => e.Sequence > start && e.Message == "集控策略同步已恢复，此前连续失败 2 次");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task UnreadableEventCacheIsPreservedAndPolicySyncContinues()
     {
         if (!OperatingSystem.IsWindows()) return;
@@ -84,7 +111,9 @@ public sealed class MdnRealtimeTests
         private readonly Task _accept;
         private readonly ConcurrentBag<Task> _connections = [];
         private WebSocket? _socket;
-        private int _requests;
+        private int _requests, _registrations;
+        public volatile bool RejectRegistration;
+        public int RegistrationRequests => Volatile.Read(ref _registrations);
         private bool _disconnected;
         public long Revision = 1;
         public int PolicyRequests => Volatile.Read(ref _requests);
@@ -144,7 +173,16 @@ public sealed class MdnRealtimeTests
                             body = chunks.ToArray();
                         }
                         string json = "{}";
-                        if (path == "/api/register") json = "{\"deviceToken\":\"device-token\"}";
+                        if (path == "/api/register")
+                        {
+                            Interlocked.Increment(ref _registrations);
+                            if (RejectRegistration)
+                            {
+                                await stream.WriteAsync("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray(), _stop.Token);
+                                return;
+                            }
+                            json = "{\"deviceToken\":\"device-token\"}";
+                        }
                         else if (path == "/api/policy") { Interlocked.Increment(ref _requests); json = $"{{\"revision\":{Revision}}}"; }
                         else if (path == "/api/telemetry") { using var document = JsonDocument.Parse(body); Events.Enqueue(document.RootElement.Clone()); }
                         var bytes = Encoding.UTF8.GetBytes(json);

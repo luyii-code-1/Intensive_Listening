@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
@@ -20,6 +21,8 @@ public sealed partial class MdnClient : IAsyncDisposable
     private Task? _realtime;
     private ClientWebSocket? _socket;
     private string? _token;
+    // Both policy sync and realtime feedback run under _request.
+    private readonly RetryLog _syncLog = new("集控策略同步"), _feedbackLog = new("集控反馈提交");
     public MdnConfiguration? Configuration { get; private set; }
     public string DeviceId { get; }
     public ManagedPolicy Policy { get; private set; } = new();
@@ -118,6 +121,7 @@ public sealed partial class MdnClient : IAsyncDisposable
         foreach (var file in new[] { "state.bin", "events.bin", "cloud.bin" }) File.Delete(Path.Combine(_root, file));
         while (_events.Reader.TryRead(out _)) { }
         _stop.Dispose(); _stop = new(); _loop = null; _realtime = null; _token = null; Configuration = null;
+        _syncLog.Reset(); _feedbackLog.Reset();
         Policy = new(); LastSynchronizedAt = null; LastConnectionError = null; PolicyReceiptConfirmed = false; LatencyMs = null; Status = "未加入管理"; Changed?.Invoke();
     }
     public void Report(string kind, object metrics)
@@ -135,14 +139,20 @@ public sealed partial class MdnClient : IAsyncDisposable
                 else
                 {
                     await _request.WaitAsync(_stop.Token);
-                    try { await FlushEventsAsync(_stop.Token); await FlushCrashesAsync(_stop.Token); await FlushUpdateReceiptsAsync(_stop.Token); await FlushCloudAsync(_stop.Token); }
+                    try
+                    {
+                        await FlushEventsAsync(_stop.Token); await FlushCrashesAsync(_stop.Token);
+                        await FlushUpdateReceiptsAsync(_stop.Token); await FlushCloudAsync(_stop.Token);
+                        _feedbackLog.Recovered();
+                    }
+                    catch (OperationCanceledException) when (_stop.IsCancellationRequested) { throw; }
+                    catch (Exception error) when (error is not OutOfMemoryException) { _feedbackLog.Failed(error); throw; }
                     finally { _request.Release(); }
                 }
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { break; }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
-                AppLog.Warning("集控同步或反馈提交失败，将自动重试", e);
                 if (_socket?.State != WebSocketState.Open) { Status = "集控连接失败，将自动重试"; Changed?.Invoke(); }
             }
             try { await _wake.WaitAsync(TimeSpan.FromSeconds(Configuration!.PollSeconds), _stop.Token); }
@@ -154,6 +164,7 @@ public sealed partial class MdnClient : IAsyncDisposable
         var delay = 1;
         while (!_stop.IsCancellationRequested)
         {
+            var wasConnected = false;
             try
             {
                 if (_token is null) { await Task.Delay(1000, _stop.Token); continue; }
@@ -166,6 +177,7 @@ public sealed partial class MdnClient : IAsyncDisposable
                 var endpoint = new UriBuilder(new Uri(config.Server, "api/connect")) { Scheme = config.DisableSsl ? "ws" : "wss" }.Uri;
                 using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token))
                 { deadline.CancelAfter(TimeSpan.FromSeconds(10)); await socket.ConnectAsync(endpoint, transport, deadline.Token); }
+                wasConnected = true;
                 delay = 1; Status = "已实时连接集控服务器"; Changed?.Invoke();
                 AppLog.Operation("mdn", "实时连接已建立，停止定时拉取策略");
                 using var session = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
@@ -212,7 +224,15 @@ public sealed partial class MdnClient : IAsyncDisposable
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { break; }
             catch (Exception e) when (e is not OutOfMemoryException) { Status = "实时连接断开，将自动重连并轮询配置"; Changed?.Invoke(); }
-            finally { _socket = null; if (!_stop.IsCancellationRequested) { AppLog.Operation("mdn", "实时连接断开，恢复策略轮询"); if (_wake.CurrentCount == 0) _wake.Release(); } }
+            finally
+            {
+                _socket = null;
+                if (wasConnected && !_stop.IsCancellationRequested)
+                {
+                    AppLog.Operation("mdn", "实时连接断开，恢复策略轮询");
+                    if (_wake.CurrentCount == 0) _wake.Release();
+                }
+            }
             try { await Task.Delay(TimeSpan.FromSeconds(delay), _stop.Token); } catch (OperationCanceledException) { break; }
             delay = Math.Min(30, delay * 2);
         }
@@ -265,13 +285,37 @@ public sealed partial class MdnClient : IAsyncDisposable
             await FlushEventsAsync(ct);
             await FlushCrashesAsync(ct); Changed?.Invoke();
             await FlushUpdateReceiptsAsync(ct); await FlushCloudAsync(ct);
+            _syncLog.Recovered(); _feedbackLog.Recovered();
         }
-        catch (Exception error)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception error) when (error is not OutOfMemoryException)
         {
             LastConnectionError = CrashReportStore.Redact(error.ToString()); Changed?.Invoke();
-            AppLog.Warning("集控策略同步失败", error); throw;
+            _syncLog.Failed(error); throw;
         }
         finally { _request.Release(); }
+    }
+    private sealed class RetryLog(string operation)
+    {
+        private long _consecutiveFailures, _lastWarningTimestamp;
+        public void Reset() => _consecutiveFailures = 0;
+        public void Failed(Exception error)
+        {
+            _consecutiveFailures++;
+            if (_consecutiveFailures == 1)
+                AppLog.Warning($"{operation}失败", error);
+            else if (Stopwatch.GetElapsedTime(_lastWarningTimestamp) >= TimeSpan.FromHours(1))
+                AppLog.Warning($"{operation}仍未恢复，已连续失败 {_consecutiveFailures} 次：{error.GetBaseException().Message}");
+            else
+                return;
+            _lastWarningTimestamp = Stopwatch.GetTimestamp();
+        }
+        public void Recovered()
+        {
+            if (_consecutiveFailures == 0) return;
+            _ = AppLog.WriteAsync("INFO", $"{operation}已恢复，此前连续失败 {_consecutiveFailures} 次", category: "mdn");
+            Reset();
+        }
     }
     public async Task<bool> ReportLessonAsync(string id, string status, string message, CancellationToken ct)
     {

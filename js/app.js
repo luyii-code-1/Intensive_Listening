@@ -135,14 +135,6 @@ class IntensiveListeningApp {
       blockArticlePrivacy: document.getElementById('block-article-privacy'),
       blockArticleAudio: document.getElementById('block-article-audio'),
 
-      // Ad Blocker Warning Modal
-      adblockOverlay: document.getElementById('adblock-overlay'),
-      btnAdblockRetry: document.getElementById('btn-adblock-retry'),
-      btnAdblockIgnore: document.getElementById('btn-adblock-ignore'),
-      btnAdblockGuideToggle: document.getElementById('btn-adblock-guide-toggle'),
-      adblockGuideBox: document.getElementById('adblock-guide-box'),
-      adblockRetryMsg: document.getElementById('adblock-retry-msg'),
-
       // Inputs & Overlays
       ilpFileInput: document.getElementById('ilp-file-input'),
       audioFileInput: document.getElementById('audio-file-input'),
@@ -153,10 +145,6 @@ class IntensiveListeningApp {
     this.pendingPopoverCueIndex = null;
     this.lastRenderedActiveIndex = -1;
     this.expandedSections = new Set();
-    this.pendingPlayAction = null;
-    this.telemetryWarningDismissed = false;
-    this.isCheckingTelemetry = false;
-    this.cachedTelemetryBlocked = undefined;
     this.audioSessionUnlocked = false;
     this.audioCtx = null;
 
@@ -405,12 +393,14 @@ class IntensiveListeningApp {
     if (this.dom.btnBlockingAccept) {
       this.dom.btnBlockingAccept.addEventListener('click', () => {
         if (!this.dom.chkBlockingConsent.classList.contains('checked')) {
-          this.showAlert('请确认', '请先勾选同意《用户协议》、《隐私政策》并授权浏览器音频播放');
+          this.showAlert('请确认', '请先勾选同意可选统计');
           return;
         }
         // 关键：在用户直接点击同意的手势事件中，同步激活并解锁浏览器音频硬件输出通道
         this.unlockAudioSession();
-        this.writeLocal('il_privacy_consent', 'true');
+        this.telemetryConsent = true;
+        this.writeLocal('il_analytics_consent_v2', 'true');
+        this.startTelemetry();
         if (this.dom.blockingLegalOverlay) {
           this.dom.blockingLegalOverlay.style.display = 'none';
         }
@@ -419,7 +409,10 @@ class IntensiveListeningApp {
 
     if (this.dom.btnBlockingDecline) {
       this.dom.btnBlockingDecline.addEventListener('click', () => {
-        this.showAlert('温馨提示', '本在线播放器需要用户同意《用户协议》与音频播放权限方可正常使用。如您不同意，可关闭本网页标签。');
+        this.telemetryConsent = false;
+        this.writeLocal('il_analytics_consent_v2', 'false');
+        this.unlockAudioSession();
+        if (this.dom.blockingLegalOverlay) this.dom.blockingLegalOverlay.style.display = 'none';
       });
     }
 
@@ -439,23 +432,6 @@ class IntensiveListeningApp {
         }
       });
     });
-
-    // Fullscreen Ad Blocker Warning Modal bindings
-    if (this.dom.btnAdblockRetry) {
-      this.dom.btnAdblockRetry.addEventListener('click', () => this.handleAdblockRetry());
-    }
-    if (this.dom.btnAdblockIgnore) {
-      this.dom.btnAdblockIgnore.addEventListener('click', () => this.handleAdblockIgnore());
-    }
-    if (this.dom.btnAdblockGuideToggle) {
-      this.dom.btnAdblockGuideToggle.addEventListener('click', () => {
-        if (this.dom.adblockGuideBox) {
-          const isHidden = this.dom.adblockGuideBox.style.display === 'none';
-          this.dom.adblockGuideBox.style.display = isHidden ? 'block' : 'none';
-          this.dom.btnAdblockGuideToggle.textContent = isHidden ? '收起白名单指引' : '白名单设置指引';
-        }
-      });
-    }
 
     // Mobile tabs switcher
     this.dom.mobileTabs.addEventListener('click', (e) => {
@@ -504,7 +480,7 @@ class IntensiveListeningApp {
   async loadStandaloneAudio(file) {
     const audioUrl = URL.createObjectURL(file);
     const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
-    this.reportTelemetryEvent('open_audio', { filename: file.name });
+    this.reportTelemetryEvent('open_audio');
     const standaloneRecord = {
       id: 'audio-' + Date.now(),
       manifest: {
@@ -554,7 +530,7 @@ class IntensiveListeningApp {
           revealedCloze: []
         };
         await lessonStorage.saveLesson(lessonRecord);
-        this.reportTelemetryEvent('import_ilp', { title: parsed.manifest.title, cuesCount: parsed.cues.length });
+        this.reportTelemetryEvent('import_ilp');
         await this.loadLesson(lessonRecord);
       } else {
         await this.loadStandaloneAudio(file);
@@ -619,7 +595,7 @@ class IntensiveListeningApp {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
 
-      this.reportTelemetryEvent('export_ilp', { title: rawTitle, size: blob.size });
+      this.reportTelemetryEvent('export_ilp');
       if (this.dom.fileInfoModal) this.dom.fileInfoModal.style.display = 'none';
       this.showAlert('已导出', fileName + '（' + Math.round(blob.size / 1024) + ' KB）已保存到本地。');
     } catch (err) {
@@ -698,11 +674,7 @@ class IntensiveListeningApp {
         revealedCloze: []
       };
       await lessonStorage.saveLesson(lessonRecord);
-      this.reportTelemetryEvent('import_ilp', {
-        title: parsed.manifest.title,
-        cuesCount: parsed.cues.length,
-        source: 'ilppath'
-      });
+      this.reportTelemetryEvent('import_ilp');
       this.hideAlert();
       await this.loadLesson(lessonRecord);
     } catch (err) {
@@ -777,11 +749,7 @@ class IntensiveListeningApp {
       this.audio.currentTime = this.currentTime;
     }
 
-    this.reportTelemetryEvent('open_lesson', {
-      title: lesson.manifest?.title || 'Untitled',
-      duration: this.duration,
-      cuesCount: this.cues.length
-    });
+    this.reportTelemetryEvent('open_lesson');
 
     // Set mobile tab to question by default
     if (this.dom.courseMeta) {
@@ -1894,297 +1862,46 @@ class IntensiveListeningApp {
     }
   }
 
-  reportTelemetryEvent(name, properties = {}) {
-    const payload = {
-      app_version: '1.5.0+19',
-      commit_id: 'winui3',
-      ...properties,
-      timestamp: Date.now()
-    };
-
-    // 1. 阿里云 ARMS RUM
-    try {
-      const rumInstance = window.RumSDK?.default;
-      if (rumInstance && typeof rumInstance.sendCustom === 'function') {
-        rumInstance.sendCustom({
-          type: 'user_action',
-          name,
-          properties: payload
-        });
-      }
-    } catch (e) {
-      // Silently ignore telemetry failure in offline mode
-    }
-
-    // 2. 51.la 网站统计自定义事件
-    try {
-      if (window.LA && typeof window.LA.track === 'function') {
-        window.LA.track(name, payload);
-      }
-    } catch (e) {
-      // Silently ignore
-    }
-  }
-
-  // --- Ad Blocker Detection & Fullscreen Warning ---
-  async checkTelemetryBlocked() {
-    // 离线 PWA 模式下直接放行，绝不误判为广告拦截
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      return false;
-    }
-
-    const endpoint = window.__rum?.endpoint || 
-      'https://proj-xtrace-ae8828bae3abd29c8bb93ef647dfd4f1-cn-hangzhou.cn-hangzhou.log.aliyuncs.com/rum/web/v2?workspace=default-cms-1788892690042201-cn-hangzhou&service_id=hm3xyft6jd@5ac84fe55e86125713b2c';
-
-    // 1. 检查 SDK 变量与探针全局对象
-    const hasRumSDK = Boolean(window.RumSDK?.default);
-    const hasLaSDK = Boolean(window.LA && typeof window.LA.init === 'function');
-
-    // 2. 发起探测请求测试 RUM 遥测通道 (OPTIONS 跨域预检)
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2200);
-
-    try {
-      await fetch(endpoint, {
-        method: 'OPTIONS',
-        mode: 'cors',
-        cache: 'no-store',
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      // 若端点可达，但 SDK 脚本缺失，探测 SDK 脚本自身是否被广告拦截器屏蔽
-      if (!hasRumSDK) {
-        const sdkController = new AbortController();
-        const sdkTimeout = setTimeout(() => sdkController.abort(), 1800);
-        try {
-          await fetch('https://sdk.rum.aliyuncs.com/v2/browser-sdk.js', {
-            method: 'GET',
-            cache: 'no-store',
-            signal: sdkController.signal
-          });
-          clearTimeout(sdkTimeout);
-        } catch (sdkErr) {
-          clearTimeout(sdkTimeout);
-          if (typeof navigator === 'undefined' || navigator.onLine) {
-            return true; // 探针脚本被拦截
-          }
-        }
-      }
-
-      // 3. 探测 51.la 统计探针是否被拦截
-      if (!hasLaSDK) {
-        const laController = new AbortController();
-        const laTimeout = setTimeout(() => laController.abort(), 1800);
-        try {
-          await fetch('https://sdk.51.la/js-sdk-pro.min.js', {
-            method: 'GET',
-            cache: 'no-store',
-            signal: laController.signal
-          });
-          clearTimeout(laTimeout);
-        } catch (laErr) {
-          clearTimeout(laTimeout);
-          if (typeof navigator === 'undefined' || navigator.onLine) {
-            return true; // 51.la 脚本被拦截
-          }
-        }
-      }
-
-      return false; // 遥测链路正常
-    } catch (err) {
-      clearTimeout(timeoutId);
-      // 若处于在线状态且请求因 ERR_BLOCKED_BY_CLIENT / Failed to fetch 报错，判定为被拦截
-      if (typeof navigator === 'undefined' || navigator.onLine) {
-        return true;
-      }
-      return false;
-    }
+  reportTelemetryEvent(name) {
+    if (!this.telemetryConsent || !this.telemetryFrame) return;
+    if (!['page_open', 'open_audio', 'import_ilp', 'export_ilp', 'open_lesson'].includes(name)) return;
+    // The sandbox has an opaque origin; only fixed event data crosses this boundary.
+    this.telemetryFrame.contentWindow?.postMessage({
+      type: 'il-telemetry', name,
+      properties: { app_version: '1.5.0+19' }
+    }, '*');
   }
 
   ensureTelemetryBeforePlay(playAction) {
     if (typeof playAction !== 'function') return;
-
-    // 1. 同步唤醒激活音频会话管道，确保处于直接用户交互手势 tick 内，杜绝移动端/iOS无声
     this.unlockAudioSession();
-
-    // 2. 若用户已选择忽略、或离线模式，直接同步放行
-    if (this.telemetryWarningDismissed || (typeof navigator !== 'undefined' && !navigator.onLine)) {
-      playAction();
-      return;
-    }
-
-    // 3. 若缓存结果已知被广告拦截，弹窗提醒
-    if (this.cachedTelemetryBlocked === true) {
-      this.pendingPlayAction = playAction;
-      this.showAdblockModal();
-      return;
-    }
-
-    // 4. 若尚未完成背景检测，发起静默检测更新缓存，但不阻塞当前发声
-    if (this.cachedTelemetryBlocked === undefined) {
-      this.checkTelemetryBlocked().then(isBlocked => {
-        this.cachedTelemetryBlocked = isBlocked;
-      }).catch(() => {
-        this.cachedTelemetryBlocked = false;
-      });
-    }
-
-    // 同步执行播放，确保 100% 保持浏览器用户交互手势授权
     playAction();
   }
 
-  showAdblockModal() {
-    if (this.dom.adblockOverlay) {
-      this.dom.adblockOverlay.style.display = 'flex';
-      if (this.dom.adblockRetryMsg) {
-        this.dom.adblockRetryMsg.style.display = 'none';
-        this.dom.adblockRetryMsg.textContent = '';
-      }
-    }
-  }
-
-  hideAdblockModal() {
-    if (this.dom.adblockOverlay) {
-      this.dom.adblockOverlay.style.display = 'none';
-    }
-  }
-
-  async handleAdblockRetry() {
-    if (!this.dom.btnAdblockRetry) return;
-    this.dom.btnAdblockRetry.disabled = true;
-    if (this.dom.adblockRetryMsg) {
-      this.dom.adblockRetryMsg.style.display = 'block';
-      this.dom.adblockRetryMsg.style.color = 'var(--text-secondary)';
-      this.dom.adblockRetryMsg.textContent = '正在重新检测遥测通道，请稍候...';
-    }
-
-    const isBlocked = await this.checkTelemetryBlocked();
-    this.dom.btnAdblockRetry.disabled = false;
-
-    if (!isBlocked) {
-      if (this.dom.adblockRetryMsg) {
-        this.dom.adblockRetryMsg.style.color = '#107c10';
-        this.dom.adblockRetryMsg.textContent = '检测通过！正在开启播放...';
-      }
-      setTimeout(() => {
-        this.hideAdblockModal();
-        const action = this.pendingPlayAction;
-        this.pendingPlayAction = null;
-        if (typeof action === 'function') {
-          action();
-        }
-      }, 400);
-    } else {
-      if (this.dom.adblockRetryMsg) {
-        this.dom.adblockRetryMsg.style.color = 'var(--accent)';
-        this.dom.adblockRetryMsg.textContent = '检测到遥测通道仍被拦截。请确认已关闭拦截插件（如 uBlock Origin / AdGuard 等）或将本站加入白名单后重试。';
-      }
-    }
-  }
-
-  handleAdblockIgnore() {
-    this.telemetryWarningDismissed = true;
-    this.hideAdblockModal();
-    const action = this.pendingPlayAction;
-    this.pendingPlayAction = null;
-    if (typeof action === 'function') {
-      action();
-    }
-  }
-
   getTelemetryStatus() {
-    const hasSDK = Boolean(window.RumSDK?.default);
-    const isConsentAgreed = this.readLocal('il_privacy_consent') === 'true';
-    const anonUid = this.readLocal('il_telemetry_uid');
-    const endpoint = window.__rum?.endpoint;
-    return {
-      status: hasSDK ? 'working' : 'waiting_or_blocked',
-      sdkLoaded: Boolean(window.RumSDK),
-      sdkInitialized: hasSDK,
-      consentAgreed: isConsentAgreed,
-      anonUid: anonUid,
-      endpoint: endpoint,
-      isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-      telemetryWarningDismissed: this.telemetryWarningDismissed
-    };
+    return { consentAgreed: Boolean(this.telemetryConsent), sdkLoaded: Boolean(this.telemetryFrame) };
   }
 
   initTelemetryAndLegal() {
-    // 1. Fullscreen Blocking Legal Overlay on First Visit (全屏阻断式协议弹窗)
-    const agreed = this.readLocal('il_privacy_consent');
-    if (!agreed && this.dom.blockingLegalOverlay) {
+    // A new explicit choice is required for the minimized analytics policy.
+    const choice = this.readLocal('il_analytics_consent_v2');
+    this.telemetryConsent = choice === 'true';
+    if (choice === null && this.dom.blockingLegalOverlay) {
       this.dom.blockingLegalOverlay.style.display = 'flex';
     }
+    if (this.telemetryConsent) this.startTelemetry();
+  }
 
-    // 2. Client ID resolution
-    let anonUid = this.readLocal('il_telemetry_uid');
-    if (!anonUid) {
-      anonUid = 'u_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
-      try {
-        this.writeLocal('il_telemetry_uid', anonUid);
-      } catch (e) {}
-    }
-
-    // 3. Collect Basic Client Environment Info
-    const basicInfo = {
-      uid: anonUid,
-      screenResolution: `${window.screen?.width || 0}x${window.screen?.height || 0}`,
-      viewport: `${window.innerWidth}x${window.innerHeight}`,
-      pixelRatio: window.devicePixelRatio || 1,
-      language: navigator.language || 'zh-CN',
-      platform: navigator.platform || 'web',
-      userAgent: navigator.userAgent || '',
-      referrer: document.referrer || 'direct',
-      timezone: (typeof Intl !== 'undefined' && Intl.DateTimeFormat) ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'unknown',
-      themeMode: this.readLocal('theme_mode') || 'auto',
-      pageUrl: window.location.href,
-      openTime: new Date().toISOString()
-    };
-
-    // 4. Report Basic Info via Alibaba Cloud ARMS RUM
-    const sendLaunchTelemetry = () => {
-      const rumInstance = window.RumSDK?.default;
-      if (!rumInstance) return false;
-
-      try {
-        if (typeof rumInstance.setConfig === 'function') {
-          rumInstance.setConfig({
-            user: { id: anonUid }
-          });
-        }
-        if (typeof rumInstance.sendCustom === 'function') {
-          rumInstance.sendCustom({
-            type: 'page_open',
-            name: 'page_open_basic_info',
-            properties: basicInfo
-          });
-        }
-        return true;
-      } catch (err) {
-        console.warn('[RUM] Launch telemetry report failed:', err);
-        return true;
-      }
-    };
-
-    // Attempt immediately, or retry until SDK finishes loading (max 3 seconds)
-    if (!sendLaunchTelemetry()) {
-      let attempts = 0;
-      const maxAttempts = 15;
-      const interval = setInterval(() => {
-        attempts++;
-        if (sendLaunchTelemetry() || attempts >= maxAttempts) {
-          clearInterval(interval);
-        }
-      }, 200);
-    }
-
-    // 5. Background pre-check for telemetry channel (silent, non-blocking)
-    this.checkTelemetryBlocked().then(isBlocked => {
-      this.cachedTelemetryBlocked = isBlocked;
-    }).catch(() => {
-      this.cachedTelemetryBlocked = false;
-    });
+  startTelemetry() {
+    if (!this.telemetryConsent || this.telemetryFrame) return;
+    const frame = document.createElement('iframe');
+    frame.hidden = true;
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.referrerPolicy = 'no-referrer';
+    frame.src = new URL('./js/telemetry.html', window.location.href).href;
+    frame.addEventListener('load', () => this.reportTelemetryEvent('page_open'), { once: true });
+    this.telemetryFrame = frame;
+    document.body.appendChild(frame);
   }
 
   initPwaServiceWorker() {

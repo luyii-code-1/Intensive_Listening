@@ -68,6 +68,9 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
+      - name: Test player privacy and storage behavior
+        run: node --test player/tests/*.test.mjs
+
       # commit-text 的语义（已逐一核对历史）：
       #
       #   它写的是「产出该版本的构建所**基于**的提交」——即被 bump 掉的那次产物改动，

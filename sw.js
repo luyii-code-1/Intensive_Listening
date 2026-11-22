@@ -1,7 +1,7 @@
 // Intensive Listening Web Player - Service Worker
 // Version: 1.0.0 (Offline PWA)
 
-const CACHE_NAME = 'il-pwa-1.5.0+19';
+const CACHE_NAME = 'il-pwa-1.5.0+20';
 
 const PRECACHE_RESOURCES = [
   './',
@@ -12,6 +12,7 @@ const PRECACHE_RESOURCES = [
   './fonts/HarmonyOSSansSC-Regular.woff2',
   './fonts/HarmonyOSSansSC-Bold.woff2',
   './js/app.js',
+  './js/telemetry.html',
   './js/ilp-parser.js',
   './js/srt-parser.js',
   './js/storage.js',
@@ -69,21 +70,28 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 1. External telemetry / RUM / Analytics requests: Bypass Service Worker so ad-blocker detection works accurately
-  if (url.origin.includes('aliyuncs.com') || url.origin.includes('51.la')) {
-    return;
-  }
+  // Only the declared application shell can enter Cache Storage. Course downloads,
+  // including arbitrary same-origin endpoints and no-store requests, pass through.
+  const shell = new URL('./index.html', self.location.href || self.location.origin + '/');
+  const root = new URL('./', shell);
+  const isShellNavigation = request.mode === 'navigate' &&
+    (url.pathname === root.pathname || url.pathname === shell.pathname);
+  const asset = PRECACHE_RESOURCES.find(path => new URL(path, root).pathname === url.pathname);
+  if (request.cache === 'no-store' || (!isShellNavigation && (!asset || url.search || url.hash))) return;
+  if (request.mode === 'navigate' && !isShellNavigation) return;
+  // Never use course query strings as cache keys for the application shell.
+  const cacheRequest = isShellNavigation ? shell.href : request;
 
   // 2. Navigation requests (HTML documents)
   if (request.mode === 'navigate') {
     event.respondWith(
-      matchCached(request)
+      matchCached(cacheRequest)
         .then((cachedResponse) => {
           if (cachedResponse) {
             // Fetch in background to update cache (stale-while-revalidate for HTML)
-            event.waitUntil(fetch(request).then((networkResponse) => {
+            event.waitUntil(fetch(cacheRequest).then((networkResponse) => {
               if (networkResponse && networkResponse.status === 200) {
-                return caches.open(CACHE_NAME).then((cache) => cache.put(request, networkResponse));
+                return caches.open(CACHE_NAME).then((cache) => cache.put(cacheRequest, networkResponse));
               }
             }).catch(() => {/* offline, keep cached */}));
             return cachedResponse;
@@ -104,7 +112,7 @@ self.addEventListener('fetch', (event) => {
 
   // 3. Local static assets: Cache-first, fallback to network
   event.respondWith(
-    matchCached(request).then((cachedResponse) => {
+    matchCached(cacheRequest).then((cachedResponse) => {
       if (cachedResponse) {
         return cachedResponse;
       }
@@ -113,7 +121,7 @@ self.addEventListener('fetch', (event) => {
         .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
             const responseClone = networkResponse.clone();
-            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone))
+            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(cacheRequest, responseClone))
               .catch(error => console.warn('[PWA SW] Resource could not be cached:', error)));
           }
           return networkResponse;

@@ -2,6 +2,7 @@
 <html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="UTF-8">
+  <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Intensive Listening - 精听播放器</title>
   
@@ -23,42 +24,6 @@
   <script src="lib/jszip.min.js"></script>
 </head>
 <body>
-  <!-- 阿里云 ARMS RUM 遥测探针 -->
-  <script>
-    !(function(c,b,d,a){c[a]||(c[a]={});c[a]=
-    { 
-      endpoint: 'https://proj-xtrace-ae8828bae3abd29c8bb93ef647dfd4f1-cn-hangzhou.cn-hangzhou.log.aliyuncs.com/rum/web/v2?workspace=default-cms-1788892690042201-cn-hangzhou&service_id=hm3xyft6jd@5ac84fe55e86125713b2c',
-      // 设置环境信息，参考值：'prod' | 'gray' | 'pre' | 'daily' | 'local'
-      env: 'prod', 
-      // 设置路由模式， 参考值：'history' | 'hash'
-      spaMode: 'history',
-      collectors: {
-        // 页面性能指标监听开关（关闭默认项）
-        perf: false,
-        // WebVitals指标监听开关（关闭默认项）
-        webVitals: false,
-        // Ajax监听开关（关闭默认项，不拦截劫持网络请求）
-        api: false,
-        // 静态资源开关（关闭默认项）
-        staticResource: false,
-        // JS错误监听开关（关闭默认项）
-        jsError: false,
-        // 控制台错误监听开关（关闭默认项）
-        consoleError: false,
-        // 用户行为监听开关（关闭默认项，不自动抓取DOM点击行为）
-        action: false,
-      },
-      // 链路追踪配置开关，默认关闭
-      tracing: false,
-    }
-    with(b)with(body)with(insertBefore(createElement("script"),firstChild))setAttribute("crossorigin","",src=d)
-})(window, document, "https://sdk.rum.aliyuncs.com/v2/browser-sdk.js", "__rum");
-  </script>
-
-  <!-- 51.la 网站统计 -->
-  <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
-  <script>LA.init({id:"LKvATKXPjg1HJl6i",ck:"LKvATKXPjg1HJl6i",autoTrack:true,hashMode:true,screenRecord:true})</script>
-
   <div id="app" data-view="home">
     <!-- Header / Command Bar -->
     <header class="app-header">
@@ -449,22 +414,11 @@
           </div>
           <!-- Privacy Tab -->
           <div id="legal-content-privacy" style="display: none;">
-            <h4>Intensive Listening 隐私说明与阿里云遥测探针声明</h4>
-            <p>我们高度重视您的个人数据安全与隐私保护。作为一款纯静态运行的前端应用，我们严格遵循最小化与透明化数据原则。</p>
-            <h4>一、本地私有数据保障</h4>
-            <p>您导入的 <code>.ilp</code> 精听包、音频文件、字幕文本、个人答题进度及单词挖空标记<strong>完全保存在您本机的浏览器数据库（IndexedDB 与 LocalStorage）中</strong>。本站绝不收集、保存或外传任何您的私有课程内容与听力音频。</p>
-            <h4>二、阿里云应用实时监控服务 (ARMS RUM) 遥测声明</h4>
-            <p>为了保障播放器的系统稳定性、诊断不同浏览器与移动设备上的前端异常并优化播放器性能，本站集成了<strong>阿里云性能监控探针（Browser SDK v2）</strong>。遵循数据极简与透明原则，我们已<strong>关闭全部 7 项默认自动拦截与采集项</strong>（包括 API 网络劫持、静态资源、控制台错误、JS运行时错误、WebVitals、DOM 点击追踪等），仅在必要时上报少量自定义事件：</p>
-            <ul>
-              <li><strong>应用打开基础信息：</strong>匿名收集基础的设备分辨率、浏览器类型、操作系统及主题模式，用于屏幕自适应与兼容诊断；</li>
-              <li><strong>业务操作事件：</strong>仅在用户主动导入精听包、加载音频或开启课程时记录轻量化自定义事件名；</li>
-              <li><strong>默认关闭项：</strong>已彻底关闭全局网络请求拦截、控制台日志监听与页面 DOM 行为自动收集，杜绝任何后台静默抓取；</li>
-              <li><strong>绝对排除项：</strong>探针绝不收集任何个人敏感身份信息（如姓名、手机号、密码），也绝不窃取或回传您正在播放的音频与题目私密文本。</li>
-            </ul>
-            <h4>三、数据传输与存储</h4>
-            <p>监控探针采集的数据均通过 HTTPS 强加密链路直接上报至阿里云位于华东 1（杭州）的日志监控集群，保留期限依阿里云标准审计配置执行，仅供开发者用于改进软件质量。</p>
-            <h4>四、用户的选择权</h4>
-            <p>使用本播放器即代表您已了解并接受上述性能监控与本地存储机制。如您不同意，可随时关闭页面或通过浏览器屏蔽脚本插件阻止探针运行，这不会影响本地基础播放核心功能的完整性。</p>
+            <h4>隐私与可选统计</h4>
+            <p>课程音频、字幕和学习进度保存在本机。课程保存在 IndexedDB，删除最近课程会删除该本地记录；应用资源缓存只保存播放器资源。</p>
+            <p>仅在您明确同意后，播放器才在隔离页面加载阿里云 RUM 和 51.LA。自定义统计只发送应用版本以及打开应用、打开音频、导入、导出和打开课程的固定事件名。文件名、课程标题、字幕条数、课程时长、大小、课程链接和来源页不作为事件属性发送。</p>
+            <p>已关闭自动操作追踪与录屏选项。第三方服务接收网络连接所需的 IP 地址及浏览器请求信息，其保留期限需由服务端配置核实。您可跳过统计，或清除本站数据后重新选择；统计不可用时仍可导入和播放。</p>
+            <p>旧式 ilppath 查询链接在首次导航时仍会抵达页面托管服务，请勿在链接中放置长期有效的访问凭据。</p>
           </div>
           <!-- Audio Permission Tab -->
           <div id="legal-content-audio" style="display: none;">
@@ -533,28 +487,11 @@
           </div>
 
           <div id="block-article-privacy" class="blocking-article" style="display: none;">
-            <h3>隐私保护与阿里云性能监控服务 (ARMS RUM) 声明</h3>
-            <p class="article-meta">更新日期：2026-10-01 ｜ 监控服务：阿里云应用实时监控服务 (ARMS RUM Browser SDK v2)</p>
-
-            <h4>一、个人隐私与数据安全承诺</h4>
-            <p>我们高度重视您的个人隐私与数据安全。本播放器遵循<strong>数据最小化</strong>与<strong>全匿名化</strong>原则。我们向您郑重承诺：</p>
-            <ul>
-              <li><strong>绝不采集个人敏感信息：</strong>不收集姓名、手机号、密码、社交账号、通讯录或地理位置；</li>
-              <li><strong>绝不外传用户私有内容：</strong>您所导入播放的音频文件、字幕文本、个人做题记录 100% 保存在您本地设备中；</li>
-              <li><strong>纯静态安全运行：</strong>静态部署于 Pages 托管网络，无自建后端收集或留存您的使用痕迹。</li>
-            </ul>
-
-            <h4>二、阿里云应用实时监控服务 (ARMS RUM) 集成说明</h4>
-            <p>为了保障播放器的系统稳定性、诊断不同移动设备与浏览器上的前端兼容性并优化解码体验，本站集成了<strong>阿里云性能监控探针（Browser SDK v2）</strong>，运行于生产环境（prod）。遵循数据极简原则，<strong>默认自动采集项已全部关闭</strong>，仅保留少量自定义业务事件：</p>
-            <ul>
-              <li><strong>应用启动基础环境：</strong>收集基础的匿名设备分辨率、浏览器版本、操作系统类型及主题配置；</li>
-              <li><strong>轻量级业务事件：</strong>仅在用户主动导入精听包、加载音频或开启播放时触发自定义事件；</li>
-              <li><strong>默认项全部关闭：</strong>网络请求（API）劫持拦截、静态资源监视、控制台错误拦截、JS 未捕获错误捕获及 DOM 点击行为自动收集均已设为关闭（false）；</li>
-              <li><strong>数据传输链路：</strong>自定义事件通过 HTTPS 强加密链路直接上报至阿里云位于华东 1（杭州）的日志监控集群。</li>
-            </ul>
-
-            <h4>三、知情同意与退出机制</h4>
-            <p>使用本播放器即代表您已了解并接受上述性能监控与本地存储机制。如您不同意，可点击下方“不同意并退出”关闭页面，或通过浏览器扩展屏蔽探针脚本，这不会影响本地离线播放功能的完整性。</p>
+            <h4>隐私与可选统计</h4>
+            <p>课程音频、字幕和学习进度保存在本机。课程保存在 IndexedDB，删除最近课程会删除该本地记录；应用资源缓存只保存播放器资源。</p>
+            <p>仅在您明确同意后，播放器才在隔离页面加载阿里云 RUM 和 51.LA。自定义统计只发送应用版本以及打开应用、打开音频、导入、导出和打开课程的固定事件名。文件名、课程标题、字幕条数、课程时长、大小、课程链接和来源页不作为事件属性发送。</p>
+            <p>已关闭自动操作追踪与录屏选项。第三方服务接收网络连接所需的 IP 地址及浏览器请求信息，其保留期限需由服务端配置核实。您可跳过统计，或清除本站数据后重新选择；统计不可用时仍可导入和播放。</p>
+            <p>旧式 ilppath 查询链接在首次导航时仍会抵达页面托管服务，请勿在链接中放置长期有效的访问凭据。</p>
           </div>
 
           <div id="block-article-audio" class="blocking-article" style="display: none;">
@@ -565,7 +502,7 @@
             <p>现代移动端与桌面浏览器（尤其是 iOS WebKit 与 Android Chrome）对网页发声设有严格的<strong>自动播放限制策略 (Autoplay Policy)</strong>。为了防止网页静默发声骚扰用户，浏览器规定：<strong>必须获得用户的直接交互授权后，音频硬件通道方可被唤醒输出声音</strong>。</p>
 
             <h4>二、本播放器的权限申请与激活</h4>
-            <p>当您点击下方<strong>【同意协议并授权播放】</strong>按钮时，系统将通过一次同步的用户交互手势，同时完成：</p>
+            <p>当您点击下方<strong>【同意统计并继续】</strong>按钮时，系统将通过一次同步的用户交互手势，同时完成：</p>
             <ul>
               <li><strong>唤醒 Web Audio 引擎：</strong>激活底层硬件音频通道（AudioContext Session），确保后续点句、循环、挖空朗读随时发声；</li>
               <li><strong>注册系统媒体会话 (Media Session)：</strong>支持在手机锁屏、通知中心与蓝牙耳机上直接控制播放、暂停与跳句；</li>
@@ -583,75 +520,22 @@
 
         <!-- Footer Actions -->
         <div class="blocking-legal-footer">
-          <label class="fluent-checkbox checked" id="chk-blocking-consent">
+          <label class="fluent-checkbox" id="chk-blocking-consent">
             <span class="checkbox-box" id="chk-blocking-box">
               <svg class="check-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="2 6 4.5 9 10 3"></polyline>
               </svg>
             </span>
-            <span class="checkbox-label-text">我已认真阅读并同意《用户协议》、《隐私政策》并授权浏览器音频播放</span>
+            <span class="checkbox-label-text">我已阅读《隐私政策》，同意启用可选统计</span>
           </label>
           <div class="blocking-action-buttons">
-            <button id="btn-blocking-decline" class="fluent-btn">不同意并退出</button>
-            <button id="btn-blocking-accept" class="fluent-btn filled lg">同意协议并授权播放</button>
+            <button id="btn-blocking-decline" class="fluent-btn">跳过统计并继续</button>
+            <button id="btn-blocking-accept" disabled class="fluent-btn filled lg">同意统计并继续</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Fullscreen Ad Blocker Warning Modal (全屏提示关闭广告拦截器) -->
-    <div id="adblock-overlay" class="adblock-overlay" style="display: none;">
-      <div class="adblock-modal">
-        <div class="adblock-header">
-          <div class="adblock-avatar">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-              <line x1="12" y1="8" x2="12" y2="12"></line>
-              <line x1="12" y1="16" x2="12.01" y2="16"></line>
-            </svg>
-          </div>
-          <div class="adblock-header-text">
-            <h3 class="adblock-heading">检测到体验监控探针被拦截</h3>
-            <p class="adblock-subheading">请暂时关闭广告拦截插件或添加白名单，以提供更好的播放体验</p>
-          </div>
-        </div>
-
-        <div class="adblock-body">
-          <div class="adblock-notice-box">
-            <p><strong>为什么会出现此提示？</strong></p>
-            <p>播放器内置了系统体验质量监测与性能遥测探针（阿里云 ARMS RUM）。您的浏览器扩展（如 <strong>uBlock Origin</strong>、<strong>AdGuard</strong>、<strong>AdBlock Plus</strong>、<strong>Brave 盾牌</strong> 等）拦截了数据通道，导致系统无法获得解码延迟与异常报错指标。</p>
-          </div>
-
-          <div class="adblock-commitments">
-            <h4>播放器隐私与纯净承诺：</h4>
-            <ul>
-              <li><strong>100% 纯净无广告：</strong>播放器为学术精听工具，零弹窗、零广告、零第三方商业追踪；</li>
-              <li><strong>个人数据全本地保存：</strong>您的课程音频、字幕、答题记录 100% 保存在本地浏览器 IndexedDB，绝不上传；</li>
-              <li><strong>遥测仅用于系统健康：</strong>监测仅收集匿名 WebVitals 音频性能与系统崩溃调用栈，用于保障连续播放稳定性。</li>
-            </ul>
-          </div>
-
-          <div id="adblock-guide-box" class="adblock-guide-box" style="display: none;">
-            <h4>白名单添加指引：</h4>
-            <ol>
-              <li>点击浏览器工具栏上的广告拦截器图标（如 uBlock / AdGuard / AdBlock）；</li>
-              <li>点击电源开关按钮关闭对本站的拦截，或选择“在此网站上暂停拦截”；</li>
-              <li>完成后点击下方【我已关闭，重新检测并播放】即可正常继续学习。</li>
-            </ol>
-          </div>
-
-          <div id="adblock-retry-msg" class="adblock-retry-msg" style="display: none;"></div>
-        </div>
-
-        <div class="adblock-footer">
-          <button id="btn-adblock-guide-toggle" class="fluent-btn sm">白名单设置指引</button>
-          <div class="adblock-footer-right">
-            <button id="btn-adblock-ignore" class="fluent-btn">坚持播放</button>
-            <button id="btn-adblock-retry" class="fluent-btn filled">我已关闭，重新检测并播放</button>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <script type="module" src="js/app.js"></script>

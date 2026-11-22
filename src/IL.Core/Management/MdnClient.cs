@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
@@ -295,20 +294,15 @@ public sealed partial class MdnClient : IAsyncDisposable
         }
         finally { _request.Release(); }
     }
-    private sealed class RetryLog(string operation)
+    internal sealed class RetryLog(string operation)
     {
-        private long _consecutiveFailures, _lastWarningTimestamp;
+        private long _consecutiveFailures;
         public void Reset() => _consecutiveFailures = 0;
         public void Failed(Exception error)
         {
             _consecutiveFailures++;
             if (_consecutiveFailures == 1)
                 AppLog.Warning($"{operation}失败", error);
-            else if (Stopwatch.GetElapsedTime(_lastWarningTimestamp) >= TimeSpan.FromHours(1))
-                AppLog.Warning($"{operation}仍未恢复，已连续失败 {_consecutiveFailures} 次：{error.GetBaseException().Message}");
-            else
-                return;
-            _lastWarningTimestamp = Stopwatch.GetTimestamp();
         }
         public void Recovered()
         {

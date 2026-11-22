@@ -1868,7 +1868,7 @@ class IntensiveListeningApp {
     // The sandbox has an opaque origin; only fixed event data crosses this boundary.
     this.telemetryFrame.contentWindow?.postMessage({
       type: 'il-telemetry', name,
-      properties: { app_version: '1.5.0+19' }
+      properties: { app_version: '1.5.0+21' }
     }, '*');
   }
 
